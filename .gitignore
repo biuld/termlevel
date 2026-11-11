@@ -1,0 +1,6 @@
+.nsh/
+target/
+.tools/
+node_modules/
+.DS_Store
+artifacts/

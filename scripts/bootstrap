@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+version=v0.5.0
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) archive=nsh-macos-arm64.tar.gz ;;
+  Darwin-x86_64) archive=nsh-macos-x86_64.tar.gz ;;
+  Linux-x86_64) archive=nsh-linux-x86_64.tar.gz ;;
+  Linux-aarch64) archive=nsh-linux-arm64.tar.gz ;;
+  *) echo 'Install NSH 0.5.0 manually on this platform.' >&2; exit 1 ;;
+esac
+download_dir="$project_dir/.tools/downloads"
+mkdir -p "$download_dir"
+base_url="https://github.com/longbridge/nsh/releases/download/$version"
+curl -fL --retry 2 -o "$download_dir/$archive" "$base_url/$archive"
+curl -fL --retry 2 -o "$download_dir/$archive.sha256" "$base_url/$archive.sha256"
+(
+  cd "$download_dir"
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 -c "$archive.sha256"
+  else
+    sha256sum -c "$archive.sha256"
+  fi
+)
+tar -xzf "$download_dir/$archive" -C "$project_dir/.tools"
+"$project_dir/scripts/nsh" --version

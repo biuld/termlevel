@@ -1,0 +1,9 @@
+{
+  "name": "Termlevel",
+  "id": "app.termlevel.desktop",
+  "version": "0.1.0",
+  "build": 1,
+  "rust": ".",
+  "appearance": "system",
+  "theme": "theme.json"
+}

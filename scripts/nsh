@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if [ -x "$project_dir/.tools/nsh/bin/nsh" ]; then
+  nsh_bin="$project_dir/.tools/nsh/bin/nsh"
+elif command -v nsh >/dev/null 2>&1; then
+  nsh_bin=$(command -v nsh)
+else
+  echo 'NSH is missing. Run ./scripts/bootstrap first.' >&2
+  exit 1
+fi
+case "$("$nsh_bin" --version)" in
+  'nsh 0.5.0 '*) ;;
+  *) echo 'Termlevel currently requires NSH 0.5.0 (keep CLI and Rust crates aligned).' >&2; exit 1 ;;
+esac
+cd "$project_dir"
+exec "$nsh_bin" "$@"
