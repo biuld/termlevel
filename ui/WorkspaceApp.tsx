@@ -66,7 +66,7 @@ export function WorkspaceApp(props: { shell?: string } = {}) {
   }
   const actions: SidebarActions = {
     renameTab: (id) => edit("Rename terminal", store.tab(id)?.title ?? "", (title) => store.patchTab(id, { title, customTitle: true })),
-    newGroup: () => editingGroup.set(store.addGroup("")),
+    newGroup: () => editingGroup.set(store.addGroup()),
     closeGroup: closingGroup.set,
     search: () => { query.set(""); searching.set(true); },
     settings: () => settings.set(true),

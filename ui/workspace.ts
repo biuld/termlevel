@@ -24,8 +24,17 @@ export interface SessionTransport {
 export interface TabGroup {
   id: string;
   title: string;
+  cwd: string;
   color: GroupColor;
   collapsed: boolean;
+}
+
+/** The directory's own name, which a new group uses as its title. */
+function pathName(cwd: string) {
+  const trimmed = cwd.trim().replace(/[\\/]+$/, "");
+  if (!trimmed) return "未命名分组";
+  const cut = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  return (cut >= 0 ? trimmed.slice(cut + 1) : trimmed) || trimmed;
 }
 
 export function createWorkspace(transport?: SessionTransport) {
@@ -41,8 +50,8 @@ export function createWorkspace(transport?: SessionTransport) {
     { id: "colors", title: "Color test", groupId: "playground", pinned: false, cwd: "~/Playground" },
   ]);
   const groups = signal<TabGroup[]>(transport ? [] : [
-    { id: "termlevel", title: "Termlevel", color: "purple", collapsed: false },
-    { id: "playground", title: "Playground", color: "blue", collapsed: false },
+    { id: "termlevel", title: "termlevel", cwd: "~/Projects/termlevel", color: "purple", collapsed: false },
+    { id: "playground", title: "Playground", cwd: "~/Playground", color: "blue", collapsed: false },
   ]);
   const activeId = signal<string | null>(initial ? initial[0]?.id ?? null : "prototype");
   const expanded = signal(true);
@@ -69,12 +78,13 @@ export function createWorkspace(transport?: SessionTransport) {
     });
   }
 
-  function addTab(groupId: string | null = activeTab()?.groupId ?? null) {
+  function addTab(groupId: string | null = null) {
     sequence++;
-    const cwd = activeTab()?.cwd ?? transport?.cwd ?? "~";
+    const destination = groupId ? group(groupId) : undefined;
+    const cwd = destination?.cwd || activeTab()?.cwd || transport?.cwd || "~";
     const session = transport?.open(cwd);
     const id = session?.id ?? `tab-${sequence}`;
-    const validGroup = groupId && group(groupId) ? groupId : null;
+    const validGroup = destination ? groupId : null;
     batch(() => {
       tabs.update((all) => [...all, {
         ...session, id, title: session?.title || `Terminal ${sequence}`, groupId: validGroup, pinned: false,
@@ -99,15 +109,16 @@ export function createWorkspace(transport?: SessionTransport) {
     });
   }
 
-  function addGroup(title: string) {
+  function addGroup() {
+    const cwd = activeTab()?.cwd || transport?.cwd || "~";
     const id = `group-${++sequence}`;
     batch(() => {
       groups.update((all) => [...all, {
-        id, title, color: groupPalette[0].id, collapsed: false,
+        id, title: pathName(cwd), cwd, color: groupPalette[0].id, collapsed: false,
       }]);
       expanded.set(true);
-      addTab(id);
     });
+    addTab(id);
     return id;
   }
 
@@ -125,12 +136,62 @@ export function createWorkspace(transport?: SessionTransport) {
     });
   }
 
-  function moveTab(id: string, destination: string | null) {
-    if (destination && !group(destination)) return;
+  /** Moves `id` into a section without changing its session id.
+   * `beforeId` is the tab it should precede; null appends to that section.
+   * A group destination expands the group and clears the pin. */
+  function placeTab(id: string, destination: { groupId: string | null; pinned: boolean; beforeId: string | null }) {
+    const current = tab(id);
+    if (!current) return;
+    if (destination.beforeId === id && destination.groupId === current.groupId && destination.pinned === current.pinned) return;
+    if (destination.groupId && !group(destination.groupId)) return;
+    const pinned = destination.groupId ? false : destination.pinned;
+    const groupId = pinned ? null : destination.groupId;
+    const from = tabs().findIndex((t) => t.id === id);
+    const next = tabs().filter((t) => t.id !== id);
+    let index = next.length;
+    if (destination.beforeId && destination.beforeId !== id) {
+      const at = next.findIndex((t) => t.id === destination.beforeId);
+      if (at < 0) return;
+      index = at;
+    } else {
+      let last = -1;
+      next.forEach((t, i) => {
+        if (t.groupId === groupId && t.pinned === pinned) last = i;
+      });
+      if (last >= 0) index = last + 1;
+    }
+    if (current.groupId === groupId && current.pinned === pinned && from === index) return;
+    next.splice(index, 0, { ...current, groupId, pinned });
     batch(() => {
-      patchTab(id, { groupId: destination, pinned: false });
-      if (destination) patchGroup(destination, { collapsed: false });
+      tabs.set(next);
+      if (groupId) patchGroup(groupId, { collapsed: false });
     });
+  }
+
+  function moveTab(id: string, destination: string | null) {
+    placeTab(id, { groupId: destination, pinned: false, beforeId: null });
+  }
+
+  /** Drops `sourceId` on a tab that is not already in a group.
+   * Both land in a new group, `sourceId` before the target when `before` is set.
+   * Session ids stay the same, and pins are cleared. */
+  function combineTabs(sourceId: string, targetId: string, before: boolean) {
+    const source = tab(sourceId);
+    const target = tab(targetId);
+    if (!source || !target || sourceId === targetId || target.groupId) return null;
+    const groupId = `group-${++sequence}`;
+    const ordered = (before ? [source, target] : [target, source]).map((item) => ({ ...item, groupId, pinned: false }));
+    const next = tabs().filter((item) => item.id !== sourceId && item.id !== targetId);
+    const targetIndex = tabs().findIndex((item) => item.id === targetId);
+    const sourceWasBefore = tabs().findIndex((item) => item.id === sourceId) < targetIndex;
+    next.splice(Math.max(0, targetIndex - (sourceWasBefore ? 1 : 0)), 0, ...ordered);
+    const cwd = target.cwd || "~";
+    batch(() => {
+      groups.update((all) => [...all, { id: groupId, title: pathName(cwd), cwd, color: groupPalette[0].id, collapsed: false }]);
+      tabs.set(next);
+      expanded.set(true);
+    });
+    return groupId;
   }
 
   function togglePin(id: string) {
@@ -161,7 +222,7 @@ export function createWorkspace(transport?: SessionTransport) {
   return {
     tabs, groups, activeId, activeTab, expanded, sidebarWidth, fontSize,
     tab, group, groupTitle, patchTab, patchGroup, select, addTab, closeTab, addGroup,
-    ungroup, closeGroup, moveTab, togglePin, step, reorder,
+    ungroup, closeGroup, moveTab, placeTab, combineTabs, togglePin, step, reorder,
   };
 }
 

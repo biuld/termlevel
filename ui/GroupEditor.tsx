@@ -35,6 +35,7 @@ export function GroupEditor(props: {
         <View class="h-4 w-4 rounded-full" style={{ backgroundColor: groupColor(color().id) }} />
       </Button>}</Each>
     </View>
+    <Text class="mb-2 font-mono text-(length:--text-caption) text-muted-foreground" style={{ numberOfLines: 1 }}>{store.group(id)?.cwd}</Text>
     <Input testID="group-name-input" accessibilityLabel="Group name" ref={(ref) => { nameInput = ref; }}
       value={store.group(id)?.title ?? ""} placeholder="Example: Project" maxLength={80}
       onChange={({ value }) => store.patchGroup(id, { title: value })}
