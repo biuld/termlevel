@@ -7,6 +7,18 @@ export interface Tab {
   groupId: string | null;
   pinned: boolean;
   cwd: string;
+  state?: string;
+  exitCode?: number | null;
+  error?: string | null;
+  customTitle?: boolean;
+  bell?: boolean;
+}
+
+export interface SessionTransport {
+  cwd: string;
+  list(): Array<{ id: string; cwd: string; title: string; state: string; exitCode?: number | null; error?: string | null }>;
+  open(cwd: string): ReturnType<SessionTransport["list"]>[number];
+  close(id: string): void;
 }
 
 export interface TabGroup {
@@ -16,24 +28,28 @@ export interface TabGroup {
   collapsed: boolean;
 }
 
-export function createWorkspace() {
+export function createWorkspace(transport?: SessionTransport) {
+  const restored = transport?.list() ?? [];
+  const initial = transport ? (restored.length ? restored : [transport.open(transport.cwd)]) : null;
   // IDs, not tab objects or their positions, own the terminal surfaces.
-  const tabs = signal<Tab[]>([
+  const tabs = signal<Tab[]>(initial ? initial.map((session, index) => ({
+    ...session, title: session.title || `Terminal ${index + 1}`, groupId: null, pinned: false,
+  })) : [
     { id: "home", title: "Terminal", groupId: null, pinned: true, cwd: "~" },
     { id: "prototype", title: "UI prototype", groupId: "termlevel", pinned: false, cwd: "~/Projects/termlevel" },
     { id: "preview", title: "Build & preview", groupId: "termlevel", pinned: false, cwd: "~/Projects/termlevel" },
     { id: "colors", title: "Color test", groupId: "playground", pinned: false, cwd: "~/Playground" },
   ]);
-  const groups = signal<TabGroup[]>([
+  const groups = signal<TabGroup[]>(transport ? [] : [
     { id: "termlevel", title: "Termlevel", color: "purple", collapsed: false },
     { id: "playground", title: "Playground", color: "blue", collapsed: false },
   ]);
-  const activeId = signal<string | null>("prototype");
+  const activeId = signal<string | null>(initial ? initial[0]?.id ?? null : "prototype");
   const expanded = signal(true);
   const sidebarWidth = signal(token("width-sidebar"));
   const fontSize = signal(token("text-terminal"));
   const activeTab = computed(() => tabs().find((t) => t.id === activeId()));
-  let sequence = 0;
+  let sequence = initial?.length ?? 0;
 
   const tab = (id: string) => tabs().find((t) => t.id === id);
   const group = (id: string) => groups().find((g) => g.id === id);
@@ -47,18 +63,22 @@ export function createWorkspace() {
     if (!tab(id)) return;
     batch(() => {
       activeId.set(id);
+      if (tab(id)?.bell) patchTab(id, { bell: false });
       const groupId = tab(id)?.groupId;
       if (groupId) patchGroup(groupId, { collapsed: false });
     });
   }
 
   function addTab(groupId: string | null = activeTab()?.groupId ?? null) {
-    const id = `tab-${++sequence}`;
+    sequence++;
+    const cwd = activeTab()?.cwd ?? transport?.cwd ?? "~";
+    const session = transport?.open(cwd);
+    const id = session?.id ?? `tab-${sequence}`;
     const validGroup = groupId && group(groupId) ? groupId : null;
     batch(() => {
       tabs.update((all) => [...all, {
-        id, title: `Terminal ${sequence}`, groupId: validGroup, pinned: false,
-        cwd: activeTab()?.cwd ?? "~",
+        ...session, id, title: session?.title || `Terminal ${sequence}`, groupId: validGroup, pinned: false,
+        cwd: session?.cwd ?? cwd,
       }]);
       select(id);
     });
@@ -69,6 +89,7 @@ export function createWorkspace() {
     const all = tabs();
     const index = all.findIndex((t) => t.id === id);
     if (index < 0) return;
+    transport?.close(id);
     batch(() => {
       tabs.set(all.filter((t) => t.id !== id));
       if (activeId() === id) {

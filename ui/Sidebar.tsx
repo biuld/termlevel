@@ -46,7 +46,7 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
       classList={{ "bg-tab-selected hover:bg-tab-selected": active() }}
       onContextMenu={(e) => { void tabMenu(id, e.pagePosition); }}>
       <Button testID={`tab-${id}`} role="tab" selected={active()}
-        accessibilityLabel={tab()?.title ?? "Terminal"} onPress={() => store.select(id)}
+        accessibilityLabel={`${tab()?.title ?? "Terminal"}${tab()?.bell ? ", terminal bell" : ""}`} onPress={() => store.select(id)}
         tooltip={<Hint>{tab()?.title ?? "Terminal"}</Hint>}
         class="h-full min-w-0 flex-1 flex-row items-center gap-2 rounded-(--radius-tab) focus-visible:ring-2 ring-sidebar-ring"
         style={{ justifyContent: props.expanded() ? "flex-start" : "center", paddingHorizontal: props.expanded() ? 7 : 0 }}>
@@ -56,6 +56,9 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
             style={{ numberOfLines: 1, color: token(active() ? "tab-selected-foreground" : "sidebar-foreground") }}>{tab()?.title}</Text>
         </If>
       </Button>
+      <If when={tab()?.bell}>
+        <View accessibilityLabel="Terminal bell" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary" style={{ pointerEvents: "none" }} />
+      </If>
       <If when={props.expanded()}>
         <View class="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" style={{ opacity: active() ? 1 : undefined }}>
           <IconButton icon="close" label={`Close ${tab()?.title}`} testID={`close-${id}`} onPress={() => store.closeTab(id)} />

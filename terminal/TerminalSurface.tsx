@@ -1,57 +1,38 @@
-import { cleanup, effect, token, untracked, View } from "nsh";
-import { Terminal, type TerminalRef } from "nsh/base";
+import { Text, token, View } from "nsh";
+import { SessionTerminal } from "termlevel/native";
 import type { Workspace } from "../ui/workspace";
-import { PreviewSession } from "./preview-session";
-import { ansiColor } from "../ui/theme";
+import { PreviewTerminal } from "./PreviewTerminal";
 
-export function TerminalSurface(props: { id: string; workspace: Workspace }) {
+export function TerminalSurface(props: { id: string; workspace: Workspace; preview: boolean }) {
+  if (props.preview) return <PreviewTerminal id={props.id} workspace={props.workspace} />;
   const store = props.workspace;
   const id = props.id;
-  const cwd = store.tab(id)?.cwd ?? "~";
-  let terminal: TerminalRef | undefined;
-  let started = false;
-  let disposed = false;
-  const preview = new PreviewSession((text) => terminal?.write(text), cwd, () => ({
-    brand: ansiColor(token("terminal-brand")),
-    prompt: ansiColor(token("terminal-prompt")),
-    hint: ansiColor(token("terminal-hint")),
-  }));
-  const focusIfActive = () => {
-    if (!disposed && store.activeId() === id) terminal?.focus();
-  };
-
-  cleanup(() => { disposed = true; });
-  effect(() => {
-    const active = store.activeId() === id;
-    if (active) untracked(focusIfActive);
-  });
-
-  return <View
-    testID={`surface-${id}`}
+  const tab = () => store.tab(id);
+  return <View testID={`surface-${id}`}
     accessibilityElementsHidden={store.activeId() !== id}
     style={{
       position: "absolute", top: 0, right: 0, bottom: 0, left: 0,
       opacity: store.activeId() === id ? 1 : 0,
       pointerEvents: store.activeId() === id ? "auto" : "none",
-    }}
-  >
-    <Terminal
-      testID={`terminal-${id}`}
-      accessibilityLabel={`Terminal ${id}`}
-      ref={(ref) => { terminal = ref; }}
-      fontFamily={token("font-mono")}
-      fontSize={store.fontSize()}
+    }}>
+    <SessionTerminal testID={`terminal-${id}`} sessionId={id} active={store.activeId() === id}
+      accessibilityLabel={`Terminal ${tab()?.title ?? id}`}
+      fontFamily={token("font-mono")} fontSize={store.fontSize()}
       lineHeight={store.fontSize() + token("line-gap-terminal")}
-      scrollback={3000}
       cursorClass="bg-terminal-cursor/55"
-      class="flex-1 bg-terminal-background text-terminal-foreground p-(--padding-terminal)"
-      onData={({ data }) => preview.input(data)}
-      onResize={() => {
-        if (started) return;
-        started = true;
-        preview.start();
-        focusIfActive();
-      }}
-    />
+      defaultForeground={token("terminal-foreground")} defaultBackground={token("terminal-background")}
+      class="min-h-0 flex-1 bg-terminal-background text-terminal-foreground px-(--padding-terminal) pb-(--padding-terminal)"
+      onBell={() => { if (store.activeId() !== id) store.patchTab(id, { bell: true }); }}
+      onStatusChange={({ info }) => store.patchTab(id, {
+        state: info.state, exitCode: info.exitCode, error: info.error,
+        ...(!tab()?.customTitle && info.title ? { title: info.title } : {}),
+      })} />
+    <If when={tab()?.state === "exited" || tab()?.state === "error"}>
+      <View class="shrink-0 border-t border-border bg-popover px-3 py-2">
+        <Text testID={`session-status-${id}`} class="text-(length:--text-label) text-muted-foreground">
+          {tab()?.error ?? `Process exited with code ${tab()?.exitCode ?? "unknown"}. Open a new terminal to continue.`}
+        </Text>
+      </View>
+    </If>
   </View>;
 }

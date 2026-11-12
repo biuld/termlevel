@@ -2,8 +2,9 @@
 
 用垂直标签页和分组组织终端会话。UI 参考新版 Firefox，使用 NSH 的原生桌面后端，以 TSX 编写。
 
-当前为 **M1 交互原型**：使用 NSH 默认 `Terminal`，支持标签、分组和演示输入。尚未连接真实 shell；`echo`、`help`、`pwd`、`colors`、`clear` 是预览命令，不会启动系统进程。重启后预览数据重置。
+当前默认连接 **真实 PTY 和用户 shell**。Rust 使用 `alacritty_terminal` 0.26.0 解析输出、维护网格和滚动历史，Rust 原生网格视图负责显示，NSH 原生 Input 负责文字与输入法组合。会话独立于 UI 生命周期；切换标签、分组、主题及重新挂载不会终止进程。
 
+关闭终端会结束它的前台进程与 shell；关闭主窗口或退出应用会结束全部会话。工作区布局与设置尚未持久化，应用重启不恢复活着的进程。尚不声称 Neovim/tmux 完整兼容。
 ## 运行
 
 需要 Rust 1.97+ 和平台构建工具；macOS 首先支持 macOS 14+，安装 Xcode Command Line Tools。项目固定使用 NSH **0.5.0**。
@@ -15,7 +16,7 @@
 
 如果 `.tools/nsh` 已存在且完整，可以直接运行第二条命令。也可自行安装全局 nsh 0.5.0，脚本会在没有项目内版本时使用它。第一次运行 mixed 项目需要下载并编译 Rust 依赖；开发时不需要手动安装 Node 或 npm UI 框架。
 
-## 原型功能
+## 工作区功能
 
 - 侧栏贯顶布局：可调整宽度、可收起的单行垂直标签，右侧终端直接铺满。
 - 创建、关闭、重命名、固定终端；右键菜单排序及跨组移动。
@@ -23,7 +24,8 @@
 - Firefox 风格分组编辑浮层：右键组头或点更多，直接改名称、选择九种颜色；新建组直接进入编辑。
 - 查找终端、字体大小调整、系统菜单与快捷键。
 - 中性灰主题；设置中可切换浅色、深色和跟随系统。
-- 每个终端保留独立输出与输入历史，切换或折叠组不重建实例。
+- 每个终端保留独立 Rust 会话与输出，切换或折叠组保留 session ID；原生视图重新挂载可重新绑定。
+- 真实 shell、中文文本输入与粘贴、resize、Ctrl+C、标题与响铃、自然退出码及启动失败显示。
 
 | 操作 | macOS 快捷键 |
 |---|---|
@@ -51,13 +53,29 @@ Windows / Linux 的应用快捷键使用 Ctrl，平台验收属于后续工作�
 ## 结构与后续
 
 ```text
-App.tsx                       窗口、菜单、快捷键、主界面
-ui/                           分组侧栏、控件、工作区状态
-terminal/                     默认 Terminal 与独立演示 transport
-src/lib.rs                    Rust 原生模块入口
+App.tsx                       薄的 TSX 挂载入口
+ui/WorkspaceApp.tsx           窗口、菜单、快捷键、对话框及应用接线
+ui/                           侧栏、控件、主题映射、工作区状态
+terminal/TerminalSurface.tsx   真实原生终端的展示与低频状态
+terminal/PreviewTerminal.tsx   显式预览显示与演示 transport
+terminal/*.test.tsx            内核、真实 PTY 和工作区重新绑定测试
+src/lib.rs                    Rust 原生导出注册
+src/sessions.rs               独立会话管理、PTY 与进程生命周期
+src/session_view.rs           Rust 网格视图、光标锚定原生 Input 与组合输入
+src/terminal.rs               Alacritty 到 NSH 的网格适配
 scripts/                      固定版本工具安装及启动
 ```
 
-UI 始终以 TSX 编写。真实 PTY 和 shell 生命周期将在 Rust 中实现，再接入 `libghostty-vt`；逐字节输出和高频绘制留在 Rust。详见 [架构](docs/architecture.md) 与 [Roadmap](docs/roadmap.md)。
+UI 始终以 TSX 编写；真实终端的逐字节输出、解析、输入和高频刷新在 Rust 内完成。TSX 只处理显式会话操作与低频元数据。详见 [架构](docs/architecture.md) 与 [Roadmap](docs/roadmap.md)。
+
+NSH 当前视图的鼠标报告、完整功能键/修饰键、现代键盘协议、光标形状等能力仍需补齐；组合输入已有 AppKit 自动化验证；实际系统候选列表、复杂 Unicode、选区和 GUI 性能仍需人工验收。物理像素尺寸未知，像素尺寸查询返回 0。
+
+## 确定性 UI 预览
+
+```sh
+TERMLEVEL_PREVIEW=1 ./scripts/nsh run --window-size 1200x780
+```
+
+此模式保留演示标签和 `help`、`echo`、`pwd`、`colors`、`clear`，**不启动 shell、不执行系统命令**。预览与真实会话采用不同 transport，不能把预览测试当作真实 PTY 证据。
 
 修改视觉从 [theme.json](theme.json) 开始，token 分工及使用规则见 [UI 与主题](docs/design.md)。组件不直接保存配色，分组颜色也由当前主题解析。

@@ -1,0 +1,110 @@
+//! NSH is a view onto an existing Rust session, never its lifetime owner.
+
+mod input;
+mod keys;
+#[cfg(all(debug_assertions, target_os = "macos"))]
+pub(crate) mod native_probe;
+mod view;
+
+use crate::sessions::{SessionInfo, manager};
+use nsh_core::prelude::*;
+use std::{
+    cell::{Cell, RefCell},
+    sync::atomic::Ordering,
+    time::Duration,
+};
+
+/// Display parameters for a pre-existing real terminal session.
+#[derive(Clone, Copy, PartialEq, Props)]
+pub struct SessionTerminalProps {
+    /// Stable identity returned by Sessions.open. Changing it needs a new view.
+    pub session_id: Prop<SharedString>,
+    /// Whether to focus this view, independently of its session's lifetime.
+    #[prop(default = true)]
+    pub active: Prop<bool>,
+    /// Monospaced text family.
+    pub font_family: Prop<Option<SharedString>>,
+    /// Text size in points.
+    #[prop(default = Points(13.0))]
+    pub font_size: Prop<Points>,
+    /// Text row height in points.
+    #[prop(default = Points(21.0))]
+    pub line_height: Prop<Points>,
+    /// Accessible name for the native terminal input.
+    pub accessibility_label: Prop<Option<SharedString>>,
+    /// Theme classes for the native cursor.
+    pub cursor_class: Prop<Option<SharedString>>,
+    /// Theme default foreground for terminal color query replies.
+    pub default_foreground: Prop<Option<SharedString>>,
+    /// Theme default background for terminal color query replies.
+    pub default_background: Prop<Option<SharedString>>,
+}
+
+/// Low-frequency updates only; PTY output and keystrokes stay in Rust.
+#[derive(Debug, Clone, PartialEq, Event)]
+pub enum SessionTerminalEvent {
+    /// Initial status and changes to title, exit status or errors.
+    #[args(info)]
+    StatusChange(SessionInfo),
+    /// The program rang the terminal bell.
+    Bell,
+}
+
+/// Native view methods. Closing is an explicit Sessions.close operation.
+pub struct SessionTerminalApi {
+    input: ElementRef,
+}
+
+#[methods]
+impl SessionTerminalApi {
+    /// Gives the terminal's native input focus.
+    pub fn focus(&self) {
+        self.input.focus();
+    }
+}
+
+/// A native grid and input bound to an independently owned Rust session.
+#[component(methods = SessionTerminalApi)]
+pub fn SessionTerminal(
+    props: SessionTerminalProps,
+    cx: Scope<SessionTerminalEvent>,
+) -> impl IntoElement {
+    let id = props.session_id.get_untracked().to_string();
+    let session = match manager().lock().unwrap().get(&id) {
+        Ok(session) => session,
+        Err(error) => return view().child(text(error)).into_element(),
+    };
+    let display = view::Display::new(session.clone(), props);
+    cx.methods(SessionTerminalApi {
+        input: display.input,
+    });
+    let colors_session = session.clone();
+    effect(move || {
+        colors_session.set_colors(
+            props.default_foreground.get().as_deref(),
+            props.default_background.get().as_deref(),
+        )
+    });
+    let revision = Cell::new(0);
+    let metadata = RefCell::new(None);
+    let bells = Cell::new(session.bells.load(Ordering::Acquire));
+    let refresh = display.clone();
+    set_interval(Duration::from_millis(16), move || {
+        let next = session.revision.load(Ordering::Acquire);
+        if next == revision.get() {
+            return;
+        }
+        revision.set(next);
+        refresh.revision.set(next);
+        let next_bells = session.bells.load(Ordering::Acquire);
+        if bells.replace(next_bells) != next_bells {
+            cx.emit(SessionTerminalEvent::Bell);
+        }
+        let info = session.info();
+        if metadata.borrow().as_ref() != Some(&info) {
+            *metadata.borrow_mut() = Some(info.clone());
+            cx.emit(SessionTerminalEvent::StatusChange(info));
+        }
+    });
+    display.element().into_element()
+}

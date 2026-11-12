@@ -1,6 +1,6 @@
 # Termlevel Roadmap
 
-目标：一个使用 Firefox 风格 vertical tabs 和 tab groups 组织会话的原生终端应用。先把工作区交互做清楚，再接真实 shell，最后用 Ghostty 内核验证兼容性。
+目标：一个使用 Firefox 风格 vertical tabs 和 tab groups 组织会话的原生终端应用。先把工作区交互做清楚，以 Alacritty 内核与 NSH 原生视图接真实 shell，再验证并补齐终端兼容性。
 
 平台顺序：macOS AppKit 优先；Windows / Linux 在核心行为通过后分别验收。NSH 的跨平台声明不代替 Termlevel 的平台测试。
 
@@ -11,9 +11,9 @@
 - [x] 独立的工作区状态、终端显示组件、演示 transport。
 - [x] 启动说明与架构边界。
 
-## M1 · UI 原型（当前交付范围）
+## M1 · 工作区 UI（已实现基础交互）
 
-使用 NSH 默认 `Terminal`，连接确定性的演示会话，不创建 OS 进程。
+工作区交互仍以显式确定性预览回归；默认应用已在 M2 接入真实 PTY。预览 transport 不创建 OS 进程。
 
 - [x] Firefox 风格暗色窗口、可调整宽度及可收起的侧栏。
 - [x] 垂直标签创建、切换、关闭、重命名、固定。
@@ -41,26 +41,29 @@
 
 完成标准：重启恢复工作区结构；拖拽、取消拖拽、跨组移动不改变会话 ID；持久化不把进程 PID 当作可恢复会话。
 
-## M2 · 默认 Terminal + 真实 PTY
+## M2 · Alacritty + NSH 原生 Terminal + 真实 PTY
 
-- Rust `SessionManager` 创建和持有 PTY、子进程、reader / writer、退出状态。
-- 使用 `portable-pty`，连接用户默认 shell；配置 cwd、环境及与实际能力匹配的 TERM。
-- 将演示 transport 替换为真实输入输出；流式 UTF-8 解码保留跨 chunk 的不完整字符。
-- 尺寸变化同步到 PTY，处理输入、粘贴、标题、响铃、EOF、退出码。
-- 只有显式关闭会话才结束进程；窗口关闭与运行中进程需要有明确产品行为。
-- UI 变更 / TSX 热更新不能隐式结束 Rust 会话。
+- [x] 固定 Alacritty 0.26.0，通过 Rust `TerminalEmulatorFactory` 替换默认模拟器；保留确定性预览，单独验证内核与原生绑定。
+- [x] Rust `SessionManager` 创建和持有 PTY、子进程、reader / writer / reaper、退出状态。
+- [x] 使用 `portable-pty` 0.9.0，连接用户默认 shell；配置 cwd、TERM/COLORTERM/TERM_PROGRAM。
+- [x] 默认入口使用真实会话；reader 的原始字节在 Rust 内送入持久 Alacritty parser，保留跨 chunk 的 UTF-8 与转义状态，以及同步输出的结束/超时/EOF；演示 transport 只在显式预览模式启用。
+- [x] 尺寸变化与网格同步到 PTY，处理基础输入、粘贴、标题、响铃、EOF、退出码和启动失败；默认色/调色板查询直接在 Rust 回复。
+- [x] 显式关闭标签/组结束会话；关闭主窗口或退出应用结束全部会话，含前台任务、shell HUP 清理与回收。
+- [x] 视图卸载不结束 Rust 会话；UI 工作区重建从 `Sessions.list` 按同一 ID 绑定，已退出会话保留输出与退出状态。
 
-完成标准：zsh / fish 的输入、中文、粘贴、resize、Ctrl+C、进程退出与多标签隔离通过；不会在关闭后泄漏子进程。默认 Terminal 的协议缺口单独记录，不在此阶段声称 Neovim / tmux 全兼容。
+接入验收：真实 sh/zsh、原生 fish、中文文本与粘贴、resize、Ctrl+C、退出、回收、会话隔离及重新绑定有独立证据，见 [validation.md](validation.md)。用户 IME 候选窗、选区与长时间日用仍需人工验收；NSH 输入/绘制协议缺口列入 M3，不以内核接入声称 Neovim/tmux 全兼容。
 
-## M3 · Ghostty 内核与终端视图
+## M3 · 终端视图与兼容性
 
-- 固定 `libghostty-vt` 版本及匹配的原生库和 Zig 工具链，先做构建 smoke test。
-- Ghostty 对象在创建它的线程内使用；通过消息与会话 / UI 通信。
-- 先评估 `TerminalEmulatorFactory` 对字符、样式、输入模式的表达范围。
-- 若无法覆盖目标能力，采用 Rust 原生终端视图，TSX 只挂载视图、传入 session ID / 配置并接收状态事件。
+- [x] 真实会话改用 Rust 原生网格行视图，原生 Input 随光标与滚动定位；组合文字显示、确认/取消与会话切换归属有 AppKit 自动化证据。
+- [x] 按 Alacritty 列号锚定宽字符与组合字符；共享显示与查询调色板。
+- [ ] 实际系统输入法候选列表、复杂组合序列、emoji、跨行选区和复制人工验收。
+- 在 Alacritty 内核之上继续验证样式、输入模式、选区和 renderer 的表达范围。
+- 补齐鼠标报告、焦点报告、按键编码、IME、光标样式及重排能力，逐项记录原生证据。
+- 真实会话已采用扩展的 Rust 原生终端组件；TSX 只挂载视图、传入 session ID / 配置并接收状态事件。
 - 不将完整 cell grid 或逐字节终端输出绕到 JS 再回 Rust 绘制。
 - 输入编码、鼠标报告、选择、IME、重排和绘制分别验证。
-- Muxy 作为实现参考；需要的 vendored 补丁必须逐项说明，不假定 crates.io 包等同 Muxy。
+- Ghostty 仅作为后续对比候选；若评估，固定 `libghostty-vt`、原生库与匹配工具链，不预设迁移结论。
 
 完成标准：Neovim、tmux、less、top 以及常用 agent CLI 的真实使用验证；中文 / 组合字符 / emoji、ANSI / truecolor、备用屏幕、鼠标、滚动历史与重排有对应证据。测量大量输出和多会话时的响应、内存、帧耗时。图片协议按独立能力评估。
 

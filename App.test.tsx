@@ -1,6 +1,6 @@
 import { expect, open, test } from "nsh/test";
 
-const options = { platform: "macos" as const, width: 1200, height: 780, colorScheme: "dark" as const };
+const options = { platform: "macos" as const, width: 1200, height: 780, colorScheme: "dark" as const, modules: { "termlevel/native": { "Runtime.previewMode": true } } };
 
 test("the compact sidebar divider cannot resize or change the saved width", async () => {
   const app = await open("./App.tsx", { ...options, width: 800 });
