@@ -109,12 +109,21 @@ export function createWorkspace(transport?: SessionTransport) {
     });
   }
 
+  /** A palette color not already on a group, or any color once all nine are used. */
+  function nextGroupColor(): GroupColor {
+    const used = new Set(groups().map((item) => item.color));
+    const open = groupPalette.filter((item) => !used.has(item.id));
+    const pool = open.length > 0 ? open : [...groupPalette];
+    return pool[Math.floor(Math.random() * pool.length)].id;
+  }
+
   function addGroup() {
     const cwd = activeTab()?.cwd || transport?.cwd || "~";
     const id = `group-${++sequence}`;
+    const color = nextGroupColor();
     batch(() => {
       groups.update((all) => [...all, {
-        id, title: pathName(cwd), cwd, color: groupPalette[0].id, collapsed: false,
+        id, title: pathName(cwd), cwd, color, collapsed: false,
       }]);
       expanded.set(true);
     });
@@ -186,8 +195,9 @@ export function createWorkspace(transport?: SessionTransport) {
     const sourceWasBefore = tabs().findIndex((item) => item.id === sourceId) < targetIndex;
     next.splice(Math.max(0, targetIndex - (sourceWasBefore ? 1 : 0)), 0, ...ordered);
     const cwd = target.cwd || "~";
+    const color = nextGroupColor();
     batch(() => {
-      groups.update((all) => [...all, { id: groupId, title: pathName(cwd), cwd, color: groupPalette[0].id, collapsed: false }]);
+      groups.update((all) => [...all, { id: groupId, title: pathName(cwd), cwd, color, collapsed: false }]);
       tabs.set(next);
       expanded.set(true);
     });

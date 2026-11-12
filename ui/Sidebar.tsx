@@ -173,10 +173,15 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
       const peers = store.tabs().filter((item) => item.groupId === current.groupId && item.pinned === current.pinned && item.id !== dragging());
       return peers[peers.length - 1]?.id === id;
     };
+    const grouped = () => tab()?.groupId != null && props.expanded();
+    const accent = () => {
+      const groupId = tab()?.groupId;
+      return active() && groupId ? groupColor(store.group(groupId)?.color) : null;
+    };
     return <View testID={`tab-row-${id}`}
       ref={(ref) => register(`tab:${id}`, ref ? { ref, kind: "tab", id } : null)}
-      class="group relative mx-1 my-0.5 h-(--height-tab) flex-row items-center rounded-(--radius-tab) hover:bg-tab-hover"
-      classList={{ "bg-tab-selected hover:bg-tab-selected": active(), "bg-sidebar-accent": combining() }}
+      class="group relative my-0.5 h-(--height-tab) flex-row items-center rounded-(--radius-tab) hover:bg-tab-hover"
+      classList={{ "mx-1": !grouped(), "bg-tab-selected hover:bg-tab-selected": active(), "bg-sidebar-accent": combining() }}
       style={{ opacity: dragging() === id ? 0.45 : 1 }}
       onContextMenu={(e) => { void tabMenu(id, e.pagePosition); }}
       panActivation={{ activeOffsetY: 8, failOffsetX: 16 }}
@@ -199,12 +204,15 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
       <If when={lineAfter()}>
         <View testID="drop-line" accessibilityLabel="Insert terminal" class="absolute left-1 right-1 h-0.5 bg-primary" style={{ bottom: -1, pointerEvents: "none" }} />
       </If>
+      <If when={accent() !== null}>
+        <View class="absolute left-0.5 h-3.5 w-0.5 rounded-full" style={{ backgroundColor: accent()!, pointerEvents: "none" }} />
+      </If>
       <Button testID={`tab-${id}`} role="tab" selected={active()}
         accessibilityLabel={`${tab()?.title ?? "Terminal"}${tab()?.bell ? ", terminal bell" : ""}`} onPress={() => store.select(id)}
         tooltip={<Hint>{tab()?.title ?? "Terminal"}</Hint>}
         class="h-full min-w-0 flex-1 flex-row items-center gap-2 rounded-(--radius-tab) focus-visible:ring-2 ring-sidebar-ring"
         style={{ justifyContent: props.expanded() ? "flex-start" : "center", paddingHorizontal: props.expanded() ? 7 : 0 }}>
-        <Icon name={tab()?.pinned ? "pin" : "terminal"} size={13} color={token(active() ? "icon-active" : "icon")} />
+        <Icon name={tab()?.pinned ? "pin" : "terminal"} size={13} color={accent() ?? token(active() ? "icon-active" : "icon")} />
         <If when={props.expanded()}>
           <Text class="min-w-0 flex-1 text-(length:--text-body)"
             style={{ numberOfLines: 1, color: token(active() ? "tab-selected-foreground" : "sidebar-foreground") }}>{tab()?.title}</Text>
@@ -231,14 +239,16 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
       props.groupEditor.set(null);
       if (restoreFocus) trigger?.focus();
     };
-    return <View class="relative mb-2">
+    return <View class="relative mb-2"
+        classList={{ "mx-1 rounded-(--radius-panel) py-0.5": props.expanded() }}
+        style={props.expanded() ? { backgroundColor: groupTint(store.group(id)?.color) } : undefined}>
         <If when={!props.expanded()}>
           <View class="absolute w-px rounded-sm" style={{ left: 2, top: 2, bottom: 2, backgroundColor: groupLine(store.group(id)?.color) }} />
         </If>
         <View ref={(ref) => { anchor.set(ref); register(`header:${id}`, ref ? { ref, kind: "header", id } : null); }}
-          class="group relative mx-1 flex-row items-center rounded-(--radius-control)"
+          class="group relative flex-row items-center rounded-(--radius-control)"
+          classList={{ "mx-1": !props.expanded(), "bg-sidebar-accent": drop()?.headerId === id }}
           style={{ marginVertical: props.expanded() ? 0 : 2 }}
-          classList={{ "bg-sidebar-accent": drop()?.headerId === id }}
           onContextMenu={() => props.groupEditor.set(id)}>
           <If when={drop()?.headerId === id}>
             <View testID={`drop-group-${id}`} class="absolute inset-0 rounded-(--radius-control) border border-primary" style={{ pointerEvents: "none" }} />
