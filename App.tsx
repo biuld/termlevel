@@ -26,6 +26,7 @@ function App() {
   const sidebarHovered = signal(false);
   const sidebarLayoutWidth = signal(store.sidebarWidth());
   const sidebarOpen = () => store.expanded() || sidebarHovered() || editingGroup() !== null;
+  const sidebarFloating = () => !store.expanded() && sidebarOpen();
   function toggleSidebar() {
     sidebarHovered.set(false);
     store.expanded.update((value) => !value);
@@ -99,27 +100,26 @@ function App() {
     `${tab.title} ${tab.cwd} ${store.groupTitle(tab.groupId)}`.toLowerCase().includes(query().toLowerCase()));
 
   function SessionToolbar(props: { collapsed: boolean }) {
+    const showPath = () => !!store.activeTab() && !compactContent();
     return <View testID="session-toolbar" desktop={{ windowDrag: true }}
-      class="h-(--height-titlebar) shrink-0 flex-row items-center gap-2 border-b border-border bg-terminal-background"
+      class="h-(--height-titlebar) shrink-0 flex-row items-center bg-terminal-background"
       style={{
-        paddingLeft: props.collapsed ? titleBar().left + 8 : 12,
+        paddingLeft: props.collapsed ? titleBar().left + 8 : 8,
         paddingRight: titleBar().right + 8,
       }}>
       <If when={props.collapsed}>
         <View desktop={{ windowDrag: false }}>
-          <IconButton icon="sidebar" label="Expand sidebar" testID="toggle-sidebar" onPress={actions.toggleSidebar} />
+          <IconButton circle icon="sidebar" label="Expand sidebar" testID="toggle-sidebar" onPress={actions.toggleSidebar} />
         </View>
       </If>
-      <Text testID="toolbar-title" class="min-w-0 text-(length:--text-body) font-medium text-foreground"
-        style={{ numberOfLines: 1 }}>{store.activeTab()?.title ?? "New session"}</Text>
       <View class="min-w-0 flex-1" />
-      <If when={!!store.activeTab() && !compactContent()}>
-        <View testID="session-path" class="min-w-0 max-w-[280px] flex-row items-center gap-1.5">
-          <Text class="min-w-0 font-mono text-(length:--text-caption) text-muted-foreground"
+      {/* Controls only. The session name stays on its tab; this row is not a second title. */}
+      <View desktop={{ windowDrag: false }}
+        class="h-(--height-control) flex-row items-center gap-0.5">
+        <If when={showPath()}>
+          <Text testID="session-path" class="min-w-0 max-w-[280px] pr-1 font-mono text-(length:--text-caption) text-muted-foreground"
             style={{ numberOfLines: 1 }}>{store.activeTab()?.cwd}</Text>
-        </View>
-      </If>
-      <View desktop={{ windowDrag: false }} class="flex-row items-center gap-0.5">
+        </If>
         <IconButton icon="plus" label="New terminal" testID="titlebar-new-terminal" onPress={() => store.addTab()} />
         <If when={!!store.activeTab()}>
           <IconButton icon="more" label="Terminal actions" testID="terminal-actions" onPress={() => {
@@ -143,7 +143,7 @@ function App() {
     <If when={!store.expanded()}><SessionToolbar collapsed /></If>
     <ResizablePanelGroup class="min-h-0 flex-1"
       disabled={!store.expanded()}
-      handleClass={store.expanded() ? "bg-sidebar-border group-hover:bg-ring" : "bg-sidebar-border"}
+      handleClass={store.expanded() ? "bg-sidebar-border group-hover:bg-ring" : "bg-transparent"}
       handleAccessibilityLabel="Resize terminal sidebar">
       <ResizablePanel fixed size={store.expanded() ? store.sidebarWidth() : token("width-sidebar-collapsed")}
         minSize={store.expanded() ? 176 : token("width-sidebar-collapsed")}
@@ -179,16 +179,20 @@ function App() {
     </ResizablePanelGroup>
 
     {/* Window-level presentation escapes the narrow panel's native clipping. */}
-    <View testID="sidebar-panel" class="absolute bottom-0 left-0 bg-sidebar"
+    <View testID="sidebar-panel" class="absolute bottom-0 left-0"
       onMouseEnter={() => { if (!store.expanded()) sidebarHovered.set(true); }}
       onMouseLeave={() => sidebarHovered.set(false)}
       style={{
         top: store.expanded() ? 0 : token("height-titlebar"),
         width: store.expanded() ? sidebarLayoutWidth() : sidebarOpen() ? store.sidebarWidth() : token("width-sidebar-collapsed"),
         zIndex: 10,
-        borderRightWidth: !store.expanded() && sidebarOpen() ? 1 : 0,
+        // All navigation states share one surface; elevation signals an overlay.
+        backgroundColor: token("sidebar"),
+        borderRightWidth: sidebarFloating() ? 1 : 0,
         borderColor: token("sidebar-border"),
-        boxShadow: !store.expanded() && sidebarOpen() ? [{ x: 6, y: 0, blur: 18, color: token("panel-shadow") }] : [],
+        borderTopRightRadius: sidebarFloating() ? token("radius-panel") : 0,
+        borderBottomRightRadius: sidebarFloating() ? token("radius-panel") : 0,
+        boxShadow: sidebarFloating() ? [{ x: 6, y: 0, blur: 28, color: token("panel-shadow") }] : [],
       }}>
       <Sidebar workspace={store} actions={actions} groupEditor={editingGroup} expanded={sidebarOpen} />
     </View>

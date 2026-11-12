@@ -10,7 +10,7 @@ test("the compact sidebar divider cannot resize or change the saved width", asyn
   await app.hover("id:sidebar-panel");
   await app.drag("label:Resize terminal sidebar", { x: 200 });
   expect(app.shows("id:session-path")).toBe(true);
-  await app.hover("id:toolbar-title");
+  await app.hover("id:session-toolbar");
   await app.press("id:toggle-sidebar");
   expect(app.shows("id:session-path")).toBe(true);
   await app.drag("label:Resize terminal sidebar", { x: 80 });
@@ -32,7 +32,7 @@ test("resizing updates the layout before release and hover still opens the sideb
   await app.press("id:group-menu-termlevel");
   await app.waitFor("id:group-editor");
   await app.keyboard.press("escape");
-  await app.hover("id:toolbar-title");
+  await app.hover("id:session-toolbar");
   expect(app.shows("id:group-menu-termlevel")).toBe(false);
   await app.waitFor("text:resize-overlay-output");
   expect(app.count("id:terminal-prototype")).toBe(1);
@@ -53,12 +53,12 @@ test("hover expands the compact sidebar over the terminal and keeps group editin
   expect(app.shows("id:group-menu-termlevel")).toBe(true);
   expect(app.shows("id:group-editor")).toBe(true);
   await app.keyboard.press("escape");
-  await app.hover("id:toolbar-title");
+  await app.hover("id:session-toolbar");
   expect(app.shows("id:group-menu-termlevel")).toBe(false);
   await app.waitFor("text:hover-retains-output");
   expect(app.count("id:terminal-prototype")).toBe(1);
   await app.press("id:toggle-sidebar");
-  await app.hover("id:toolbar-title");
+  await app.hover("id:session-toolbar");
   expect(app.shows("id:group-menu-termlevel")).toBe(true);
   expect(app.shows("id:sidebar-titlebar")).toBe(true);
 });
@@ -177,7 +177,7 @@ test("appearance updates theme tokens without recreating the terminal", async ()
   const app = await open("./App.tsx", options);
   await app.type("id:terminal-prototype", "echo theme-keeps-output");
   await app.keyboard.press("enter");
-  const darkText = app.spanStyle("id:toolbar-title >> text:UI prototype").color;
+  const darkText = app.spanStyle("id:tab-prototype >> text:UI prototype").color;
   const darkOutput = app.spanStyle("id:terminal-prototype >> text:theme-keeps-output >> nth=1").color;
   const darkGroup = app.spanStyle("id:group-termlevel >> text:Termlevel").color;
   expect(darkOutput === darkText).toBe(false);
@@ -185,7 +185,7 @@ test("appearance updates theme tokens without recreating the terminal", async ()
   await app.press("id:settings");
   await app.press("id:appearance-light");
   await app.press("label:Close settings");
-  const lightText = app.spanStyle("id:toolbar-title >> text:UI prototype").color;
+  const lightText = app.spanStyle("id:tab-prototype >> text:UI prototype").color;
   expect(lightText === darkText).toBe(false);
   expect(app.spanStyle("id:terminal-prototype >> text:theme-keeps-output >> nth=1").color === darkOutput).toBe(false);
   expect(app.spanStyle("id:group-termlevel >> text:Termlevel").color === darkGroup).toBe(false);
@@ -194,15 +194,15 @@ test("appearance updates theme tokens without recreating the terminal", async ()
   await app.press("id:settings");
   await app.press("id:appearance-dark");
   await app.press("label:Close settings");
-  expect(app.spanStyle("id:toolbar-title >> text:UI prototype").color).toBe(darkText);
+  expect(app.spanStyle("id:tab-prototype >> text:UI prototype").color).toBe(darkText);
 
   await app.setColorScheme("light");
   // The explicit dark choice overrides system changes.
-  expect(app.spanStyle("id:toolbar-title >> text:UI prototype").color).toBe(darkText);
+  expect(app.spanStyle("id:tab-prototype >> text:UI prototype").color).toBe(darkText);
   await app.press("id:settings");
   await app.press("id:appearance-system");
   await app.press("label:Close settings");
-  expect(app.spanStyle("id:toolbar-title >> text:UI prototype").color).toBe(lightText);
+  expect(app.spanStyle("id:tab-prototype >> text:UI prototype").color).toBe(lightText);
   await app.waitFor("text:theme-keeps-output");
   expect(app.count("id:terminal-prototype")).toBe(1);
 });
@@ -246,9 +246,11 @@ test("the group editor changes color and name inline while keeping terminal outp
   }
   await app.press("id:group-color-red");
   expect(app.shows("id:group-editor")).toBe(true);
+  expect(app.shows("id:group-termlevel >> label:red group marker")).toBe(true);
   await app.clear("id:group-name-input");
   await app.type("id:group-name-input", "Release");
-  expect(app.spanStyle("id:group-termlevel >> text:Release").color === before).toBe(false);
+  // Color belongs to the marker; the name keeps its readable neutral color.
+  expect(app.spanStyle("id:group-termlevel >> text:Release").color).toBe(before);
   await app.keyboard.press("escape");
   expect(app.shows("id:group-editor")).toBe(false);
   await app.waitFor("text:group-editor-retains-output");

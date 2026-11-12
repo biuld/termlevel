@@ -20,8 +20,10 @@ export function GroupEditor(props: {
   return <Overlay testID="group-editor" role="dialog" accessibilityLabel="Edit tab group"
     anchor={props.anchor} placement="right" align="start" offset={8} margin={8}
     onPressOutside={() => props.close(false)} onCancel={() => props.close(true)}
-    class="w-(--width-group-editor) rounded-(--radius-dialog) border border-border bg-popover p-3"
-    style={{ boxShadow: [{ x: 0, y: 4, blur: 18, color: token("panel-shadow") }] }}>
+    class="w-(--width-group-editor) rounded-(--radius-overlay) border border-border bg-popover p-3"
+    style={{
+      boxShadow: [{ x: 0, y: 8, blur: 24, color: token("panel-shadow") }],
+    }}>
     <DialogKeys dismiss={() => props.close(true)} />
     <View class="mb-2 flex-row items-center justify-between" role="group" accessibilityLabel="Group color">
       <Each of={groupPalette}>{(color) => <Button

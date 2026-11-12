@@ -35,9 +35,23 @@ Headless 测试使用真实 NSH 引擎、默认 Terminal 与 QuickJS，桌面视
 
 2026-11-12 浮层裁剪修正：用户实机截图确认将 Sidebar 放在 44 pt 分栏内会裁剪展开内容。当前 Sidebar 改回窗口根层，固定展开时通过分栏内测量 View 的 `onLayout` 同步实际宽度；`onResize` 仅保存拖动结束尺寸。13 项交互回归通过；浮层的完整原生绘制、命中和逐帧拖动跟随仍需实机验收，headless 交互通过不能证明没有原生裁剪。
 
+2026-11-12 平台材质：固定侧栏改为 `sidebar` 视觉效果，悬停侧栏、会话工具栏、分组编辑浮层和 tooltip 改为 `regular` 玻璃加模糊回退。`./scripts/nsh check` 通过，headless 14 项通过。Liquid Glass 只在 macOS 26 绘制，材质采样、对比度和窗口激活态仍需实机窗口验收。
+
 本地产物在被忽略的 `.nsh/out/` 和 `artifacts/`。Debug runner 链接时有 1 条 linker warning：`__eh_frame section too large (max 16MB) to encode dwarf unwind offsets in compact unwind table`，提示异常处理性能可能受影响；构建和测试均成功。尚未验证 release 构建是否存在同样警告。
 
-## 尚未通过实机验收
+## 2026-11-12 侧栏表面与层级调整
+
+固定展开和收起侧栏改用接近终端的不透明底色，收起态取消分界填充；悬停浮层保留玻璃、右侧圆角和阴影。组名使用中性色，组标保留颜色，引导线降低对比，移除底部分隔线。侧栏开关两种状态采用相同的圆形无底色常态。
+
+- `./scripts/nsh build`、`./scripts/nsh check`、`git diff --check` 通过。
+- `./scripts/nsh test --junit artifacts/headless-tests.xml`：14 passed，0 failed。分组编辑测试调整为检查可访问的组标颜色名称，组名颜色保持中性；继续验证名称更新、会话输出与实例保留。
+- 两次 `./scripts/nsh test App.tsx --target macos` 原生步骤通过，已查看深色展开、深色收起、深色悬停、浅色展开和浅色收起的截图。首次受限环境仍报本地服务器 `Operation not permitted`，允许本地开发服务器后成功。截图位于忽略的 `artifacts/sidebar-quiet-*.png`。
+- 截图确认固定侧栏无玻璃顶部亮边，悬停展开内容没有被 44 pt 分栏裁剪。原生宿主在后台运行，截图窗口按钮为失焦状态；浅色及悬停截图采用默认窄视口，不作为所有窗口宽度的验收。
+- 原生宿主报告 `SF Pro Text` 不可用并回退到系统字体；链接仍有既有 warning。截图中的预览输出出现窄列换行，本轮未更改终端布局或重排，未定位其原因。
+
+本轮不代表标题栏拖动、IME、选区复制、高 DPI、激活态切换、不同桌面背景或系统“减少透明度”已通过。以下为此前验收限制的历史记录；本轮已取得上述原生截图。
+
+## 此前未通过的实机验收记录
 
 `./scripts/nsh test App.tsx --target macos` 已编译原生宿主，但启动测试时环境禁止监听本地开发服务器，报 `cannot start a dev server: Operation not permitted (os error 1)`。因此没有得到原生测试截图。
 
@@ -60,3 +74,11 @@ Headless 测试使用真实 NSH 引擎、默认 Terminal 与 QuickJS，桌面视
 初始化时遇到过磁盘不足；恢复空间后已重新解压完整工具并成功完成构建。Cargo 下载在受限命令中遇到 DNS 失败，通过独立 `cargo fetch` 缓存依赖后，以 `CARGO_NET_OFFLINE=true` 完成检查。
 
 项目文件已创建；本环境禁止创建此目录的 `.git` 元数据，`git init` 返回 `Operation not permitted`，因此尚未初始化 Git 仓库、也没有提交。可在普通终端运行 `git init`。
+
+## 2026-11-12 全部移除玻璃效果
+
+按用户要求，悬停侧栏统一使用实色 `sidebar`，覆盖层级由细边框、右侧圆角和轻阴影表达；工具栏移除胶囊底座，目录与按钮直接排列；分组编辑和 tooltip 改为实色 `popover`、细边框和轻阴影。删除玻璃辅助模块、IconButton 的玻璃分支以及两套外观中的玻璃 token。应用 TSX 与主题中不再有 `glassEffect`、玻璃色调、背景模糊或平台 backdrop 配置；模态对话框的均匀遮罩保留。
+
+`./scripts/nsh build`、`./scripts/nsh check`、`git diff --check` 通过；`./scripts/nsh test --junit artifacts/headless-tests.xml`：14 passed，0 failed。
+
+`./scripts/nsh test App.tsx --target macos` 原生截图步骤通过，取得深色展开、收起、悬停、分组编辑和浅色展开截图，位于忽略的 `artifacts/sidebar-solid-*.png`；已查看悬停、编辑浮层和浅色截图，确认底色保持实色、工具栏无胶囊底座、编辑内容完整显示。原生宿主仍报告系统字体回退，链接有既有 warning；预览窄列换行仍存在。此次截图不代替 IME、选区复制、激活态切换和长期日用验收。
