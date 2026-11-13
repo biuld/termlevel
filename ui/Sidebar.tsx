@@ -1,11 +1,12 @@
 import { keymap, Scroll, signal, Text, token, View, type GestureResponderEvent, type Point, type Signal, type ViewRef } from "nsh";
 import { Button } from "nsh/base";
-import { Menu, titleBar } from "nsh/desktop";
+import { Menu } from "nsh/desktop";
 import { Icon } from "./icons";
 import { Hint, IconButton } from "./controls";
 import type { Workspace } from "./workspace";
 import { groupColor, groupLine, groupTint } from "./theme";
 import { GroupEditor } from "./GroupEditor";
+import { Type } from "./type";
 
 type DragSlot = { ref: ViewRef; kind: "tab" | "header" | "ungrouped"; id: string | null };
 type SlotRect = { x: number; y: number; width: number; height: number };
@@ -204,9 +205,6 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
       <If when={lineAfter()}>
         <View testID="drop-line" accessibilityLabel="Insert terminal" class="absolute left-1 right-1 h-0.5 bg-primary" style={{ bottom: -1, pointerEvents: "none" }} />
       </If>
-      <If when={accent() !== null}>
-        <View class="absolute left-0.5 h-3.5 w-0.5 rounded-full" style={{ backgroundColor: accent()!, pointerEvents: "none" }} />
-      </If>
       <Button testID={`tab-${id}`} role="tab" selected={active()}
         accessibilityLabel={`${tab()?.title ?? "Terminal"}${tab()?.bell ? ", terminal bell" : ""}`} onPress={() => store.select(id)}
         tooltip={<Hint>{tab()?.title ?? "Terminal"}</Hint>}
@@ -240,8 +238,7 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
       if (restoreFocus) trigger?.focus();
     };
     return <View class="relative mb-2"
-        classList={{ "mx-1 rounded-(--radius-panel) py-0.5": props.expanded() }}
-        style={props.expanded() ? { backgroundColor: groupTint(store.group(id)?.color) } : undefined}>
+        classList={{ "mx-1 py-0.5": props.expanded() }}>
         <If when={!props.expanded()}>
           <View class="absolute w-px rounded-sm" style={{ left: 2, top: 2, bottom: 2, backgroundColor: groupLine(store.group(id)?.color) }} />
         </If>
@@ -256,7 +253,7 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
           <Button testID={`group-${id}`} ref={(ref) => { trigger = ref; }}
             accessibilityLabel={`${store.group(id)?.collapsed ? "Expand" : "Collapse"} ${store.groupTitle(id)}`}
             onPress={() => { close(false); toggleGroup(id); }}
-            class="h-(--height-tab) min-w-0 flex-1 flex-row items-center gap-1.5 rounded-(--radius-control) hover:bg-sidebar-accent focus-visible:ring-2 ring-sidebar-ring"
+            class="h-(--height-tab) min-w-0 flex-1 flex-row items-center gap-1.5 rounded-(--radius-control) focus-visible:ring-2 ring-sidebar-ring"
             style={{ justifyContent: props.expanded() ? "flex-start" : "center", paddingHorizontal: props.expanded() ? 4 : 0 }}
             tooltip={<Hint>{`${store.groupTitle(id)} · ${store.group(id)?.cwd ?? ""} · ${members(id).length} terminals`}</Hint>}>
             <If when={props.expanded()}>
@@ -282,7 +279,7 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
           </If>
         </View>
         <If when={visibleMembers().length > 0}>
-          <View style={{ marginLeft: props.expanded() ? 10 : 0, borderLeftWidth: props.expanded() ? 1 : 0, borderColor: groupLine(store.group(id)?.color) }}>
+          <View style={{ marginLeft: props.expanded() ? 10 : 0, paddingLeft: props.expanded() ? token("gap-group-guide") : 0, borderLeftWidth: props.expanded() ? 1 : 0, borderColor: groupLine(store.group(id)?.color) }}>
             <Each of={visibleMembers().map((t) => t.id)}>{(tabId) => <TabRow id={tabId()} />}</Each>
           </View>
         </If>
@@ -311,15 +308,11 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
   };
 
   return <View ref={(ref) => panel.set(ref)} class="h-full">
-    <If when={store.expanded()}>
-      <View testID="sidebar-titlebar" desktop={{ windowDrag: true }}
-        class="h-(--height-titlebar) shrink-0 flex-row items-center justify-end"
-        style={{ paddingLeft: titleBar().left + 8, paddingRight: 6 }}>
-        <View desktop={{ windowDrag: false }}>
-          <IconButton circle icon="sidebar" label="Collapse sidebar" testID="toggle-sidebar" onPress={actions.toggleSidebar} />
-        </View>
-      </View>
-    </If>
+    <View testID="sidebar-heading" class="h-(--height-toolbar) shrink-0 flex-row items-center px-3"
+      style={{ justifyContent: props.expanded() ? "flex-start" : "center" }}>
+      <If when={props.expanded()}><Type role="label">Sessions</Type></If>
+      <If when={!props.expanded()}><Icon name="terminal" size={14} /></If>
+    </View>
 
     <Scroll class="min-h-0 flex-1 pt-1.5" scrollbar={false}>
       <If when={store.tabs().some((t) => t.pinned)}>

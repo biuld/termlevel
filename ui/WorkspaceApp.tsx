@@ -42,7 +42,7 @@ export function WorkspaceApp(props: { shell?: string } = {}) {
   const version = Runtime.version();
   const compactContent = signal(false);
   const sidebarHovered = signal(false);
-  const sidebarLayoutWidth = signal(store.sidebarWidth());
+  const sidebarLayoutWidth = signal(store.sidebarWidth() + token("gap-pane") / 2);
   const sidebarOpen = () => store.expanded() || sidebarHovered() || editingGroup() !== null;
   const sidebarFloating = () => !store.expanded() && sidebarOpen();
   function toggleSidebar() {
@@ -117,27 +117,19 @@ export function WorkspaceApp(props: { shell?: string } = {}) {
   const searchResults = () => store.tabs().filter((tab) =>
     `${tab.title} ${tab.cwd} ${store.groupTitle(tab.groupId)}`.toLowerCase().includes(query().toLowerCase()));
 
-  function SessionToolbar(props: { collapsed: boolean }) {
+  function SessionToolbar() {
     const showPath = () => !!store.activeTab() && !compactContent();
-    // The collapsed toolbar spans the window, while the terminal starts after the rail.
-    const pathInset = () => props.collapsed
-      ? Math.max(0, token("width-sidebar-collapsed") + token("padding-terminal") - titleBar().left - 8 - token("height-control"))
-      : token("padding-terminal");
-    return <View testID="session-toolbar" desktop={{ windowDrag: true }}
-      class="h-(--height-titlebar) shrink-0 flex-row items-center bg-terminal-background"
-      style={{
-        paddingLeft: props.collapsed ? titleBar().left + 8 : 0,
-        paddingRight: titleBar().right + 8,
-      }}>
-      <If when={props.collapsed}>
-        <View desktop={{ windowDrag: false }}>
-          <IconButton circle icon="sidebar" label="Expand sidebar" testID="toggle-sidebar" onPress={actions.toggleSidebar} />
-        </View>
-      </If>
-      <View class="min-w-0 flex-1 flex-row items-center" style={{ paddingLeft: pathInset() }}>
+    return <View testID="session-toolbar"
+      class="h-(--height-toolbar) shrink-0 flex-row items-center bg-terminal-background"
+      style={{ paddingLeft: token("padding-terminal"), paddingRight: token("gap-pane") }}>
+      <View class="min-w-0 flex-1 flex-row items-center gap-2">
+        <Icon name="terminal" size={14} />
         <If when={showPath()}>
           <Type testID="session-path" role="body" family="mono" tone="muted-foreground" lines={1} class="min-w-0 flex-1"
             tooltip={<Hint>{`${preview ? "Demo directory" : "Initial directory"}: ${store.activeTab()?.cwd}`}</Hint>}>{store.activeTab()?.cwd}</Type>
+        </If>
+        <If when={!showPath()}>
+          <Type role="body" tone="muted-foreground" lines={1} class="min-w-0 flex-1">{store.activeTab()?.title ?? "Terminal"}</Type>
         </If>
       </View>
       <View desktop={{ windowDrag: false }}
@@ -161,59 +153,74 @@ export function WorkspaceApp(props: { shell?: string } = {}) {
     </View>;
   }
 
-  return <TerminalEngine class="relative flex-1 bg-terminal-background font-sans text-foreground">
-    <If when={!store.expanded()}><SessionToolbar collapsed /></If>
-    <ResizablePanelGroup class="min-h-0 flex-1"
-      disabled={!store.expanded()}
-      handleClass={store.expanded() ? "bg-sidebar-border group-hover:bg-ring" : "bg-transparent"}
-      handleAccessibilityLabel="Resize terminal sidebar">
-      <ResizablePanel fixed size={store.expanded() ? store.sidebarWidth() : token("width-sidebar-collapsed")}
-        minSize={store.expanded() ? 176 : token("width-sidebar-collapsed")}
-        maxSize={store.expanded() ? 288 : token("width-sidebar-collapsed")}
-        onResize={({ size }) => { if (store.expanded()) store.sidebarWidth.set(size); }}>
-        {/* Measure native layout during drag; onResize only persists the final size. */}
-        <View testID="sidebar-allocation" class="h-full w-full"
-          onLayout={({ bounds }) => sidebarLayoutWidth.set(bounds.size.width)} />
-      </ResizablePanel>
-      <ResizablePanel minSize={320}>
-        <View testID="session-panel" class="h-full min-w-0 flex-1 bg-terminal-background"
-          onLayout={({ bounds }) => compactContent.set(bounds.size.width < 520)}>
-          <If when={store.expanded()}><SessionToolbar collapsed={false} /></If>
+  return <TerminalEngine class="relative flex-1 bg-chrome font-sans text-foreground">
+    <View testID="window-toolbar" desktop={{ windowDrag: true }}
+      class="relative h-(--height-titlebar) shrink-0 flex-row items-center"
+      style={{ paddingLeft: titleBar().left + token("gap-pane"), paddingRight: titleBar().right + token("gap-pane") }}>
+      <View desktop={{ windowDrag: false }}>
+        <IconButton circle icon="sidebar" label={store.expanded() ? "Collapse sidebar" : "Expand sidebar"}
+          testID="toggle-sidebar" onPress={actions.toggleSidebar} />
+      </View>
+      <View class="absolute inset-0 items-center justify-center" style={{ pointerEvents: "none" }}>
+        <Type role="label">Termlevel</Type>
+      </View>
+    </View>
+    <View class="min-h-0 flex-1 px-(--gap-pane) pb-(--gap-pane)">
+      <ResizablePanelGroup class="min-h-0 flex-1"
+        disabled={!store.expanded()}
+        handleClass={store.expanded() ? "bg-transparent group-hover:bg-sidebar-border group-active:bg-ring" : "bg-transparent"}
+        handleAccessibilityLabel="Resize terminal sidebar">
+        <ResizablePanel fixed size={(store.expanded() ? store.sidebarWidth() : token("width-sidebar-collapsed")) + token("gap-pane") / 2}
+          minSize={(store.expanded() ? 176 : token("width-sidebar-collapsed")) + token("gap-pane") / 2}
+          maxSize={(store.expanded() ? 288 : token("width-sidebar-collapsed")) + token("gap-pane") / 2}
+          onResize={({ size }) => { if (store.expanded()) store.sidebarWidth.set(size - token("gap-pane") / 2); }}>
+          {/* Measure native layout during drag; onResize only persists the final size. */}
+          <View testID="sidebar-allocation" class="h-full w-full"
+            onLayout={({ bounds }) => sidebarLayoutWidth.set(bounds.size.width)} />
+        </ResizablePanel>
+        <ResizablePanel minSize={320}>
+          <View class="h-full min-w-0 flex-1" style={{ paddingLeft: token("gap-pane") / 2 }}>
+            <View testID="session-panel" class="min-h-0 min-w-0 flex-1 overflow-hidden rounded-(--radius-panel) bg-terminal-background"
+              onLayout={({ bounds }) => compactContent.set(bounds.size.width < 520)}>
+              <SessionToolbar />
 
-          {/* Stable ID keys keep every terminal mounted across selection,
-              group collapse, rename and moves. Only close disposes a surface. */}
-          <View class="relative min-h-0 flex-1 overflow-hidden">
-            <Each of={store.tabs().map((t) => t.id)}>{(id) => <TerminalSurface id={id()} workspace={store} preview={preview} />}</Each>
-            <If when={store.tabs().length === 0}>
-              <View testID="empty-state" class="flex-1 items-center justify-center gap-3">
-                <View class="h-10 w-10 items-center justify-center rounded-(--radius-panel) border border-border bg-muted">
-                  <Icon name="terminal" size={20} color={token("icon-active")} />
-                </View>
-                <Type role="heading">Room for something new.</Type>
-                <Type role="body" tone="muted-foreground">Open a terminal to get started.</Type>
-                <Action primary onPress={() => { store.addTab(null); }} testID="empty-new-terminal">New terminal</Action>
+              {/* Stable ID keys keep every terminal mounted across selection,
+                  group collapse, rename and moves. Only close disposes a surface. */}
+              <View class="relative min-h-0 flex-1 overflow-hidden">
+                <Each of={store.tabs().map((t) => t.id)}>{(id) => <TerminalSurface id={id()} workspace={store} preview={preview} />}</Each>
+                <If when={store.tabs().length === 0}>
+                  <View testID="empty-state" class="flex-1 items-center justify-center gap-3">
+                    <View class="h-10 w-10 items-center justify-center rounded-(--radius-panel) border border-border bg-muted">
+                      <Icon name="terminal" size={20} color={token("icon-active")} />
+                    </View>
+                    <Type role="heading">Room for something new.</Type>
+                    <Type role="body" tone="muted-foreground">Open a terminal to get started.</Type>
+                    <Action primary onPress={() => { store.addTab(null); }} testID="empty-new-terminal">New terminal</Action>
+                  </View>
+                </If>
               </View>
-            </If>
-          </View>
 
-        </View>
-      </ResizablePanel>
-    </ResizablePanelGroup>
+            </View>
+          </View>
+        </ResizablePanel>
+      </ResizablePanelGroup>
+    </View>
 
     {/* Window-level presentation escapes the narrow panel's native clipping. */}
-    <View testID="sidebar-panel" class="absolute bottom-0 left-0"
+    <View testID="sidebar-panel" class="absolute"
       onMouseEnter={() => { if (!store.expanded()) sidebarHovered.set(true); }}
       onMouseLeave={() => sidebarHovered.set(false)}
       style={{
-        top: store.expanded() ? 0 : token("height-titlebar"),
-        width: store.expanded() ? sidebarLayoutWidth() : sidebarOpen() ? store.sidebarWidth() : token("width-sidebar-collapsed"),
+        top: token("height-titlebar"),
+        bottom: token("gap-pane"),
+        left: token("gap-pane"),
+        width: store.expanded() ? sidebarLayoutWidth() - token("gap-pane") / 2 : sidebarOpen() ? store.sidebarWidth() : token("width-sidebar-collapsed"),
         zIndex: 10,
         // All navigation states share one surface; elevation signals an overlay.
         backgroundColor: token("sidebar"),
-        borderRightWidth: sidebarFloating() ? 1 : 0,
+        borderWidth: sidebarFloating() ? 1 : 0,
         borderColor: token("sidebar-border"),
-        borderTopRightRadius: sidebarFloating() ? token("radius-panel") : 0,
-        borderBottomRightRadius: sidebarFloating() ? token("radius-panel") : 0,
+        borderRadius: token("radius-panel"),
         boxShadow: sidebarFloating() ? [{ x: 6, y: 0, blur: 28, color: token("panel-shadow") }] : [],
       }}>
       <Sidebar workspace={store} actions={actions} groupEditor={editingGroup} expanded={sidebarOpen} />

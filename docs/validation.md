@@ -193,3 +193,37 @@ NSH 0.5.0 的测试驱动没有 `compose()`，因此 `scripts/test-native-input`
 垂直拖动标签可在侧栏内重排，或拖到组头放入该组。拖到已有分组的标签上会加入该组；拖到没有分组的标签上会组成新组，组名和路径取被拖到的标签，不打开分组编辑。组内新建的终端从分组路径启动。拖动中组头高亮表示放入该组，标签高亮表示与该标签成组，标签之间的线表示插入位置。松手在侧栏外，或横向滑开，分组不变。拖进折叠的组会展开该组。标签之间的空隙不会把未固定标签插进固定区。拖动不改变 session ID，终端输出保留。
 
 `./scripts/nsh test App.test.tsx` 16 项通过，其中两项覆盖拖入展开组、拖入折叠组，以及横向拖动取消。`./scripts/nsh check` 通过。这次是 headless 指针驱动，还没有在原生窗口里用手拖验收命中和跟手。
+
+
+## 2026-11-13 · 独立 pane 与统一窗口栏
+
+布局改为 40 pt 统一窗口栏，下方侧栏和 terminal 为独立圆角 pane。pane 顶部直接接窗口栏下沿，左右、底部及两栏之间保留 8 pt；移除首版多出的顶部 8 pt 留白。侧栏缩放边界位于间隙中，悬停展开仍覆盖终端而不改变终端分配宽度，收起及临时展开禁止缩放。真实终端与预览使用相同的正文内边距：顶部 8 pt，左右及底部 16 pt。
+
+验证：`./scripts/nsh build`、`./scripts/nsh check` 通过。`./scripts/nsh test --junit artifacts/floating-panes-headless.xml` 覆盖 Rust 内核/PTY、工作区交互和挂载恢复，共 50 项。
+
+原生 AppKit 使用临时 `nsh/test` 脚本，在 `TERMLEVEL_PREVIEW=1` 下运行 `./scripts/nsh test .pane-visual.test.tsx --target macos --junit artifacts/floating-panes-native.xml`，深色与浅色两项通过。已查看 1100×720 pt、scale 2 的展开、收起、悬停覆盖和浅色截图：`artifacts/panes-expanded.png`、`artifacts/panes-collapsed.png`、`artifacts/panes-hover.png`、`artifacts/panes-light.png`。截图确认 pane 顶部位于 40 pt，悬停浮层未被窄分栏裁剪。临时脚本已移除，截图和 JUnit 为忽略的本地产物。
+
+这次原生验收使用显式预览会话，只证明布局与覆盖显示；真实 PTY 的工作区操作和恢复由上述 headless 集成测试覆盖。系统候选窗、复制选区、标题栏拖动和长期日用仍保留独立人工验收边界。
+
+
+## 2026-11-13 · Fleet Dark / Light 配色映射
+
+`theme.json` 的完整深浅色语义 token 改为 Fleet Islands UI 配色映射，固定来源与用途表见 [design.md](design.md#fleet-dark--light-配色)。工作区窗口、pane、弹层、控件、分组和终端默认前景/背景/光标均已覆盖；不修改 NSH 固定 ANSI 16 色或程序 truecolor。源码中的透明中性色预合成为不透明表面。
+
+`./scripts/nsh build`、`./scripts/nsh check` 通过。headless 回归 `./scripts/nsh test --junit artifacts/fleet-palette-headless.xml` 的 50 项测试全部通过。主题切换测试仍检查颜色随外观更新、显式外观覆盖系统选择、终端实例和输出保留；移除此前要求终端文字与标签文字颜色必须不同的断言，因为 Fleet 两者主文字均使用相同颜色。
+
+原生 AppKit 以显式预览模式执行临时 `.palette-visual.test.tsx`，深色与浅色两项通过（`artifacts/fleet-palette-native.xml`），分别截取并查看工作区、设置面板及侧栏悬停状态：`artifacts/fleet-dark.png`、`artifacts/fleet-light.png`、对应的 `-settings.png` / `-hover.png`。临时脚本已删除，所有截图与报告均为本地忽略产物。此处为原生视觉与交互自动化记录，不代替实际系统输入法及长期日用人工验收。
+
+## 2026-11-13 · 分组平铺
+
+去掉展开分组的整块彩色背景和圆角外框、组头按钮的悬停填色，保留行位置、彩色组标、成员引导线以及活动终端的一层中性底色。组头悬停仍显示更多按钮，键盘焦点环和拖放目标反馈保留。
+
+`./scripts/nsh build`、`./scripts/nsh check` 通过。原生预览脚本在 Dark / Light 下悬停组头并检查侧栏覆盖态，两项通过，截图为 `artifacts/flat-groups-dark.png`、`artifacts/flat-groups-light.png` 和对应的 `-hover.png`，报告为 `artifacts/flat-groups-native.xml`。临时脚本已移除。50 项 headless 测试全部通过，交互回归报告：`artifacts/flat-groups-headless.xml`。原生截图不代替真实系统输入法、选区等人工验收。
+
+## 2026-11-13 · 引导线与 tab 分离
+
+展开态成员容器通过 `gap-group-guide: 6px` 留出引导线到 tab 左缘的间隔，删除活动 tab 内重复的彩色短竖条；选中底色和彩色终端图标保留。收起态不增加这段缩进。`./scripts/nsh build`、`./scripts/nsh check` 通过。原生预览 Dark / Light 两项通过，分别截图展开、收起和悬停覆盖态（`artifacts/group-guide-{dark,light}.png` 与对应的 `-collapsed.png`、`-hover.png`；报告 `artifacts/group-guide-native.xml`），已查看展开、收起与悬停的间隔和选中标识。临时原生脚本已移除。headless 回归为 49 项通过、1 项 Rust PTY 测试 `real_shell_utf8_resize_title_and_exit_status` 等待状态超时（报告 `artifacts/group-guide-headless.xml`）；使用 `./scripts/nsh test --filter real_shell_utf8_resize_title_and_exit_status --junit artifacts/group-guide-pty-retry.xml` 单独重跑通过。本次未修改 Rust 或超时阈值，不把单项重跑等同于整轮全绿。
+
+## 2026-11-13 · 去掉终端正文顶部内边距
+
+真实终端和预览终端均删除 `pt-(--padding-terminal-top)`，同时移除主题中不再使用的顶部内边距 token；左右、底部仍为 16 pt。滚动网格和 Input 继续共用原来的内容容器。`./scripts/nsh build`、`./scripts/nsh check` 通过。原生默认入口使用真实 fish 会话截图（`artifacts/terminal-no-top-inset.png`），临时原生测试通过（`artifacts/terminal-no-top-inset-native.xml`）且脚本已移除。50 项 headless 测试全部通过，报告：`artifacts/terminal-no-top-inset-headless.xml`。
