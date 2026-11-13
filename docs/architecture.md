@@ -9,7 +9,9 @@ App.tsx                          mount 工作区，仅作入口
   ui/WorkspaceApp.tsx             窗口、菜单、快捷键、对话框与会话操作接线
   ui/Sidebar.tsx                  vertical tabs、分组与响铃标记
   ui/GroupEditor.tsx              锚定组头的名称、颜色和组操作
-  ui/workspace.ts                 标签与分组状态、稳定 session ID
+  ui/workspace.ts                 会话、分组与平铺操作、唯一逻辑焦点
+  ui/tiling.ts                    布局树变换、约束、几何与方向导航
+  ui/TilingCanvas.tsx             按 session ID 稳定挂载、pane 工具栏与分隔拖动
   ui/theme.ts                    分组标识到主题 token 的映射
   terminal/TerminalSurface.tsx    真实终端的显示、焦点属性与低频状态
     native SessionTerminal       绑定已有 Rust 会话
@@ -17,8 +19,8 @@ App.tsx                          mount 工作区，仅作入口
     preview-session.ts           确定性演示 transport，不执行命令
 
 src/lib.rs                       只注册 termlevel/native 的原生导出
-src/runtime.rs                   版本、启动目录与显式预览开关
-src/dialog_keys.rs               对话框的原生 Escape 优先级
+src/runtime.rs                   版本、启动目录、显式预览开关与原生 cell 测量
+src/dialog_keys.rs               对话框 Escape 与 pane 缩放模式的原生键盘优先级
 src/terminal.rs                  Alacritty parser/grid 到 NSH 的适配；预览 provider
 src/sessions.rs                  SessionManager、PTY、进程、reader/writer/reaper
   sessions/api.rs                TSX 可调用的显式会话操作
@@ -60,8 +62,8 @@ Rust → TSX：标题、运行/退出/错误状态、响铃；不发送终端 ch
 
 - 默认工作区恢复 `Sessions.list()` 的仍存活或已退出会话；没有会话时启动一个新 shell。这个恢复只发生在同一个原生宿主进程内，不是应用重启恢复。
 - TSX 工作区销毁/重建以及原生终端视图卸载/重挂均不关闭会话。重新绑定读取当前 Rust 网格和状态，不依赖 JS 中的输出副本或事件补发。
-- 标签切换、分组折叠、重命名、排序与主题变更保留同一 session ID。当前工作区仍保留按 ID 挂载的所有终端显示，非活动终端隐藏且禁用命中。
-- 显式关闭标签调用 `Sessions.close`；关闭组逐个关闭其会话。自然退出保留输出与退出码，不自动重启。
+- 标签切换、分组折叠、重命名、排序与主题变更保留同一 session ID。工作区保留按 session ID 挂载的终端显示；布局树决定哪些会话同时展示，暂未展示的会话隐藏、禁用命中并移出无障碍遍历。焦点 pane 决定唯一输入目标，其他可见 pane 仍持续刷新。
+- 显式关闭标签调用 `Sessions.close`；关闭组逐个关闭其会话。Shell 退出码为 0（含空行 Ctrl+D）时同样关闭标签和 pane，不自动重启。非 0 退出和启动失败保留输出与状态。
 - 关闭主窗口或退出应用调用 `Sessions.shutdown`。Unix 上结束前台进程组，向 shell 发送 HUP，让它清理普通后台作业；50 ms 后仍未退出则强制结束 shell。主动脱离终端会话的 daemon 不属于可恢复会话模型。
 - child 的检查、终止和回收共用控制锁，避免对已回收并可能复用的 PID 发信号。关闭后 reader/writer 取消，reaper 回收 child；应用退出在 NSH 的 200 ms 清理预算内轮询 `Sessions.settled()`。
 
@@ -77,11 +79,23 @@ reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I
 
 ## 原生交互与工作区 UI
 
+多 pane 已接入工作区，完整交互和验收边界见 [多终端平铺设计](terminal-tiling.md)。
+
 `DialogKeys` 在原生层为对话框取得 Escape 优先级；界面与对话框状态仍在 TSX。`GroupEditor` 使用 NSH `Overlay` 和组头 `ViewRef` 定位，修改即时写入工作区，关闭不回滚。
 
 统一窗口栏固定在顶部；下方侧栏与终端作为独立圆角 pane，外边距和间距由 `gap-pane` 控制。Sidebar 唯一实例在窗口根层绝对定位，避免被 44 pt 原生分栏裁剪。分栏边界两侧各分配半个间距，根层侧栏扣除这半个间距，与终端 pane 顶底对齐。分栏内测量 View 的 `onLayout` 同步拖动中的实际宽度；`onResize` 只保存最终宽度。收起时鼠标悬停展开覆盖终端，不改变终端分配宽度和挂载位置；编辑组时保持展开。
 
-会话标题来自低频元数据，用户重命名后不再被程序标题覆盖。非活动会话响铃时显示标记，选择后清除。垂直拖动标签在侧栏内排序或放入分组。落到已有分组的标签上会加入该组，落到没有分组的标签上会组成新组，路径取被拖到的标签；放入折叠组时展开该组。分组保存自己的路径，组内新建的终端从这里启动，组名默认是路径名。取消拖动不改分组，session ID 不变。工具栏目录表示初始启动目录，tooltip 明确说明；尚未实现 shell integration 的实时 cwd 跟踪。进程退出和错误在终端底部显示，已有输出保留。
+会话标题来自低频元数据，用户重命名后不再被程序标题覆盖。非活动会话响铃时显示标记，选择后清除。垂直拖动标签在侧栏内排序或放入分组。落到已有分组的标签上会加入该组，落到没有分组的标签上会组成新组，路径取被拖到的标签；放入折叠组时展开该组。分组保存自己的路径，组内新建的终端从这里启动，组名默认是路径名。取消拖动不改分组，session ID 不变。工具栏目录表示初始启动目录，tooltip 明确说明；尚未实现 shell integration 的实时 cwd 跟踪。退出码非 0 或启动失败时，进程状态在终端底部显示，已有输出保留。退出码 0 会关掉这个终端。
+
+### 平铺状态与稳定展示
+
+平铺采用 TSX 拥有的二叉树、pane ID、比例与 `focusedPaneId`。每个标签组各有一棵树，未分组会话共用一棵；画布只投影当前组。一棵树有两个及以上 pane 时，侧栏把这些会话收成一个分屏单元，成员与 pane 一一对应。单元可以留在组外，也可以整块移入一个标签组。侧栏选择 `activeId` 从当前画面的焦点叶子派生。选中已在该组分屏里的会话时，整个右侧换成这组分屏并聚焦它。选中分屏以外的会话时，整个右侧换成这一个终端，分屏树保持不动。选中其他组则换成那一组的画面。关闭组一次性移除相关会话并丢掉该组的树。折叠和组内排序不改变树。把其他组的终端拖进画面会改掉它的组，并放进当前树。
+
+`TilingCanvas` 的 surface 层只按 session ID keyed，不把 terminal 放进递归 Split 组件。树生成绝对位置与尺寸；交换、移动和放大只修改宿主几何，避免 Input 和滚动视图因树重排重建。pane 间分隔通过原生 View 的 pan/responder 事件更新 TSX 比例；这是工作区几何，不传递终端字节或网格。侧栏仍使用 NSH `ResizablePanelGroup`。未展示 surface 保留最后有效矩形，Rust 的非正 viewport 检查阻止向 PTY 发送 0×0。
+
+`TerminalMetrics` 在原生视图作用域测量 cell 宽度，通过低频事件供 TSX 计算 40 列 × 8 行的最小正文尺寸；它与 Rust renderer 共用字体测量函数。窗口无法容纳整棵树时临时只展示焦点 pane，保存树及用户比例，空间恢复后还原。用户主动放大与这个临时投影分别管理。
+
+`SessionTerminal.active` 控制输入授权和焦点，刷新定时器不依赖它。点击或实际 Input 聚焦时，通过 `FocusRequest` 同步工作区选择。对话框和编辑浮层临时阻止 terminal 自动取得焦点；pane 键盘缩放使用在 terminal 之后挂载的原生 `ResizeKeys`，结束后卸载，让方向键和 Enter 回到终端。AppKit 在 marked text 期间将按键交给输入法，不能假定工作区快捷键此时仍会执行。
 
 ## 当前能力边界
 

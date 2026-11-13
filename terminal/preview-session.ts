@@ -27,7 +27,8 @@ export class PreviewSession {
     this.line = next;
   }
 
-  input(data: string) {
+  /** Returns a process exit code when the preview shell leaves. Ctrl+D on an empty line is 0. */
+  input(data: string): number | void {
     if (data === "\x1b[A" || data === "\x1b[B") {
       this.historyIndex = Math.max(0, Math.min(this.history.length,
         this.historyIndex + (data === "\x1b[A" ? -1 : 1)));
@@ -44,7 +45,8 @@ export class PreviewSession {
         this.line = "";
         if (command.trim()) this.history.push(command);
         this.historyIndex = this.history.length;
-        this.run(command.trim());
+        const code = this.run(command.trim());
+        if (typeof code === "number") return code;
         this.prompt();
       } else if (ch === "\x7f" || ch === "\b") {
         if (this.line) this.replaceLine(Array.from(this.line).slice(0, -1).join(""));
@@ -56,6 +58,8 @@ export class PreviewSession {
         this.write("\x1b[2J\x1b[H");
         this.prompt();
         this.write(this.line);
+      } else if (ch === "\x04") {
+        if (!this.line) return 0;
       } else if (ch >= " ") {
         this.line += ch;
         this.write(ch);
@@ -63,7 +67,7 @@ export class PreviewSession {
     }
   }
 
-  private run(command: string) {
+  private run(command: string): number | void {
     const [name, ...args] = command.split(/\s+/);
     switch (name) {
       case "": return;
@@ -72,12 +76,20 @@ export class PreviewSession {
         this.write("  help          Show this list\r\n  echo <text>   Print some text\r\n");
         this.write("  pwd           Show this tab's demo directory\r\n  colors        ANSI and truecolor samples\r\n");
         this.write("  clear         Clear the screen\r\n\r\n");
-        this.write("Use ↑/↓ for history, Ctrl+C to cancel, Ctrl+L to clear.\r\n");
+        this.write("Use ↑/↓ for history, Ctrl+C to cancel, Ctrl+D or exit to close, Ctrl+L to clear.\r\n");
         this.write("Other commands need the real shell planned for M2.\r\n");
         return;
       case "echo": this.write(args.join(" ") + "\r\n"); return;
       case "pwd": this.write(this.cwd + "\r\n"); return;
       case "clear": this.write("\x1b[2J\x1b[H"); return;
+      case "exit": {
+        const code = args.length === 0 ? 0 : Number(args[0]);
+        if (!Number.isInteger(code) || code < 0 || code > 255) {
+          this.write("exit: code must be an integer from 0 to 255\r\n");
+          return;
+        }
+        return code;
+      }
       case "colors":
         this.write("\r\n");
         for (let i = 0; i < 16; i++) this.write(`\x1b[48;5;${i}m   \x1b[0m${i === 7 || i === 15 ? "\r\n" : ""}`);

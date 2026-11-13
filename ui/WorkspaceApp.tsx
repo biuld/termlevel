@@ -2,19 +2,19 @@ import { effect, keymap, platform, Scroll, signal, Text, token, View } from "nsh
 import { Button, Input, ResizablePanel, ResizablePanelGroup } from "nsh/base";
 import { Application, currentWindow, Menu, titleBar } from "nsh/desktop";
 import { Runtime, Sessions, TerminalEngine } from "termlevel/native";
-import { TerminalSurface } from "../terminal/TerminalSurface";
-import { Action, AppDialog, DialogActions, Hint, IconButton } from "./controls";
+import { TilingCanvas } from "./TilingCanvas";
+import { Action, AppDialog, DialogActions, IconButton } from "./controls";
 import { Icon } from "./icons";
 import { SettingsDialog } from "./SettingsDialog";
 import { Sidebar, type SidebarActions } from "./Sidebar";
 import { Type } from "./type";
-import { createWorkspace } from "./workspace";
+import { createWorkspace, type Workspace } from "./workspace";
 
 type Editor = { title: string; value: string; save: (value: string) => void };
 
-export function WorkspaceApp(props: { shell?: string } = {}) {
+export function WorkspaceApp(props: { shell?: string; workspace?: Workspace } = {}) {
   const preview = Runtime.previewMode();
-  const store = createWorkspace(preview ? undefined : {
+  const store = props.workspace ?? createWorkspace(preview ? undefined : {
     cwd: Runtime.cwd(), list: Sessions.list,
     open: (cwd) => Sessions.open(cwd, token("terminal-foreground"), token("terminal-background"), props.shell),
     close: Sessions.close,
@@ -40,7 +40,12 @@ export function WorkspaceApp(props: { shell?: string } = {}) {
   const closingGroup = signal<string | null>(null);
   const editingGroup = signal<string | null>(null);
   const version = Runtime.version();
-  const compactContent = signal(false);
+  effect(() => {
+    const modal = editor() !== null || searching() || settings() || closingGroup() !== null || editingGroup() !== null;
+    if (modal) { store.resizing.set(false); store.cancelPaneDrag(); }
+    store.inputBlocked.set(modal || store.resizing());
+  });
+  const terminalAction = (action: () => void) => () => { if (!store.inputBlocked()) action(); };
   const sidebarHovered = signal(false);
   const sidebarLayoutWidth = signal(store.sidebarWidth() + token("gap-pane") / 2);
   const sidebarOpen = () => store.expanded() || sidebarHovered() || editingGroup() !== null;
@@ -80,6 +85,9 @@ export function WorkspaceApp(props: { shell?: string } = {}) {
     "mod+t": () => { store.addTab(); },
     "mod+w": () => { const id = store.activeId(); if (id) store.closeTab(id); },
     "mod+b": toggleSidebar,
+    "mod+d": terminalAction(() => { store.splitTerminal("right"); }),
+    "mod+shift+d": terminalAction(() => { store.splitTerminal("down"); }),
+    "mod+shift+enter": terminalAction(store.toggleZoom),
     "mod+shift+g": actions.newGroup,
     "mod+k": actions.search,
     "mod+,": actions.settings,
@@ -87,6 +95,10 @@ export function WorkspaceApp(props: { shell?: string } = {}) {
     "ctrl+shift+tab": () => store.step(-1),
   };
   for (const [key, handler] of Object.entries(shortcuts)) keymap.bind(key, handler, { when: "always" });
+  for (const [key, direction] of [["left", "left"], ["right", "right"], ["up", "up"], ["down", "down"]] as const) {
+    keymap.bind(`mod+alt+${key}`, terminalAction(() => store.focusDirection(direction)), { when: "always" });
+    keymap.bind(`mod+alt+shift+${key}`, terminalAction(() => store.focusDirection(direction, true)), { when: "always" });
+  }
   for (let n = 1; n <= 9; n++) keymap.bind(`mod+${n}`, () => {
     const tab = store.tabs()[n - 1];
     if (tab) store.select(tab.id);
@@ -109,6 +121,12 @@ export function WorkspaceApp(props: { shell?: string } = {}) {
     { label: "View", submenu: [
       { label: "Toggle sidebar", shortcut: "mod+b", onSelect: shortcuts["mod+b"] },
       { label: "Find a terminal…", shortcut: "mod+k", onSelect: actions.search },
+      { type: "separator" },
+      { label: "Split right", shortcut: "mod+d", onSelect: shortcuts["mod+d"] },
+      { label: "Split down", shortcut: "mod+shift+d", onSelect: shortcuts["mod+shift+d"] },
+      { label: "Maximize / restore pane", shortcut: "mod+shift+enter", onSelect: shortcuts["mod+shift+enter"] },
+      { label: "Hide pane", onSelect: () => store.hidePane() },
+      { label: "Equalize layout", onSelect: store.equalizeLayout },
       { type: "separator" }, { role: "toggleFullScreen" },
     ] },
     { label: "Window", submenu: [{ role: "minimize" }, { role: "zoom" }, { role: "close" }] },
@@ -116,42 +134,6 @@ export function WorkspaceApp(props: { shell?: string } = {}) {
 
   const searchResults = () => store.tabs().filter((tab) =>
     `${tab.title} ${tab.cwd} ${store.groupTitle(tab.groupId)}`.toLowerCase().includes(query().toLowerCase()));
-
-  function SessionToolbar() {
-    const showPath = () => !!store.activeTab() && !compactContent();
-    return <View testID="session-toolbar"
-      class="h-(--height-toolbar) shrink-0 flex-row items-center bg-terminal-background"
-      style={{ paddingLeft: token("padding-terminal"), paddingRight: token("gap-pane") }}>
-      <View class="min-w-0 flex-1 flex-row items-center gap-2">
-        <Icon name="terminal" size={14} />
-        <If when={showPath()}>
-          <Type testID="session-path" role="body" family="mono" tone="muted-foreground" lines={1} class="min-w-0 flex-1"
-            tooltip={<Hint>{`${preview ? "Demo directory" : "Initial directory"}: ${store.activeTab()?.cwd}`}</Hint>}>{store.activeTab()?.cwd}</Type>
-        </If>
-        <If when={!showPath()}>
-          <Type role="body" tone="muted-foreground" lines={1} class="min-w-0 flex-1">{store.activeTab()?.title ?? "Terminal"}</Type>
-        </If>
-      </View>
-      <View desktop={{ windowDrag: false }}
-        class="h-(--height-control) flex-row items-center gap-0.5">
-        <IconButton icon="plus" label="New terminal" testID="titlebar-new-terminal" onPress={() => store.addTab()} />
-        <If when={!!store.activeTab()}>
-          <IconButton icon="more" label="Terminal actions" testID="terminal-actions" onPress={() => {
-            const id = store.activeId();
-            if (!id) return;
-            void Menu.popup([
-              { label: "Rename terminal…", onSelect: () => actions.renameTab(id) },
-              { label: "Move to group", submenu: [
-                { label: "No group", onSelect: () => store.moveTab(id, null) },
-                ...store.groups().map((g) => ({ label: store.groupTitle(g.id), onSelect: () => store.moveTab(id, g.id) })),
-              ] },
-              { label: "Close terminal", onSelect: () => store.closeTab(id) },
-            ]);
-          }} />
-        </If>
-      </View>
-    </View>;
-  }
 
   return <TerminalEngine class="relative flex-1 bg-chrome font-sans text-foreground">
     <View testID="window-toolbar" desktop={{ windowDrag: true }}
@@ -163,6 +145,11 @@ export function WorkspaceApp(props: { shell?: string } = {}) {
       </View>
       <View class="absolute inset-0 items-center justify-center" style={{ pointerEvents: "none" }}>
         <Type role="label">Termlevel</Type>
+      </View>
+      <View testID="global-actions" desktop={{ windowDrag: false }} class="ml-auto flex-row items-center gap-0.5">
+        <IconButton icon="folder" label="New group" testID="new-group" onPress={actions.newGroup} />
+        <IconButton icon="search" label="Find a terminal" testID="find-terminal" onPress={actions.search} />
+        <IconButton icon="settings" label="Settings" testID="settings" onPress={actions.settings} />
       </View>
     </View>
     <View class="min-h-0 flex-1 px-(--gap-pane) pb-(--gap-pane)">
@@ -180,27 +167,7 @@ export function WorkspaceApp(props: { shell?: string } = {}) {
         </ResizablePanel>
         <ResizablePanel minSize={320}>
           <View class="h-full min-w-0 flex-1" style={{ paddingLeft: token("gap-pane") / 2 }}>
-            <View testID="session-panel" class="min-h-0 min-w-0 flex-1 overflow-hidden rounded-(--radius-panel) bg-terminal-background"
-              onLayout={({ bounds }) => compactContent.set(bounds.size.width < 520)}>
-              <SessionToolbar />
-
-              {/* Stable ID keys keep every terminal mounted across selection,
-                  group collapse, rename and moves. Only close disposes a surface. */}
-              <View class="relative min-h-0 flex-1 overflow-hidden">
-                <Each of={store.tabs().map((t) => t.id)}>{(id) => <TerminalSurface id={id()} workspace={store} preview={preview} />}</Each>
-                <If when={store.tabs().length === 0}>
-                  <View testID="empty-state" class="flex-1 items-center justify-center gap-3">
-                    <View class="h-10 w-10 items-center justify-center rounded-(--radius-panel) border border-border bg-muted">
-                      <Icon name="terminal" size={20} color={token("icon-active")} />
-                    </View>
-                    <Type role="heading">Room for something new.</Type>
-                    <Type role="body" tone="muted-foreground">Open a terminal to get started.</Type>
-                    <Action primary onPress={() => { store.addTab(null); }} testID="empty-new-terminal">New terminal</Action>
-                  </View>
-                </If>
-              </View>
-
-            </View>
+            <TilingCanvas workspace={store} preview={preview} rename={actions.renameTab} />
           </View>
         </ResizablePanel>
       </ResizablePanelGroup>

@@ -25,6 +25,11 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
   const store = props.workspace;
   const actions = props.actions;
   const members = (groupId: string | null) => store.tabs().filter((t) => t.groupId === groupId && !t.pinned);
+  const splitSessions = (groupId: string | null) => {
+    const ids = store.layoutSessions(groupId);
+    if (ids.length < 2) return [];
+    return ids.filter((id) => (store.tab(id)?.groupId ?? null) === groupId);
+  };
   const dragging = signal<string | null>(null);
   const drop = signal<DropTarget | null>(null);
   const slots = signal(new Map<string, DragSlot>());
@@ -117,6 +122,7 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
   function track(id: string, event: GestureResponderEvent) {
     if (dragging() !== id) return;
     dragMoved.set(true);
+    store.trackPaneDrag(event.pageX, event.pageY);
     drop.set(locate(event.pageX, event.pageY));
   }
 
@@ -125,6 +131,7 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
     const target = drop();
     dragging.set(null);
     drop.set(null);
+    if (store.finishPaneDrag()) { requestAnimationFrame(() => dragMoved.set(false)); return; }
     if (target?.combineId && !target.groupId) store.combineTabs(id, target.combineId, target.beforeId === target.combineId);
     else if (target) {
       store.placeTab(id, { groupId: target.groupId, pinned: target.pinned, beforeId: target.beforeId });
@@ -133,10 +140,29 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
   }
 
   function releaseDrag() {
+    store.cancelPaneDrag();
     dragMoved.set(true);
     dragging.set(null);
     drop.set(null);
     requestAnimationFrame(() => dragMoved.set(false));
+  }
+
+  function SplitCard(card: { groupId: string | null }) {
+    const ids = () => {
+      const all = splitSessions(card.groupId);
+      if (!props.expanded()) {
+        const active = all.find((id) => id === store.activeId());
+        return active ? [active] : [];
+      }
+      return all;
+    };
+    const open = () => ids().includes(store.activeId() ?? "");
+    return <View testID={card.groupId ? `split-unit-${card.groupId}` : "split-unit"}
+      accessibilityLabel={`Split, ${splitSessions(card.groupId).length} terminals`}
+      class="mx-1 my-1 rounded-(--radius-panel) border p-0.5"
+      style={{ borderColor: token(open() ? "ring" : "border") }}>
+      <Each of={ids()}>{(id) => <TabRow id={id()} />}</Each>
+    </View>;
   }
 
   function toggleGroup(id: string) {
@@ -147,10 +173,11 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
   const tabMenu = (id: string, at?: Point) => Menu.popup([
     { label: "Rename terminal…", onSelect: () => actions.renameTab(id) },
     { label: store.tab(id)?.pinned ? "Unpin terminal" : "Pin terminal", onSelect: () => store.togglePin(id) },
-    { label: "Move to group", submenu: [
-      { label: "No group", checked: !store.tab(id)?.groupId, onSelect: () => store.moveTab(id, null) },
+    { label: store.inSplit(id) ? "Move split to group" : "Move to group", submenu: [
+      { label: "No group", checked: !store.tab(id)?.groupId, disabled: store.inSplit(id) && !store.tab(id)?.groupId, onSelect: () => store.moveTab(id, null) },
       ...store.groups().map((g) => ({
-        label: store.groupTitle(g.id), checked: store.tab(id)?.groupId === g.id, onSelect: () => store.moveTab(id, g.id),
+        label: store.groupTitle(g.id), checked: store.tab(id)?.groupId === g.id, disabled: store.inSplit(id) && store.tab(id)?.groupId === g.id,
+        onSelect: () => store.moveTab(id, g.id),
       })),
     ] },
     { type: "separator" },
@@ -185,9 +212,10 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
       classList={{ "mx-1": !grouped(), "bg-tab-selected hover:bg-tab-selected": active(), "bg-sidebar-accent": combining() }}
       style={{ opacity: dragging() === id ? 0.45 : 1 }}
       onContextMenu={(e) => { void tabMenu(id, e.pagePosition); }}
-      panActivation={{ activeOffsetY: 8, failOffsetX: 16 }}
+      panActivation={{ activeOffsetY: 8, activeOffsetX: 8 }}
       onResponderGrant={() => {
         dragging.set(id);
+        store.beginPaneDrag(id);
         drop.set(null);
       }}
       onResponderMove={(event) => track(id, event)}
@@ -216,6 +244,14 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
             style={{ numberOfLines: 1, color: token(active() ? "tab-selected-foreground" : "sidebar-foreground") }}>{tab()?.title}</Text>
         </If>
       </Button>
+      <If when={!!store.paneForSession(id) && !active()}>
+        <View class="absolute top-0 bottom-0 w-1.5 items-center justify-center opacity-100 group-hover:opacity-0 group-focus-within:opacity-0"
+          style={{ right: 10, pointerEvents: "none" }}>
+          <View accessibilityLabel={store.workspaceKey() ? "Shown in this group's layout" : "Shown in the layout"}
+            tooltip={<Hint>{store.workspaceKey() ? "Shown in this group's layout" : "Shown in the layout"}</Hint>}
+            class="h-1.5 w-1.5 rounded-full bg-icon" />
+        </View>
+      </If>
       <If when={tab()?.bell}>
         <View accessibilityLabel="Terminal bell" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary" style={{ pointerEvents: "none" }} />
       </If>
@@ -229,8 +265,15 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
 
   function GroupRow(row: { id: string }) {
     const id = row.id;
-    const visibleMembers = () => members(id).filter((tab) => !store.group(id)?.collapsed || (!props.expanded() && tab.id === store.activeId()));
-    const hiddenCount = () => members(id).length - visibleMembers().length;
+    const shownSplit = () => {
+      const all = splitSessions(id);
+      if (all.length < 2) return [];
+      if (store.group(id)?.collapsed && props.expanded()) return [];
+      if (!props.expanded()) return all.includes(store.activeId() ?? "") ? [store.activeId()!] : [];
+      return all;
+    };
+    const visibleMembers = () => members(id).filter((tab) => !splitSessions(id).includes(tab.id) && (!store.group(id)?.collapsed || (!props.expanded() && tab.id === store.activeId())));
+    const hiddenCount = () => members(id).filter((tab) => !visibleMembers().some((item) => item.id === tab.id) && !shownSplit().includes(tab.id)).length;
     const anchor = signal<ViewRef | null>(null);
     let trigger: ViewRef | undefined;
     const close = (restoreFocus = false) => {
@@ -243,15 +286,16 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
           <View class="absolute w-px rounded-sm" style={{ left: 2, top: 2, bottom: 2, backgroundColor: groupLine(store.group(id)?.color) }} />
         </If>
         <View ref={(ref) => { anchor.set(ref); register(`header:${id}`, ref ? { ref, kind: "header", id } : null); }}
+          testID={store.workspaceKey() === id ? `group-workspace-${id}` : undefined}
           class="group relative flex-row items-center rounded-(--radius-control)"
-          classList={{ "mx-1": !props.expanded(), "bg-sidebar-accent": drop()?.headerId === id }}
+          classList={{ "mx-1": !props.expanded(), "bg-sidebar-accent": drop()?.headerId === id || store.workspaceKey() === id }}
           style={{ marginVertical: props.expanded() ? 0 : 2 }}
           onContextMenu={() => props.groupEditor.set(id)}>
           <If when={drop()?.headerId === id}>
             <View testID={`drop-group-${id}`} class="absolute inset-0 rounded-(--radius-control) border border-primary" style={{ pointerEvents: "none" }} />
           </If>
           <Button testID={`group-${id}`} ref={(ref) => { trigger = ref; }}
-            accessibilityLabel={`${store.group(id)?.collapsed ? "Expand" : "Collapse"} ${store.groupTitle(id)}`}
+            accessibilityLabel={`${store.group(id)?.collapsed ? "Expand" : "Collapse"} ${store.groupTitle(id)}${store.workspaceKey() === id ? ", current layout" : ""}`}
             onPress={() => { close(false); toggleGroup(id); }}
             class="h-(--height-tab) min-w-0 flex-1 flex-row items-center gap-1.5 rounded-(--radius-control) focus-visible:ring-2 ring-sidebar-ring"
             style={{ justifyContent: props.expanded() ? "flex-start" : "center", paddingHorizontal: props.expanded() ? 4 : 0 }}
@@ -278,8 +322,9 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
             </View>
           </If>
         </View>
-        <If when={visibleMembers().length > 0}>
+        <If when={shownSplit().length > 0 || visibleMembers().length > 0}>
           <View style={{ marginLeft: props.expanded() ? 10 : 0, paddingLeft: props.expanded() ? token("gap-group-guide") : 0, borderLeftWidth: props.expanded() ? 1 : 0, borderColor: groupLine(store.group(id)?.color) }}>
+            <If when={shownSplit().length > 0}><SplitCard groupId={id} /></If>
             <Each of={visibleMembers().map((t) => t.id)}>{(tabId) => <TabRow id={tabId()} />}</Each>
           </View>
         </If>
@@ -315,16 +360,20 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
     </View>
 
     <Scroll class="min-h-0 flex-1 pt-1.5" scrollbar={false}>
-      <If when={store.tabs().some((t) => t.pinned)}>
-        <Each of={store.tabs().filter((t) => t.pinned).map((t) => t.id)}>{(id) => <TabRow id={id()} />}</Each>
+      <If when={splitSessions(null).length >= 2 && props.expanded()}><SplitCard groupId={null} /></If>
+      <If when={splitSessions(null).length >= 2 && !props.expanded() && splitSessions(null).includes(store.activeId() ?? "")}>
+        <SplitCard groupId={null} />
+      </If>
+      <If when={store.tabs().some((t) => t.pinned && !splitSessions(null).includes(t.id))}>
+        <Each of={store.tabs().filter((t) => t.pinned && !splitSessions(null).includes(t.id)).map((t) => t.id)}>{(id) => <TabRow id={id()} />}</Each>
         <View ref={(ref) => register("ungrouped", ref ? { ref, kind: "ungrouped", id: null } : null)}
           testID="ungrouped-drop" class="mx-2 my-2 h-px bg-sidebar-border" />
       </If>
-      <If when={!store.tabs().some((t) => t.pinned)}>
+      <If when={!store.tabs().some((t) => t.pinned && !splitSessions(null).includes(t.id))}>
         <View ref={(ref) => register("ungrouped", ref ? { ref, kind: "ungrouped", id: null } : null)}
           testID="ungrouped-drop" class="mx-2 h-2" />
       </If>
-      <Each of={members(null).map((t) => t.id)}>{(id) => <TabRow id={id()} />}</Each>
+      <Each of={members(null).filter((t) => !splitSessions(null).includes(t.id)).map((t) => t.id)}>{(id) => <TabRow id={id()} />}</Each>
       <If when={appendLine(null, false)}>
         <View testID="drop-line" accessibilityLabel="Insert terminal" class="mx-3 h-0.5 bg-primary" />
       </If>
@@ -342,13 +391,8 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
       </Button>
     </Scroll>
 
-    <View class="gap-0.5 p-1" style={{ flexDirection: props.expanded() ? "row" : "column", alignItems: "center" }}>
-      <If when={props.expanded()}>
-        <Text class="min-w-0 flex-1 pl-1 text-(length:--text-caption) text-muted-foreground">{store.tabs().length} {store.tabs().length === 1 ? "terminal" : "terminals"}</Text>
-      </If>
-      <IconButton icon="folder" label="New group" testID="new-group" onPress={actions.newGroup} />
-      <IconButton icon="search" label="Find a terminal" testID="find-terminal" onPress={actions.search} />
-      <IconButton icon="settings" label="Settings" testID="settings" onPress={actions.settings} />
-    </View>
+    <If when={props.expanded()}>
+      <Text class="px-2 py-1 text-(length:--text-caption) text-muted-foreground">{store.tabs().length} {store.tabs().length === 1 ? "terminal" : "terminals"}</Text>
+    </If>
   </View>;
 }

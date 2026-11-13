@@ -1,6 +1,10 @@
 import { Canvas, Path2D, token } from "nsh";
 
 const paths = {
+  splitRight: "M4 4H20V20H4Z M12 4V20 M15 12H19 M17 10L19 12L17 14",
+  splitDown: "M4 4H20V20H4Z M4 12H20 M12 15V19 M10 17L12 19L14 17",
+  maximize: "M9 4H4V9 M15 4H20V9 M4 15V20H9 M20 15V20H15",
+  restore: "M4 9H9V4 M15 4V9H20 M4 15H9V20 M15 20V15H20",
   terminal: "M4 5L10 11L4 17 M12 17H20",
   plus: "M12 5V19 M5 12H19",
   close: "M6 6L18 18 M18 6L6 18",

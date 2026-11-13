@@ -227,3 +227,48 @@ NSH 0.5.0 的测试驱动没有 `compose()`，因此 `scripts/test-native-input`
 ## 2026-11-13 · 去掉终端正文顶部内边距
 
 真实终端和预览终端均删除 `pt-(--padding-terminal-top)`，同时移除主题中不再使用的顶部内边距 token；左右、底部仍为 16 pt。滚动网格和 Input 继续共用原来的内容容器。`./scripts/nsh build`、`./scripts/nsh check` 通过。原生默认入口使用真实 fish 会话截图（`artifacts/terminal-no-top-inset.png`），临时原生测试通过（`artifacts/terminal-no-top-inset-native.xml`）且脚本已移除。50 项 headless 测试全部通过，报告：`artifacts/terminal-no-top-inset-headless.xml`。
+
+## 2026-11-13 · 多 terminal 定向平铺
+
+实现见 [多终端平铺](terminal-tiling.md)。布局、方向导航、约束和拖放使用 `ui/tiling.ts`；`ui/workspace.ts` 组合会话与布局操作；`ui/TilingCanvas.tsx` 按稳定 session ID 保留 surface，只更新原生宿主几何。Split 不拥有 PTY。pane 缩放通过原生 View pan/responder 更新 TSX 比例，不声称是完全绕过 JS 的原生分栏链路。
+
+### 自动化证据
+
+- `./scripts/nsh check`、`./scripts/nsh build`、`cargo fmt --check` 与 `git diff --check` 通过。
+- 全量命令：`./scripts/nsh test --junit artifacts/tiling-all-tests.xml`，58 / 58 通过。覆盖原有 50 项及新增的纯布局、平铺交互和真实双 PTY 测试。
+- `ui/Tiling.test.tsx` 的 7 项覆盖几何与邻居选择、分屏和替换、放大还原、窄窗口恢复、方向焦点与交换、缩放及按键归还、关闭组、侧栏拖入、标题边缘移动、中央交换、尺寸预检。拖放测试通过独立 fixture 读取树快照，确认边缘插入改变方向、中央交换改变会话分配、Escape 后整棵树完全不变。不能只看预览消失或会话数量不变。
+- `terminal/TilingSession.test.tsx` 使用两个真实 `/bin/sh` PTY，验证左右输出同时更新、点击输入不串到另一会话、放大时 `stty size` 改变、收起和重新展示后 PID 不变、显式关闭移除会话。测试读取的是真实 Rust 会话元数据，不用预览输出替代。
+- 既有两项 UI 测试改为先选择 Color test 再输入，避免测试驱动直接向隐藏 terminal 注入文字绕过实际焦点规则。预览的输入发送也受唯一焦点和模态状态控制。
+
+### 原生 AppKit
+
+`./scripts/test-native-tiling` 通过，报告 `artifacts/tiling-native.xml`。该脚本将 `terminal/fixtures/Tiling.acceptance.tsx` 临时注册为原生测试并在退出时清理，使用真实 shell，非预览 transport。
+
+验收覆盖：
+
+- 双 pane 都有真实输出，原生方向焦点快捷键更新当前 pane。
+- `NativeInputProbe.geometry` 对比两个会话实际挂载的 Input 与网格光标页面坐标，交换、拖动缩放、放大和还原后各自误差均小于 0.5 pt。
+- marked text 存在时，通过 fixture 调用同一个工作区交换操作：文字继续标记、候选锚点水平移动超过 100 pt，确认输入仍提交到原 session，另一个 session 没有收到中文。
+- AppKit 在组合输入时优先把全部按键交给输入法；不声称交换快捷键在 marked text 期间必定执行。测试将普通快捷键与组合过程中的布局变换分开证明。
+- 三 pane、640×480 窄窗口临时聚焦、恢复原布局和侧栏悬停覆盖均有截图。查看了 `artifacts/tiling-native-two-panes.png`、`tiling-native-ime-swap.png`、`tiling-native-three-panes.png`、`tiling-native-narrow.png` 和 `tiling-native-sidebar-overlay.png`。
+- 原生驱动不支持 `dragAndHold`，AppKit 验收使用完整 `drag`；中途预览和取消由 headless 的树快照断言证明。
+
+既有 `./scripts/test-native-input` 同样通过（`artifacts/native-ime-tests.xml`），覆盖组合确认一次、取消、快速连续输入、滚动、字号和原生切换。共享字体测量改动后，Input / 光标坐标仍一致。
+
+另以默认 `App.tsx` 和真实 fish 执行临时生产入口截图测试，深浅色两项通过（`artifacts/tiling-production-native.xml`），查看 `artifacts/tiling-production-dark.png` 与 `artifacts/tiling-production-light.png`。截图前等待窗口布局稳定，避免将窗口过渡帧当成界面结果。临时生产截图测试已删除，截图和报告为本地忽略产物。
+
+### 验收边界
+
+已实现与验证的是布局、会话保留、输入隔离和原生输入协议。实际系统输入法候选列表、复杂组合序列、跨行选择与复制、长时间持续输出和大量会话的 CPU / 内存 / 帧耗时，以及手动拖动的跟手感仍需独立人工验收。布局暂不持久化，UI 工作区重建从现存 Rust 会话退回单 pane；应用重启不恢复活进程。
+
+## 2026-11-13 · 标题栏全局按钮
+
+将新建分组、搜索终端、设置从侧栏底部移到窗口标题栏右上角，按钮区域禁用窗口拖动。侧栏展开时底部只保留会话数，收起时不再显示底部工具条。
+
+`./scripts/nsh check`、`./scripts/nsh build` 与 `git diff --check` 通过。`./scripts/nsh test App.test.tsx --junit artifacts/global-actions-tests.xml` 为 18 / 18 通过。临时原生测试在 Dark / Light 下截图展开和收起状态，并验证收起后标题栏按钮分别打开设置、搜索和新分组编辑器，2 / 2 通过（`artifacts/global-actions-native.xml`）。已查看 `artifacts/global-actions-dark-collapsed.png` 与 `artifacts/global-actions-light.png`，临时测试已移除。
+
+## 2026-11-13 · 标签组工作区与干净退出
+
+每个标签组单独保存一棵平铺树，画布只显示当前组。切到别的组会换上那一组的布局，再回来时分屏还在。把其他组的标签拖进画面会加入当前组并按落点放置；菜单里的「显示已有终端」只列出当前组。空行 Ctrl+D 和退出码 0 关闭标签与 pane。退出码非 0 留下状态条。两个及以上 pane 在侧栏收成一个分屏卡片，成员与 pane 一一对应；卡片可以留在组外，也可以整块移入已有标签组，分屏本身不新建组。侧栏选中分屏以外的标签时，整个右侧换成这个终端，分屏树保留；再选中分屏里的标签，整组分屏回到画面。
+
+`./scripts/nsh check` 与 `./scripts/nsh build` 通过。`./scripts/nsh test --junit artifacts/group-layout-tests.xml` 为 58 通过、1 失败：失败的是新加的真实双 PTY 步骤对着已经收起的 terminal 输入。改正步骤后，`./scripts/nsh test --filter "two real PTYs"` 通过。该次确认 `/bin/sh` 的 `exit 3` 保留标签和状态条，空行 Ctrl+D 关掉另一个仍在运行的会话。预览里的 Ctrl+D 与 `exit 1` 由 `ui/Tiling.test.tsx` 覆盖。本次没有重跑原生 AppKit 平铺验收。

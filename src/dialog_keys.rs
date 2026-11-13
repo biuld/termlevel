@@ -20,3 +20,40 @@ pub fn DialogKeys(cx: Scope<DialogKeysEvent>) -> impl IntoElement {
     );
     view().absolute().w(px(0.0)).h(px(0.0))
 }
+
+/// Pane resize-mode keys, mounted after terminal bindings to take native priority.
+#[derive(Debug, Clone, PartialEq, Event)]
+pub enum ResizeKeysEvent {
+    /// Move the nearest split in this direction.
+    #[args(direction)]
+    Direction(String),
+    /// Finish resizing and return keys to the terminal.
+    Finish,
+}
+
+/// Temporary native keyboard scope for pane resizing.
+#[component]
+pub fn ResizeKeys(cx: Scope<ResizeKeysEvent>) -> impl IntoElement {
+    for direction in ["left", "right", "up", "down"] {
+        on_key_with(
+            direction,
+            KeyOptions {
+                when: nsh_core::keymap::When::Always,
+                repeat: true,
+                ..Default::default()
+            },
+            move |_| cx.emit(ResizeKeysEvent::Direction(direction.to_owned())),
+        );
+    }
+    for key in ["enter", "escape"] {
+        on_key_with(
+            key,
+            KeyOptions {
+                when: nsh_core::keymap::When::Always,
+                ..Default::default()
+            },
+            move |_| cx.emit(ResizeKeysEvent::Finish),
+        );
+    }
+    view().absolute().w(px(0.0)).h(px(0.0))
+}

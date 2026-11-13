@@ -2,7 +2,7 @@
 use super::{SessionTerminalProps, input::InputState, keys};
 use crate::sessions::Session;
 use nsh_base::{TerminalColor, TerminalEmulator, TerminalSize, TerminalStyle, input, theme};
-use nsh_core::{element::measure_text, prelude::*};
+use nsh_core::prelude::*;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -30,15 +30,10 @@ impl Display {
     pub fn new(session: Arc<Session>, props: SessionTerminalProps) -> Self {
         let cell_width = computed(move || {
             let family = family(props);
-            let css = match family.as_str() {
-                "monospace" | "ui-monospace" => format!("{}px {family}", props.font_size.get().0),
-                _ => format!(
-                    "{}px \"{}\"",
-                    props.font_size.get().0,
-                    family.replace('"', "")
-                ),
-            };
-            measure_text(&css, "0000000000") / 10.0
+            Points(crate::runtime::terminal_cell_width(
+                &family,
+                props.font_size.get().0,
+            ))
         });
         let display = Self {
             session,
@@ -134,7 +129,7 @@ impl Display {
         });
     }
 
-    pub fn element(&self) -> impl IntoElement + use<> {
+    pub fn element(&self, cx: Scope<super::SessionTerminalEvent>) -> impl IntoElement + use<> {
         self.bind_keys();
         let props = self.props;
         let input = self.input;
@@ -183,7 +178,10 @@ impl Display {
             .font_family(move || family(props))
             .text_size(move || Length::from(props.font_size.get()))
             .text_color(move || default_color(props.default_foreground, theme().foreground))
-            .on_press(move |_: &PressEvent| input.focus())
+            .on_press(move |_: &PressEvent| {
+                cx.emit(super::SessionTerminalEvent::FocusRequest);
+                input.focus();
+            })
             // Host classes may add padding. Give the list and its input
             // overlay the same unpadded content box and coordinate origin.
             .child(
@@ -199,7 +197,7 @@ impl Display {
                             }
                         },
                     ))
-                    .child(self.sink()),
+                    .child(self.sink(cx)),
             )
     }
 
@@ -296,7 +294,7 @@ impl Display {
             ))
     }
 
-    fn sink(&self) -> impl IntoElement + use<> {
+    fn sink(&self, cx: Scope<super::SessionTerminalEvent>) -> impl IntoElement + use<> {
         let display = self.clone();
         let anchor = computed(move || {
             display.revision.get();
@@ -371,7 +369,10 @@ impl Display {
                     text
                 });
             })
-            .on_focus(move || focused.set(true))
+            .on_focus(move || {
+                focused.set(true);
+                cx.emit(super::SessionTerminalEvent::FocusRequest);
+            })
             .on_blur(move || focused.set(false))
     }
 }

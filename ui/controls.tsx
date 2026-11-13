@@ -67,6 +67,7 @@ export function IconButton(props: {
   testID?: string;
   color?: string;
   selected?: boolean;
+  disabled?: boolean;
   /** Circle, so a hover fill matches a round control. */
   circle?: boolean;
 }) {
@@ -74,9 +75,10 @@ export function IconButton(props: {
     testID={props.testID}
     accessibilityLabel={props.label}
     onPress={props.onPress}
+    disabled={props.disabled}
     tooltip={<Hint>{props.label}</Hint>}
     class={`h-(--height-control) w-(--height-control) shrink-0 items-center justify-center hover:bg-control-hover active:bg-control-pressed focus-visible:ring-2 ring-ring ${props.circle ? "rounded-full" : "rounded-(--radius-control)"}`}
-    classList={{ "bg-control-selected": props.selected }}
+    classList={{ "bg-control-selected": props.selected, "opacity-40": props.disabled }}
   >
     <Icon name={props.icon} color={props.color ?? token(props.selected ? "control-selected-foreground" : "icon")} size={token("icon-size")} />
   </Button>;

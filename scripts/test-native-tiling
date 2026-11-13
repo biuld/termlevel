@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+runner_base=$(mktemp "$project_dir/.native-tiling.XXXXXX")
+runner="$runner_base.test.tsx"
+trap 'rm -f "$runner" "$runner_base"' EXIT HUP INT TERM
+cp "$project_dir/terminal/fixtures/Tiling.acceptance.tsx" "$runner"
+"$project_dir/scripts/nsh" test "$runner" --target macos --junit artifacts/tiling-native.xml "$@"

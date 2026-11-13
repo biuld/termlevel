@@ -48,6 +48,8 @@ pub enum SessionTerminalEvent {
     StatusChange(SessionInfo),
     /// The program rang the terminal bell.
     Bell,
+    /// A displayed terminal was clicked or its native input acquired focus.
+    FocusRequest,
 }
 
 /// Native view methods. Closing is an explicit Sessions.close operation.
@@ -106,5 +108,5 @@ pub fn SessionTerminal(
             cx.emit(SessionTerminalEvent::StatusChange(info));
         }
     });
-    display.element().into_element()
+    display.element(cx).into_element()
 }

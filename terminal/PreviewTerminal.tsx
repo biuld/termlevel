@@ -1,4 +1,4 @@
-import { cleanup, effect, token, untracked, View } from "nsh";
+import { cleanup, effect, Text, token, untracked, View } from "nsh";
 import { monoFont } from "../ui/fonts";
 import { Terminal, type TerminalRef } from "nsh/base";
 import type { Workspace } from "../ui/workspace";
@@ -18,22 +18,22 @@ export function PreviewTerminal(props: { id: string; workspace: Workspace }) {
     hint: ansiColor(token("terminal-hint")),
   }));
   const focusIfActive = () => {
-    if (!disposed && store.activeId() === id) terminal?.focus();
+    if (!disposed && store.activeId() === id && !store.inputBlocked()) terminal?.focus();
   };
 
   cleanup(() => { disposed = true; });
   effect(() => {
-    const active = store.activeId() === id;
+    const active = store.activeId() === id && !store.inputBlocked();
     if (active) untracked(focusIfActive);
   });
 
   return <View
     testID={`surface-${id}`}
-    accessibilityElementsHidden={store.activeId() !== id}
+    accessibilityElementsHidden={!store.frameForSession(id)}
     style={{
       position: "absolute", top: 0, right: 0, bottom: 0, left: 0,
-      opacity: store.activeId() === id ? 1 : 0,
-      pointerEvents: store.activeId() === id ? "auto" : "none",
+      opacity: store.frameForSession(id) ? 1 : 0,
+      pointerEvents: store.frameForSession(id) ? "auto" : "none",
     }}
   >
     <Terminal
@@ -46,7 +46,12 @@ export function PreviewTerminal(props: { id: string; workspace: Workspace }) {
       scrollback={3000}
       cursorClass="bg-terminal-cursor/55"
       class="flex-1 bg-terminal-background text-terminal-foreground px-(--padding-terminal) pb-(--padding-terminal)"
-      onData={({ data }) => preview.input(data)}
+      onData={({ data }) => {
+        if (store.activeId() !== id || store.inputBlocked()) return;
+        const code = preview.input(data);
+        if (code === 0) store.closeCleanExit(id);
+        else if (typeof code === "number") store.patchTab(id, { state: "exited", exitCode: code, error: null });
+      }}
       onResize={() => {
         if (started) return;
         started = true;
@@ -54,5 +59,12 @@ export function PreviewTerminal(props: { id: string; workspace: Workspace }) {
         focusIfActive();
       }}
     />
+    <If when={store.tab(id)?.state === "exited" || store.tab(id)?.state === "error"}>
+      <View class="shrink-0 border-t border-border bg-popover px-3 py-2">
+        <Text testID={`session-status-${id}`} class="text-(length:--text-label) text-muted-foreground">
+          {store.tab(id)?.error ?? `Process exited with code ${store.tab(id)?.exitCode ?? "unknown"}. Open a new terminal to continue.`}
+        </Text>
+      </View>
+    </If>
   </View>;
 }

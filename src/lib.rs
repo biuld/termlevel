@@ -17,6 +17,8 @@ fn native(registry: &mut Registry) {
         .module::<runtime::Runtime>()
         .module::<sessions::Sessions>()
         .register::<dialog_keys::DialogKeys>()
+        .register::<dialog_keys::ResizeKeys>()
         .register::<terminal::TerminalEngine>()
+        .register::<runtime::TerminalMetrics>()
         .register::<session_view::SessionTerminal>();
 }

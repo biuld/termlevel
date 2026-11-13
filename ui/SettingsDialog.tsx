@@ -19,6 +19,11 @@ const shortcuts = [
   { label: "Find terminal", keys: "mod+k" },
   { label: "Toggle sidebar", keys: "mod+b" },
   { label: "Next terminal", keys: "ctrl+tab" },
+  { label: "Split right", keys: "mod+d" },
+  { label: "Split down", keys: "mod+shift+d" },
+  { label: "Maximize / restore pane", keys: "mod+shift+enter" },
+  { label: "Focus pane (use any arrow)", keys: "mod+alt+right" },
+  { label: "Swap pane (use any arrow)", keys: "mod+alt+shift+right" },
 ] as const;
 
 /** Two-column settings: a section list on the left, that section on the right. */

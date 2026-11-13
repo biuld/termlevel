@@ -302,6 +302,7 @@ test("the group editor opens from the compact rail and dismisses outside", async
 
 test("dragging a terminal onto a group keeps its session and shows the drop target", async () => {
   const app = await open("./App.tsx", options);
+  await app.press("id:tab-colors");
   await app.type("id:terminal-colors", "echo dragged-into-group");
   await app.keyboard.press("enter");
   await app.waitFor("text:dragged-into-group");
@@ -338,6 +339,7 @@ test("dragging onto a collapsed group opens it there and a sideways drag does no
 
 test("dragging onto a terminal joins its group, or starts one when it has none", async () => {
   const app = await open("./App.tsx", options);
+  await app.press("id:tab-colors");
   await app.type("id:terminal-colors", "echo grouped-session");
   await app.keyboard.press("enter");
   await app.waitFor("text:grouped-session");
