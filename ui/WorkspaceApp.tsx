@@ -1,11 +1,13 @@
-import { effect, keymap, platform, setColorScheme, signal, Text, token, View } from "nsh";
-import { Button, Dialog, Input, ResizablePanel, ResizablePanelGroup } from "nsh/base";
+import { effect, keymap, platform, Scroll, signal, Text, token, View } from "nsh";
+import { Button, Input, ResizablePanel, ResizablePanelGroup } from "nsh/base";
 import { Application, currentWindow, Menu, titleBar } from "nsh/desktop";
 import { Runtime, Sessions, TerminalEngine } from "termlevel/native";
 import { TerminalSurface } from "../terminal/TerminalSurface";
-import { Action, DialogKeys, Hint, IconButton } from "./controls";
+import { Action, AppDialog, DialogActions, Hint, IconButton } from "./controls";
 import { Icon } from "./icons";
+import { SettingsDialog } from "./SettingsDialog";
 import { Sidebar, type SidebarActions } from "./Sidebar";
+import { Type } from "./type";
 import { createWorkspace } from "./workspace";
 
 type Editor = { title: string; value: string; save: (value: string) => void };
@@ -117,10 +119,14 @@ export function WorkspaceApp(props: { shell?: string } = {}) {
 
   function SessionToolbar(props: { collapsed: boolean }) {
     const showPath = () => !!store.activeTab() && !compactContent();
+    // The collapsed toolbar spans the window, while the terminal starts after the rail.
+    const pathInset = () => props.collapsed
+      ? Math.max(0, token("width-sidebar-collapsed") + token("padding-terminal") - titleBar().left - 8 - token("height-control"))
+      : token("padding-terminal");
     return <View testID="session-toolbar" desktop={{ windowDrag: true }}
       class="h-(--height-titlebar) shrink-0 flex-row items-center bg-terminal-background"
       style={{
-        paddingLeft: props.collapsed ? titleBar().left + 8 : 8,
+        paddingLeft: props.collapsed ? titleBar().left + 8 : 0,
         paddingRight: titleBar().right + 8,
       }}>
       <If when={props.collapsed}>
@@ -128,14 +134,14 @@ export function WorkspaceApp(props: { shell?: string } = {}) {
           <IconButton circle icon="sidebar" label="Expand sidebar" testID="toggle-sidebar" onPress={actions.toggleSidebar} />
         </View>
       </If>
-      <View class="min-w-0 flex-1" />
-      {/* Controls only. The session name stays on its tab; this row is not a second title. */}
+      <View class="min-w-0 flex-1 flex-row items-center" style={{ paddingLeft: pathInset() }}>
+        <If when={showPath()}>
+          <Type testID="session-path" role="body" family="mono" tone="muted-foreground" lines={1} class="min-w-0 flex-1"
+            tooltip={<Hint>{`${preview ? "Demo directory" : "Initial directory"}: ${store.activeTab()?.cwd}`}</Hint>}>{store.activeTab()?.cwd}</Type>
+        </If>
+      </View>
       <View desktop={{ windowDrag: false }}
         class="h-(--height-control) flex-row items-center gap-0.5">
-        <If when={showPath()}>
-          <Text testID="session-path" tooltip={<Hint>{`${preview ? "Demo directory" : "Initial directory"}: ${store.activeTab()?.cwd}`}</Hint>} class="min-w-0 max-w-[280px] pr-1 font-mono text-(length:--text-caption) text-muted-foreground"
-            style={{ numberOfLines: 1 }}>{store.activeTab()?.cwd}</Text>
-        </If>
         <IconButton icon="plus" label="New terminal" testID="titlebar-new-terminal" onPress={() => store.addTab()} />
         <If when={!!store.activeTab()}>
           <IconButton icon="more" label="Terminal actions" testID="terminal-actions" onPress={() => {
@@ -183,8 +189,8 @@ export function WorkspaceApp(props: { shell?: string } = {}) {
                 <View class="h-10 w-10 items-center justify-center rounded-(--radius-panel) border border-border bg-muted">
                   <Icon name="terminal" size={20} color={token("icon-active")} />
                 </View>
-                <Text class="text-(length:--text-heading) font-medium">Room for something new.</Text>
-                <Text class="text-(length:--text-body) text-muted-foreground">Open a terminal to get started.</Text>
+                <Type role="heading">Room for something new.</Type>
+                <Type role="body" tone="muted-foreground">Open a terminal to get started.</Type>
                 <Action primary onPress={() => { store.addTab(null); }} testID="empty-new-terminal">New terminal</Action>
               </View>
             </If>
@@ -213,103 +219,51 @@ export function WorkspaceApp(props: { shell?: string } = {}) {
       <Sidebar workspace={store} actions={actions} groupEditor={editingGroup} expanded={sidebarOpen} />
     </View>
 
-    <Dialog testID="name-dialog" open={editor() !== null} animation="fade"
-      accessibilityLabel={editor()?.title ?? "Edit name"} onOpenChange={({ open }) => { if (!open) editor.set(null); }}
-      class="m-auto w-[320px] gap-3 rounded-(--radius-dialog) border border-border bg-popover p-4" backdropClass="bg-scrim">
-      <DialogKeys dismiss={() => editor.set(null)} />
-      <Text class="text-(length:--text-title) font-semibold text-foreground">{editor()?.title}</Text>
+    <AppDialog testID="name-dialog" open={editor() !== null} label={editor()?.title ?? "Edit name"} title={editor()?.title}
+      frame="w-[320px]" dismiss={() => editor.set(null)}>
       <Input testID="name-input" value={draft()} onChange={({ value }) => draft.set(value)}
         onSubmit={saveEditor} autoFocus placeholder="Name" maxLength={80}
         class="h-(--height-input) rounded-(--radius-control) border border-input bg-background px-3 text-(length:--text-body) text-foreground" />
-      <View class="flex-row justify-end gap-2">
+      <DialogActions>
         <Action onPress={() => editor.set(null)}>Cancel</Action>
         <Action primary testID="save-name" onPress={saveEditor}>Save</Action>
-      </View>
-    </Dialog>
+      </DialogActions>
+    </AppDialog>
 
-    <Dialog testID="search-dialog" open={searching()} animation="fade" accessibilityLabel="Find a terminal"
-      onOpenChange={({ open }) => searching.set(open)}
-      class="m-auto w-[380px] gap-2 rounded-(--radius-dialog) border border-border bg-popover p-4" backdropClass="bg-scrim">
-      <DialogKeys dismiss={() => searching.set(false)} />
+    <AppDialog testID="search-dialog" open={searching()} label="Find a terminal" title="Find a terminal"
+      frame="w-[380px]" dismiss={() => searching.set(false)}>
       <Input testID="terminal-search" value={query()} onChange={({ value }) => query.set(value)}
-        autoFocus placeholder="Find a terminal…" onSubmit={() => {
+        autoFocus placeholder="Name or group" onSubmit={() => {
           const tab = searchResults()[0];
           if (tab) { store.select(tab.id); searching.set(false); }
         }} class="h-(--height-input) rounded-(--radius-control) border border-input bg-background px-3 text-(length:--text-body) text-foreground" />
-      <Each of={searchResults()} key={(tab) => tab.id}>{(tab) =>
-        <Button testID={`search-${tab().id}`} onPress={() => { store.select(tab().id); searching.set(false); }}
-          class="h-(--height-tab) flex-row items-center gap-2 rounded-(--radius-control) px-3 hover:bg-control-hover focus-visible:ring-2 ring-ring">
-          <Icon name="terminal" size={14} />
-          <Text class="flex-1 text-(length:--text-body) text-foreground">{tab().title}</Text>
-          <Text class="text-(length:--text-caption) text-muted-foreground">{store.groupTitle(tab().groupId)}</Text>
-        </Button>
-      }</Each>
-      <If when={searchResults().length === 0}><Text class="p-3 text-(length:--text-body) text-muted-foreground">No matching terminals.</Text></If>
-    </Dialog>
+      <Scroll class="max-h-[240px]">
+        <Each of={searchResults()} key={(tab) => tab.id}>{(tab) =>
+          <Button testID={`search-${tab().id}`} onPress={() => { store.select(tab().id); searching.set(false); }}
+            class="h-(--height-tab) flex-row items-center gap-2 rounded-(--radius-control) px-2 hover:bg-control-hover focus-visible:ring-2 ring-ring">
+            <Icon name="terminal" size={14} />
+            <Text class="min-w-0 flex-1 text-(length:--text-body) text-foreground" style={{ numberOfLines: 1 }}>{tab().title}</Text>
+            <Text class="text-(length:--text-caption) text-muted-foreground">{store.groupTitle(tab().groupId)}</Text>
+          </Button>
+        }</Each>
+        <If when={searchResults().length === 0}><Text class="px-2 py-3 text-(length:--text-body) text-muted-foreground">No matching terminals.</Text></If>
+      </Scroll>
+    </AppDialog>
 
-    <Dialog open={closingGroup() !== null} animation="fade" accessibilityLabel="Delete group"
-      onOpenChange={({ open }) => { if (!open) closingGroup.set(null); }}
-      class="m-auto w-[340px] gap-3 rounded-(--radius-dialog) border border-border bg-popover p-4" backdropClass="bg-scrim">
-      <DialogKeys dismiss={() => closingGroup.set(null)} />
-      <Text class="text-(length:--text-title) font-semibold text-foreground">Delete {store.groupTitle(closingGroup())}?</Text>
-      <Text class="text-(length:--text-body) text-muted-foreground">{preview ? "All terminals in this group will close. Their preview output will be discarded." : "All terminals in this group will close and their running processes will end."}</Text>
-      <View class="flex-row justify-end gap-2">
+    <AppDialog open={closingGroup() !== null} role="alertdialog" label="Delete group"
+      title={closingGroup() ? `Delete ${store.groupTitle(closingGroup())}?` : undefined}
+      description={preview ? "All terminals in this group will close. Their preview output will be discarded." : "All terminals in this group will close and their running processes will end."}
+      frame="w-[340px]" dismiss={() => closingGroup.set(null)}>
+      <DialogActions>
         <Action onPress={() => closingGroup.set(null)}>Cancel</Action>
         <Action destructive testID="confirm-close-group" onPress={() => {
           const id = closingGroup(); if (id) store.closeGroup(id); closingGroup.set(null);
         }}>Delete group</Action>
-      </View>
-    </Dialog>
+      </DialogActions>
+    </AppDialog>
 
-    <Dialog testID="settings-dialog" open={settings()} animation="fade" accessibilityLabel="Settings"
-      onOpenChange={({ open }) => settings.set(open)}
-      class="m-auto w-[360px] gap-3 rounded-(--radius-dialog) border border-border bg-popover p-4" backdropClass="bg-scrim">
-      <DialogKeys dismiss={() => settings.set(false)} />
-      <View class="flex-row items-center justify-between">
-        <Text class="text-(length:--text-title) font-semibold text-foreground">Settings</Text>
-        <IconButton icon="close" label="Close settings" onPress={() => settings.set(false)} />
-      </View>
-      <View class="gap-2">
-        <Text class="text-(length:--text-body) font-medium text-foreground">Appearance</Text>
-        <View class="flex-row gap-1 rounded-(--radius-tab) border border-border bg-background p-1">
-          <Each of={["system", "light", "dark"] as const}>{(mode) =>
-            <Button
-              testID={`appearance-${mode()}`}
-              accessibilityLabel={`${mode()} appearance`}
-              selected={appearance() === mode()}
-              onPress={() => { appearance.set(mode()); setColorScheme(mode()); }}
-              class="h-(--height-control) flex-1 items-center justify-center rounded-(--radius-control) hover:bg-control-hover focus-visible:ring-2 ring-ring"
-              classList={{ "bg-control-selected": appearance() === mode() }}
-            >
-              <Text class="text-(length:--text-label) font-medium"
-                style={{ color: token(appearance() === mode() ? "control-selected-foreground" : "muted-foreground") }}>
-                {mode() === "system" ? "System" : mode() === "light" ? "Light" : "Dark"}
-              </Text>
-            </Button>
-          }</Each>
-        </View>
-      </View>
-      <View class="flex-row items-center gap-2">
-        <Text class="flex-1 text-(length:--text-body) text-foreground">Terminal font size</Text>
-        <Action onPress={() => store.fontSize.update((n) => Math.max(10, n - 1))}>−</Action>
-        <Text class="text-(length:--text-body) text-foreground">{store.fontSize()} pt</Text>
-        <Action onPress={() => store.fontSize.update((n) => Math.min(24, n + 1))}>+</Action>
-      </View>
-      <View class="h-px bg-border" />
-      <Text class="text-(length:--text-body) text-foreground">Termlevel {version}</Text>
-      <Text class="text-(length:--text-label) text-muted-foreground">{preview ? "Interactive UI preview. No shell is connected; sessions and settings reset when the app restarts." : "Native terminal sessions powered by Alacritty. Closing a terminal ends its processes. Workspace layout and settings reset when the app restarts."}</Text>
-      <View class="gap-2">
-        <Each of={[
-          { label: "New terminal", keys: "mod+t" },
-          { label: "Find terminal", keys: "mod+k" },
-          { label: "Toggle sidebar", keys: "mod+b" },
-          { label: "Next terminal", keys: "ctrl+tab" },
-        ]}>{(shortcut) => <View class="flex-row items-center justify-between">
-          <Text class="text-(length:--text-label) text-muted-foreground">{shortcut().label}</Text>
-          <Text class="font-mono text-(length:--text-caption) text-subtle-foreground">{keymap.label(shortcut().keys)}</Text>
-        </View>}</Each>
-      </View>
-    </Dialog>
+    <SettingsDialog open={settings()} dismiss={() => settings.set(false)} appearance={appearance}
+      fontSize={store.fontSize} version={version} preview={preview} />
   </TerminalEngine>;
 }
 

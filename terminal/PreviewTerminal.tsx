@@ -1,4 +1,5 @@
 import { cleanup, effect, token, untracked, View } from "nsh";
+import { monoFont } from "../ui/fonts";
 import { Terminal, type TerminalRef } from "nsh/base";
 import type { Workspace } from "../ui/workspace";
 import { PreviewSession } from "./preview-session";
@@ -39,7 +40,7 @@ export function PreviewTerminal(props: { id: string; workspace: Workspace }) {
       testID={`terminal-${id}`}
       accessibilityLabel={`Terminal ${id}`}
       ref={(ref) => { terminal = ref; }}
-      fontFamily={token("font-mono")}
+      fontFamily={monoFont()}
       fontSize={store.fontSize()}
       lineHeight={store.fontSize() + token("line-gap-terminal")}
       scrollback={3000}

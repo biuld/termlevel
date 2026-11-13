@@ -1,5 +1,6 @@
 import { Text, token, View } from "nsh";
 import { SessionTerminal } from "termlevel/native";
+import { monoFont } from "../ui/fonts";
 import type { Workspace } from "../ui/workspace";
 import { PreviewTerminal } from "./PreviewTerminal";
 
@@ -17,7 +18,7 @@ export function TerminalSurface(props: { id: string; workspace: Workspace; previ
     }}>
     <SessionTerminal testID={`terminal-${id}`} sessionId={id} active={store.activeId() === id}
       accessibilityLabel={`Terminal ${tab()?.title ?? id}`}
-      fontFamily={token("font-mono")} fontSize={store.fontSize()}
+      fontFamily={monoFont()} fontSize={store.fontSize()}
       lineHeight={store.fontSize() + token("line-gap-terminal")}
       cursorClass="bg-terminal-cursor/55"
       defaultForeground={token("terminal-foreground")} defaultBackground={token("terminal-background")}

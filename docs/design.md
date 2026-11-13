@@ -15,10 +15,26 @@
 - 收起状态（含悬停浮层展开）禁用分界拖动，使用普通光标，不显示拖动悬停高亮；只有手动固定展开时允许调整宽度。
 - 搜索、新建分组、设置收至侧栏底部，旁边显示会话数量，不额外画横向分隔线；新建终端保留列表入口和工具栏按钮。侧栏、工具栏和快捷键新建的终端不进入当前分组；只有组内新建和新建分组会放进组。
 - 终端直接铺满右侧剩余空间，取消外边距、嵌套圆角面板、阴影和常驻状态栏。上边不留白，滚动文字裁切在会话工具栏下沿；左右和底部仍使用 `padding-terminal`。
-- 右侧 36 pt 行只负责对齐窗口按钮和拖动窗口，底色与终端相同，不画成第二条标题栏。会话名只出现在标签上。目录、新建和更多直接排列在右上工具栏，不设置独立底座；窄窗口隐藏目录。侧栏收起时，展开按钮是左侧单独的圆钮，与展开态使用同样的无底色常态和悬停反馈。预览身份仍由终端欢迎信息与设置说明明确展示。
-- UI 正文 12 pt，终端默认字号 13 pt；图标按钮 26 pt、操作按钮 28 pt、输入框 30 pt。
-- 对话框继续使用 `m-auto` 居中，保留紧凑尺寸与 Escape 关闭。对话框本体保持实色 `bg-popover`，底下是均匀遮罩，不用玻璃。
-- 设置支持 System / Light / Dark，默认跟随系统；主题切换及所有导航操作保留终端实例。
+- 右侧 36 pt 行只负责对齐窗口按钮和拖动窗口，底色与终端相同，不画成第二条标题栏。会话名只出现在标签上。目录在这行左侧，与终端文字左缘对齐：展开时为 `padding-terminal`，收起时再让出收起侧栏的宽度。新建和更多留在右侧，不设置独立底座；窄窗口隐藏目录。侧栏收起时，展开按钮是左侧单独的圆钮，与展开态使用同样的无底色常态和悬停反馈。预览身份仍由终端欢迎信息与设置说明明确展示。
+- 界面默认用平台字体 `system-ui`。`SF Pro Text` 不是已安装的字体族，不能当作 `font-sans`。设置里可以选择已安装的界面字体，以及终端和工具栏路径共用的等宽字体。工具栏路径用 body 字号和终端的等宽字体，没有单独字号；快捷键用所选等宽字体，字号与 caption 相同。字级见下方「字体」。图标按钮 26 pt、操作按钮 28 pt、输入框 30 pt。
+- 居中对话框使用 NSH `Dialog`。运行时只提供层和关闭行为，外观由应用绘制：实色 `bg-popover`、`radius-dialog`、细边框、轻阴影，底下是均匀 `bg-scrim`，不用玻璃。标题和说明在上，分区在中，操作在底部分隔线下右对齐。确认删除使用 `alertdialog`。Escape 和点击遮罩关闭。分组编辑仍是锚定组头的 `Overlay`，不是这个对话框。
+- 设置面板是两栏：左侧为 Appearance、Terminal、Interface、Shortcuts、About，右侧只显示当前分区。外观为 System / Light / Dark，默认跟随系统；切换外观保留终端实例。终端可选等宽字体，字号 10–24 pt，默认 Menlo 13 pt，行高为字号加 `line-gap-terminal`。工具栏路径使用同一等宽字体，字号保持 body。界面可选 System、Helvetica Neue、Avenir Next、Gill Sans、Futura、Georgia，字级仍来自主题。会话和设置仍不持久化。
+
+## 字体
+
+界面文字用 `ui/type.tsx` 的角色，不在组件里另写字号。字号和行高只写在 `theme.json`。字体族由设置选择，默认界面是 `system-ui`，默认等宽是 Menlo。
+
+| 角色 | 字号 | 行高 | 字重 | 用途 |
+|---|---|---|---|---|
+| `heading` | 18 | 22 | medium | 空状态 |
+| `title` | 15 | 20 | semibold | 对话框标题 |
+| `body` | 12 | 16 | regular | 标签名、设置行、按钮、组名（组名用 medium） |
+| `label` | 11 | 15 | medium | 设置分区、分段控件 |
+| `caption` | 10 | 13 | regular | 说明、计数 |
+| `mono` | 10 | 13 | 所选等宽字体 | 快捷键和设置里的字号读数 |
+| 终端 | 13 | 字号 + 8 | 所选等宽字体 | 终端默认字号和字体，由设置调整 |
+
+不使用低于 10 pt 的字号。原先与 caption 相同的 `text-micro` 已去掉。
 
 ## 表面与层级
 
@@ -56,7 +72,7 @@
 | 标签与控件 | `tab-selected-*`、`tab-hover`、`control-hover`、`control-pressed`、`control-selected-*` |
 | 分组 | `group-purple` 等，以及各自的 `-muted`、`-line` |
 | 终端 | `terminal-background`、`terminal-foreground`、`terminal-cursor`、`font-mono` |
-| 字体与密度 | `font-sans`、`text-*`、`height-*`、`padding-terminal` |
+| 字体与密度 | `font-sans`、`text-*`、`leading-*`、`height-*`、`padding-terminal` |
 | 圆角 | `radius-control`、`radius-tab`、`radius-panel`、`radius-dialog`、`radius-overlay` |
 
 `cssVars.theme` 放共用字体与尺寸，`cssVars.light` / `dark` 放完整配色。两个外观的自定义 token 名必须一致。

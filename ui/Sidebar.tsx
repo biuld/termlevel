@@ -344,7 +344,7 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
         <Icon name="plus" size={13} />
         <If when={props.expanded()}>
           <Text class="flex-1 text-(length:--text-label) text-muted-foreground">New terminal</Text>
-          <Text class="text-(length:--text-micro) text-subtle-foreground">{keymap.label("mod+t")}</Text>
+          <Text class="text-(length:--text-caption) text-subtle-foreground">{keymap.label("mod+t")}</Text>
         </If>
       </Button>
     </Scroll>

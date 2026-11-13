@@ -1,7 +1,7 @@
 {
   "cssVars": {
     "theme": {
-      "font-sans": "SF Pro Text",
+      "font-sans": "system-ui",
       "font-mono": "Menlo",
       "radius": "6px",
       "radius-control": "5px",
@@ -12,10 +12,14 @@
       "text-body": "12px",
       "text-label": "11px",
       "text-caption": "10px",
-      "text-micro": "10px",
       "text-title": "15px",
       "text-heading": "18px",
       "text-terminal": "13px",
+      "leading-body": "16px",
+      "leading-label": "15px",
+      "leading-caption": "13px",
+      "leading-title": "20px",
+      "leading-heading": "22px",
       "height-tab": "28px",
       "height-control": "26px",
       "height-titlebar": "36px",
