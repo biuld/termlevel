@@ -65,6 +65,7 @@ impl Session {
         cwd: String,
         mut command: CommandBuilder,
         colors: (Option<&str>, Option<&str>),
+        scrollback: usize,
     ) -> Result<Arc<Self>, String> {
         command.cwd(&cwd);
         command.env("TERM", "xterm-256color");
@@ -87,7 +88,7 @@ impl Session {
         let pid = child.process_id();
         let (input, receive) = mpsc::sync_channel::<Vec<u8>>(128);
         let session = Arc::new(Self {
-            emulator: Mutex::new(AlacrittyEmulator::new(TerminalSize::default(), 3000)),
+            emulator: Mutex::new(AlacrittyEmulator::new(TerminalSize::default(), scrollback)),
             revision: AtomicU64::new(1),
             bells: AtomicU64::new(0),
             colors: Mutex::new((
@@ -254,6 +255,11 @@ impl Session {
             emulator.backend_events()
         };
         self.handle_events(events);
+        self.revision.fetch_add(1, Ordering::Release);
+    }
+
+    pub(crate) fn set_scrollback(&self, lines: usize) {
+        self.emulator.lock().unwrap().set_scrollback(lines);
         self.revision.fetch_add(1, Ordering::Release);
     }
 
@@ -447,10 +453,20 @@ enum Entry {
     Failed(SessionInfo),
 }
 
-#[derive(Default)]
 pub(crate) struct SessionManager {
     entries: BTreeMap<String, Entry>,
     closing: Vec<Weak<Session>>,
+    scrollback: usize,
+}
+
+impl Default for SessionManager {
+    fn default() -> Self {
+        Self {
+            entries: BTreeMap::new(),
+            closing: Vec::new(),
+            scrollback: crate::terminal::SCROLLBACK_LIMIT,
+        }
+    }
 }
 
 impl SessionManager {
@@ -474,8 +490,9 @@ impl SessionManager {
             "session-{time:x}-{:x}",
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         );
+        let scrollback = self.scrollback;
         let entry = match resolve_cwd(&cwd)
-            .and_then(|cwd| Session::start(id.clone(), cwd, command, colors))
+            .and_then(|cwd| Session::start(id.clone(), cwd, command, colors, scrollback))
         {
             Ok(session) => Entry::Session(session),
             Err(error) => Entry::Failed(SessionInfo {
@@ -501,6 +518,20 @@ impl SessionManager {
             Some(Entry::Session(session)) => Ok(session.clone()),
             Some(Entry::Failed(info)) => Err(info.error.clone().unwrap_or_default()),
             None => Err("This terminal session is closed or missing".into()),
+        }
+    }
+
+    pub(crate) fn scrollback(&self) -> usize {
+        self.scrollback
+    }
+
+    pub(crate) fn set_scrollback(&mut self, lines: usize) {
+        let lines = crate::terminal::clamp_scrollback(lines);
+        self.scrollback = lines;
+        for entry in self.entries.values() {
+            if let Entry::Session(session) = entry {
+                session.set_scrollback(lines);
+            }
         }
     }
 

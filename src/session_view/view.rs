@@ -2,6 +2,7 @@
 use super::{SessionTerminalProps, input::InputState, keys};
 use crate::sessions::Session;
 use nsh_base::{TerminalColor, TerminalEmulator, TerminalSize, TerminalStyle, input, theme};
+use crate::terminal::SearchHit;
 use nsh_core::prelude::*;
 use std::{
     cell::{Cell, RefCell},
@@ -24,6 +25,79 @@ pub(super) struct Display {
     viewport: Signal<Size<Points>>,
     offset: Signal<Points>,
     cell_width: Memo<Points>,
+    pub search: Search,
+}
+
+/// The active find for one terminal view.
+#[derive(Clone)]
+pub(super) struct Search {
+    query: Rc<RefCell<String>>,
+    hits: Rc<RefCell<Vec<SearchHit>>>,
+    index: Rc<Cell<usize>>,
+    rev: Signal<u64>,
+    scroll: ElementRef,
+    session: Arc<Session>,
+}
+
+impl Search {
+    pub(super) fn apply(&self, query: &str) -> u32 {
+        *self.query.borrow_mut() = query.to_owned();
+        self.rescan();
+        self.index.set(0);
+        let count = self.hits.borrow().len() as u32;
+        if count > 0 {
+            self.reveal(0);
+        }
+        self.rev.update(|n| *n += 1);
+        count
+    }
+
+    pub(super) fn move_by(&self, delta: i32) -> u32 {
+        let len = self.hits.borrow().len();
+        if len == 0 {
+            return 0;
+        }
+        let next = (self.index.get() as i32 + delta).rem_euclid(len as i32) as usize;
+        self.index.set(next);
+        self.reveal(next);
+        self.rev.update(|n| *n += 1);
+        next as u32 + 1
+    }
+
+    pub(super) fn clear(&self) {
+        self.query.borrow_mut().clear();
+        self.hits.borrow_mut().clear();
+        self.index.set(0);
+        self.rev.update(|n| *n += 1);
+    }
+
+    /// Keeps highlights current after new output without jumping the viewport.
+    pub(super) fn refresh(&self) {
+        if self.query.borrow().is_empty() {
+            return;
+        }
+        self.rescan();
+        let len = self.hits.borrow().len();
+        if self.index.get() >= len {
+            self.index.set(0);
+        }
+        self.rev.update(|n| *n += 1);
+    }
+
+    fn rescan(&self) {
+        let query = self.query.borrow().clone();
+        let hits = self.session.emulator.lock().unwrap().search(&query);
+        *self.hits.borrow_mut() = hits;
+    }
+
+    fn reveal(&self, index: usize) {
+        let Some(hit) = self.hits.borrow().get(index).copied() else {
+            return;
+        };
+        // Percentage is a 0..=1 fraction. 0.3 keeps the hit near the top of the viewport.
+        self.scroll
+            .scroll_to_index(hit.line as u32, Percentage(0.3), Points(0.0), false);
+    }
 }
 
 impl Display {
@@ -35,11 +109,12 @@ impl Display {
                 props.font_size.get().0,
             ))
         });
+        let scroll = element_ref();
         let display = Self {
-            session,
+            session: session.clone(),
             props,
             input: element_ref(),
-            scroll: element_ref(),
+            scroll,
             cursor_ref: element_ref(),
             revision: signal(0),
             focused: signal(false),
@@ -49,6 +124,14 @@ impl Display {
             viewport: signal(Size::default()),
             offset: signal(Points(0.0)),
             cell_width,
+            search: Search {
+                query: Rc::default(),
+                hits: Rc::default(),
+                index: Rc::default(),
+                rev: signal(0),
+                scroll,
+                session,
+            },
         };
         #[cfg(all(debug_assertions, target_os = "macos"))]
         super::native_probe::track(display.session.info().id, display.input, display.cursor_ref);
@@ -223,10 +306,44 @@ impl Display {
             (at.index() == emu.line_count() - emu.screen_rows() + c.row as usize).then_some(c.col)
         });
         let props = self.props;
-        let cw = self.cell_width;
         let cursor_ref = self.cursor_ref;
+        let marks = {
+            let display = self.clone();
+            computed(move || {
+                display.search.rev.get();
+                let hits = display.search.hits.borrow();
+                let current = display.search.index.get();
+                hits.iter()
+                    .enumerate()
+                    .filter(|(_, hit)| hit.line == at.index())
+                    .map(|(index, hit)| (hit.col, hit.cols, index == current))
+                    .collect::<Vec<_>>()
+            })
+        };
+        let cw = self.cell_width;
         view()
             .h(move || Length::from(props.line_height.get()))
+            .child(dynamic(move || {
+                let width = cw.get();
+                view().absolute().inset_0().children(
+                    marks
+                        .get()
+                        .into_iter()
+                        .map(|(col, cols, current)| {
+                            view()
+                                .absolute()
+                                .top_0()
+                                .bottom_0()
+                                .left(Length::from(width * col as f32))
+                                .w(Length::from(width * cols.max(1) as f32))
+                                .bg(theme().foreground)
+                                .opacity(if current { 0.28 } else { 0.12 })
+                                .pointer_events(PointerEvents::None)
+                                .into_element()
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            }))
             .child(dynamic(move || {
                 view().absolute().inset_0().children(
                     spans

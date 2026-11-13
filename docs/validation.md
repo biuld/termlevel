@@ -272,3 +272,21 @@ NSH 0.5.0 的测试驱动没有 `compose()`，因此 `scripts/test-native-input`
 每个标签组单独保存一棵平铺树，画布只显示当前组。切到别的组会换上那一组的布局，再回来时分屏还在。把其他组的标签拖进画面会加入当前组并按落点放置；菜单里的「显示已有终端」只列出当前组。空行 Ctrl+D 和退出码 0 关闭标签与 pane。退出码非 0 留下状态条。两个及以上 pane 在侧栏收成一个分屏卡片，成员与 pane 一一对应；卡片可以留在组外，也可以整块移入已有标签组，分屏本身不新建组。侧栏选中分屏以外的标签时，整个右侧换成这个终端，分屏树保留；再选中分屏里的标签，整组分屏回到画面。
 
 `./scripts/nsh check` 与 `./scripts/nsh build` 通过。`./scripts/nsh test --junit artifacts/group-layout-tests.xml` 为 58 通过、1 失败：失败的是新加的真实双 PTY 步骤对着已经收起的 terminal 输入。改正步骤后，`./scripts/nsh test --filter "two real PTYs"` 通过。该次确认 `/bin/sh` 的 `exit 3` 保留标签和状态条，空行 Ctrl+D 关掉另一个仍在运行的会话。预览里的 Ctrl+D 与 `exit 1` 由 `ui/Tiling.test.tsx` 覆盖。本次没有重跑原生 AppKit 平铺验收。
+
+## 2026-11-14 · 终端内容查找与滚动上限
+
+⌘F 在当前终端内容里查找，大小写不敏感。真实会话的匹配、滚动和高亮留在 Rust，不把网格送进 JS。预览只显示命中计数。滚动历史上限为 10,000 行，设置里的 Terminal 页写明这个数字。⌘K 仍是按标题、目录和分组找终端。
+
+`./scripts/nsh check`、`./scripts/nsh build` 与 `git diff --check` 通过。`./scripts/nsh test --filter search` 为 3 通过（含两条 Rust 匹配测试，以及既有的「search opens a terminal…」）。`./scripts/nsh test --filter scrollback_limit` 为 1 通过。`./scripts/nsh test terminal/Find.test.tsx` 为 2 通过：预览里查找 `preview` 得到「N of N」，关闭查找条后消失；设置 Terminal 页包含 `10,000`。本次没有重跑完整测试套件，也没有做原生 AppKit 验收。高亮和滚到命中只在真实会话路径上，预览测试看不到。
+
+## 2026-11-14 · 设置里的滚动上限
+
+Terminal 设置可以按 1,000 行调整滚动历史，范围 1,000 到 100,000，默认 10,000。改动立刻作用于已打开的真实会话，减小会丢掉最老的行；之后新建的会话使用这个值。预览终端按新上限重新建立网格。快捷键页补上关闭终端、上一个终端、新建分组、前九个终端和设置。外观、字号和字体本来就会立刻生效。这些值仍不写入磁盘。
+
+`./scripts/nsh check` 通过。`./scripts/nsh test --filter set_scrollback` 通过。`./scripts/nsh test terminal/Find.test.tsx` 为 2 通过：设置里从 10,000 调到 9,000 再调回，快捷键页能看到 Close terminal、Previous terminal 和 Find in terminal。没有重跑完整套件，也没有做原生 AppKit 验收。
+
+## 2026-11-14 · 窗格工具栏改为搜索入口
+
+去掉单窗格工具栏上的新建按钮。非分屏终端仍由 ⌘T、窗口菜单和侧栏「New terminal」创建；没有终端时的空状态按钮保留。每个 pane 工具栏左侧第一个动作改为搜索，选中该 pane 并打开已有的内容查找条。
+
+`./scripts/nsh check` 通过。`./scripts/nsh test terminal/Find.test.tsx` 为 2 通过：预览查找关闭后，工具栏没有 `titlebar-new-terminal`，按下 `pane-find` 会再次出现查找条。没有重跑完整套件，也没有做原生 AppKit 验收。

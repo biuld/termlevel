@@ -1,6 +1,6 @@
 import { effect, Overlay, Text, token, View, type InputRef, type ViewRef } from "nsh";
 import { Button, Input } from "nsh/base";
-import { DialogKeys } from "./controls";
+import { DialogKeys, fieldClass } from "./controls";
 import { monoFont } from "./fonts";
 import { groupColor, groupPalette } from "./theme";
 import type { Workspace } from "./workspace";
@@ -41,7 +41,7 @@ export function GroupEditor(props: {
       value={store.group(id)?.title ?? ""} placeholder="Example: Project" maxLength={80}
       onChange={({ value }) => store.patchGroup(id, { title: value })}
       onSubmit={() => props.close(true)}
-      class="mb-2 h-(--height-input) rounded-(--radius-control) border border-input bg-background px-2 text-(length:--text-body) text-foreground focus:border-ring" />
+      class={`mb-2 ${fieldClass}`} />
     <Button testID="group-editor-new-terminal"
       onPress={() => { props.close(false); store.addTab(id); }}
       class="h-(--height-action) justify-center rounded-(--radius-control) px-2 hover:bg-control-hover focus-visible:bg-control-hover">

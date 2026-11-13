@@ -85,7 +85,7 @@ test("sidebar dragging to a pane creates a split and cancellation does not chang
   await app.drop();
   expect(app.shows("id:terminal-colors")).toBe(true);
   expect(app.shows("id:terminal-prototype")).toBe(true);
-  expect(app.texts()).toContain("4 terminals");
+  expect(app.shows("id:tab-tab-1")).toBe(false);
   await app.press("id:group-termlevel");
   expect(app.shows("id:tab-colors")).toBe(false);
   await app.press("id:group-termlevel");
@@ -101,7 +101,7 @@ test("sidebar dragging to a pane creates a split and cancellation does not chang
 test("too-small split is rejected without starting a terminal", async () => {
   const app = await open("../App.tsx", { ...options, width: 640, height: 480 });
   await app.keyboard.press("mod+d");
-  expect(app.texts()).toContain("4 terminals");
+  expect(app.shows("id:tab-tab-1")).toBe(false);
   expect(app.shows("id:terminal-tab-1")).toBe(false);
   expect(app.shows("id:layout-hint")).toBe(true);
 });
@@ -124,7 +124,10 @@ test("each tab group keeps its own tiling layout", async () => {
   expect(app.shows("id:terminal-tab-1")).toBe(false);
   expect(app.shows("id:terminal-colors")).toBe(true);
   expect(app.shows("id:pane-colors >> id:session-toolbar")).toBe(true);
-  expect(app.texts()).toContain("2 terminals");
+  expect(app.shows("id:tab-home")).toBe(true);
+  expect(app.shows("id:tab-colors")).toBe(true);
+  expect(app.shows("id:tab-prototype")).toBe(false);
+  expect(app.shows("id:tab-preview")).toBe(false);
 });
 
 test("a split is its own sidebar unit and can move into a tab group", async () => {
@@ -191,7 +194,9 @@ test("pane-title edge dragging moves an existing pane and center dragging swaps 
   expect(moved.kind === "split" && moved.axis === "column").toBe(true);
   expect(app.shows("id:terminal-prototype")).toBe(true);
   expect(app.shows("id:terminal-tab-1")).toBe(true);
-  expect(app.texts()).toContain("5 terminals");
+  expect(app.shows("id:tab-home")).toBe(true);
+  expect(app.shows("id:tab-preview")).toBe(true);
+  expect(app.shows("id:tab-colors")).toBe(true);
   await app.dragAndHold("id:pane-title-prototype", { x: 0, y: 550 });
   await app.waitFor("id:pane-drop-preview"); await app.drop();
   expect(panes(state(app).tiling.root).map(p => p.sessionId)).toEqual(["tab-1", "prototype"]);

@@ -16,12 +16,48 @@ impl Runtime {
         std::env::var("TERMLEVEL_PREVIEW").as_deref() == Ok("1")
     }
 
+    /// Lines of scrollback a terminal keeps. Older lines drop off the top.
+    pub fn scrollback_limit() -> u32 {
+        crate::sessions::manager().lock().unwrap().scrollback() as u32
+    }
+
+    /// Smallest scrollback setting.
+    pub fn scrollback_min() -> u32 {
+        crate::terminal::SCROLLBACK_MIN as u32
+    }
+
+    /// Largest scrollback setting.
+    pub fn scrollback_max() -> u32 {
+        crate::terminal::SCROLLBACK_MAX as u32
+    }
+
+    /// How many lines one settings step changes.
+    pub fn scrollback_step() -> u32 {
+        crate::terminal::SCROLLBACK_STEP as u32
+    }
+
     /// Existing initial directory for a new workspace.
     pub fn cwd() -> String {
         std::env::current_dir()
             .unwrap_or_else(|_| std::path::PathBuf::from("/"))
             .to_string_lossy()
             .into_owned()
+    }
+
+    /// The system's folder dialog. `None` when the user cancels.
+    pub async fn pick_folder(start: String) -> Result<Option<String>, String> {
+        let mut dialog = nsh_core::file_dialog::OpenDialog::folders()
+            .title("New group")
+            .button_label("Choose");
+        let start_path = std::path::PathBuf::from(&start);
+        if start_path.is_dir() {
+            dialog = dialog.directory(start_path);
+        }
+        match nsh_core::element::pick_paths(dialog).await {
+            Ok(Some(mut paths)) => Ok(paths.pop().map(|path| path.to_string_lossy().into_owned())),
+            Ok(None) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 }
 

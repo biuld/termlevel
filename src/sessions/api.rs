@@ -46,4 +46,9 @@ impl Sessions {
     pub fn settled() -> bool {
         manager().lock().unwrap().settled()
     }
+
+    /// Lines kept above the screen. Applies to open sessions and the next one opened.
+    pub fn set_scrollback(lines: u32) {
+        manager().lock().unwrap().set_scrollback(lines as usize);
+    }
 }

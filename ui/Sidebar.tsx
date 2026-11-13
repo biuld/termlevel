@@ -390,9 +390,5 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
         </If>
       </Button>
     </Scroll>
-
-    <If when={props.expanded()}>
-      <Text class="px-2 py-1 text-(length:--text-caption) text-muted-foreground">{store.tabs().length} {store.tabs().length === 1 ? "terminal" : "terminals"}</Text>
-    </If>
   </View>;
 }

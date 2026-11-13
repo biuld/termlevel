@@ -1,4 +1,5 @@
-import { batch, computed, signal, token } from "nsh";
+import { batch, computed, effect, signal, token } from "nsh";
+import { Runtime, Sessions } from "termlevel/native";
 import { dropPosition, equalize, geometry, insertPane, minimum, neighbor, panes, removePane, siblings, updateNode, type Direction, type DropPosition, type LayoutNode, type Pane, type Rect, type Size, type TilingState } from "./tiling";
 import { groupPalette, type GroupColor } from "./theme";
 
@@ -95,6 +96,8 @@ export function createWorkspace(transport?: SessionTransport) {
   const expanded = signal(true);
   const sidebarWidth = signal(token("width-sidebar"));
   const fontSize = signal(token("text-terminal"));
+  const scrollback = signal(Runtime.scrollbackLimit());
+  effect(() => { Sessions.setScrollback(scrollback()); });
   const activeTab = computed(() => tabs().find((t) => t.id === activeId()));
   const paneMinimum = computed(() => ({
     width: (cellWidth() || fontSize()) * 40 + token("padding-terminal") * 2,
@@ -406,13 +409,13 @@ export function createWorkspace(transport?: SessionTransport) {
     return pool[Math.floor(Math.random() * pool.length)].id;
   }
 
-  function addGroup() {
-    const cwd = activeTab()?.cwd || transport?.cwd || "~";
+  function addGroup(cwd: string) {
+    const directory = cwd.trim() || "~";
     const id = `group-${++sequence}`;
     const color = nextGroupColor();
     batch(() => {
       groups.update((all) => [...all, {
-        id, title: pathName(cwd), cwd, color, collapsed: false,
+        id, title: pathName(directory), cwd: directory, color, collapsed: false,
       }]);
       expanded.set(true);
     });
@@ -568,7 +571,7 @@ export function createWorkspace(transport?: SessionTransport) {
   }
 
   return {
-    tabs, groups, activeId, activeTab, expanded, sidebarWidth, fontSize, workspaceKey,
+    tabs, groups, activeId, activeTab, expanded, sidebarWidth, fontSize, scrollback, workspaceKey,
     tiling, paneList, inputBlocked, cellWidth, canvasSize, setCanvasSize, paneMinimum, fullGeometry, constrained, projected,
     paneForSession, frameForSession, focusPane, canSplit, splitTerminal, hidePane, toggleZoom, focusDirection,
     layoutSessions, placeSplit, inSplit,

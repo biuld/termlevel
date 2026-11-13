@@ -3,11 +3,13 @@ import { Button, Input, ResizablePanel, ResizablePanelGroup } from "nsh/base";
 import { Application, currentWindow, Menu, titleBar } from "nsh/desktop";
 import { Runtime, Sessions, TerminalEngine } from "termlevel/native";
 import { TilingCanvas } from "./TilingCanvas";
-import { Action, AppDialog, DialogActions, IconButton } from "./controls";
+import { Action, AppDialog, DialogActions, fieldClass, IconButton } from "./controls";
 import { Icon } from "./icons";
+import { GroupPathDialog } from "./GroupPathDialog";
 import { SettingsDialog } from "./SettingsDialog";
 import { Sidebar, type SidebarActions } from "./Sidebar";
 import { Type } from "./type";
+import { applyFonts } from "./fonts";
 import { createWorkspace, type Workspace } from "./workspace";
 
 type Editor = { title: string; value: string; save: (value: string) => void };
@@ -36,12 +38,17 @@ export function WorkspaceApp(props: { shell?: string; workspace?: Workspace } = 
   const searching = signal(false);
   const query = signal("");
   const settings = signal(false);
+  const finding = signal(false);
+  const findQuery = signal("");
   const appearance = signal<"system" | "light" | "dark">("system");
+  effect(() => { applyFonts(); });
   const closingGroup = signal<string | null>(null);
   const editingGroup = signal<string | null>(null);
+  const choosingPath = signal(false);
+  const pathError = signal("");
   const version = Runtime.version();
   effect(() => {
-    const modal = editor() !== null || searching() || settings() || closingGroup() !== null || editingGroup() !== null;
+    const modal = editor() !== null || searching() || settings() || closingGroup() !== null || editingGroup() !== null || choosingPath() || finding();
     if (modal) { store.resizing.set(false); store.cancelPaneDrag(); }
     store.inputBlocked.set(modal || store.resizing());
   });
@@ -73,7 +80,7 @@ export function WorkspaceApp(props: { shell?: string; workspace?: Workspace } = 
   }
   const actions: SidebarActions = {
     renameTab: (id) => edit("Rename terminal", store.tab(id)?.title ?? "", (title) => store.patchTab(id, { title, customTitle: true })),
-    newGroup: () => editingGroup.set(store.addGroup()),
+    newGroup: () => { pathError.set(""); choosingPath.set(true); },
     closeGroup: closingGroup.set,
     search: () => { query.set(""); searching.set(true); },
     settings: () => settings.set(true),
@@ -90,6 +97,7 @@ export function WorkspaceApp(props: { shell?: string; workspace?: Workspace } = 
     "mod+shift+enter": terminalAction(store.toggleZoom),
     "mod+shift+g": actions.newGroup,
     "mod+k": actions.search,
+    "mod+f": () => { if (editor() === null && !searching() && !settings() && closingGroup() === null && editingGroup() === null && !choosingPath()) finding.set(true); },
     "mod+,": actions.settings,
     "ctrl+tab": () => store.step(1),
     "ctrl+shift+tab": () => store.step(-1),
@@ -121,6 +129,7 @@ export function WorkspaceApp(props: { shell?: string; workspace?: Workspace } = 
     { label: "View", submenu: [
       { label: "Toggle sidebar", shortcut: "mod+b", onSelect: shortcuts["mod+b"] },
       { label: "Find a terminal…", shortcut: "mod+k", onSelect: actions.search },
+      { label: "Find in terminal…", shortcut: "mod+f", onSelect: () => finding.set(true) },
       { type: "separator" },
       { label: "Split right", shortcut: "mod+d", onSelect: shortcuts["mod+d"] },
       { label: "Split down", shortcut: "mod+shift+d", onSelect: shortcuts["mod+shift+d"] },
@@ -167,7 +176,7 @@ export function WorkspaceApp(props: { shell?: string; workspace?: Workspace } = 
         </ResizablePanel>
         <ResizablePanel minSize={320}>
           <View class="h-full min-w-0 flex-1" style={{ paddingLeft: token("gap-pane") / 2 }}>
-            <TilingCanvas workspace={store} preview={preview} rename={actions.renameTab} />
+            <TilingCanvas workspace={store} preview={preview} rename={actions.renameTab} finding={finding} findQuery={findQuery} />
           </View>
         </ResizablePanel>
       </ResizablePanelGroup>
@@ -197,7 +206,7 @@ export function WorkspaceApp(props: { shell?: string; workspace?: Workspace } = 
       frame="w-[320px]" dismiss={() => editor.set(null)}>
       <Input testID="name-input" value={draft()} onChange={({ value }) => draft.set(value)}
         onSubmit={saveEditor} autoFocus placeholder="Name" maxLength={80}
-        class="h-(--height-input) rounded-(--radius-control) border border-input bg-background px-3 text-(length:--text-body) text-foreground" />
+        class={fieldClass} />
       <DialogActions>
         <Action onPress={() => editor.set(null)}>Cancel</Action>
         <Action primary testID="save-name" onPress={saveEditor}>Save</Action>
@@ -210,12 +219,12 @@ export function WorkspaceApp(props: { shell?: string; workspace?: Workspace } = 
         autoFocus placeholder="Name or group" onSubmit={() => {
           const tab = searchResults()[0];
           if (tab) { store.select(tab.id); searching.set(false); }
-        }} class="h-(--height-input) rounded-(--radius-control) border border-input bg-background px-3 text-(length:--text-body) text-foreground" />
+        }} class={fieldClass} />
       <Scroll class="max-h-[240px]">
         <Each of={searchResults()} key={(tab) => tab.id}>{(tab) =>
           <Button testID={`search-${tab().id}`} onPress={() => { store.select(tab().id); searching.set(false); }}
-            class="h-(--height-tab) flex-row items-center gap-2 rounded-(--radius-control) px-2 hover:bg-control-hover focus-visible:ring-2 ring-ring">
-            <Icon name="terminal" size={14} />
+            class="h-(--height-tab) flex-row items-center gap-2 rounded-(--radius-tab) px-2 hover:bg-tab-hover focus-visible:ring-2 ring-sidebar-ring">
+            <Icon name="terminal" size={13} color={token("icon")} />
             <Text class="min-w-0 flex-1 text-(length:--text-body) text-foreground" style={{ numberOfLines: 1 }}>{tab().title}</Text>
             <Text class="text-(length:--text-caption) text-muted-foreground">{store.groupTitle(tab().groupId)}</Text>
           </Button>
@@ -236,8 +245,21 @@ export function WorkspaceApp(props: { shell?: string; workspace?: Workspace } = 
       </DialogActions>
     </AppDialog>
 
+    <GroupPathDialog open={choosingPath()} error={pathError()} dismiss={() => choosingPath.set(false)}
+      paths={[...new Set([store.activeTab()?.cwd, ...store.tabs().map((tab) => tab.cwd)].filter((cwd): cwd is string => !!cwd))]}
+      onChoose={(cwd) => { choosingPath.set(false); store.addGroup(cwd); }}
+      onBrowse={() => {
+        const start = store.activeTab()?.cwd ?? "";
+        void Runtime.pickFolder(start).then((picked) => {
+          if (!choosingPath()) return;
+          if (picked) { choosingPath.set(false); store.addGroup(picked); }
+        }).catch((error: unknown) => {
+          pathError.set(error instanceof Error ? error.message : "Could not open the folder dialog.");
+        });
+      }} />
     <SettingsDialog open={settings()} dismiss={() => settings.set(false)} appearance={appearance}
-      fontSize={store.fontSize} version={version} preview={preview} />
+      fontSize={store.fontSize} version={version} preview={preview} scrollback={store.scrollback}
+      scrollbackMin={Runtime.scrollbackMin()} scrollbackMax={Runtime.scrollbackMax()} scrollbackStep={Runtime.scrollbackStep()} />
   </TerminalEngine>;
 }
 

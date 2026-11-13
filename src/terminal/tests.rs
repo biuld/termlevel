@@ -45,6 +45,42 @@ fn styles_and_background_spaces_survive_conversion() {
 }
 
 #[test]
+fn search_matches_case_insensitively_in_order() {
+    let mut term = emulator(20, 4, 10);
+    term.feed(b"Hello\r\nhello\r\nnone");
+    let hits = term.search("HELLO");
+    assert_eq!(hits.len(), 2);
+    assert_eq!(hits[0], SearchHit { line: 0, col: 0, cols: 5 });
+    assert_eq!(hits[1].line, 1);
+    assert!(term.search("").is_empty());
+    assert!(term.search("missing").is_empty());
+}
+
+#[test]
+fn search_wide_glyph_uses_its_column_span() {
+    let mut term = emulator(20, 2, 4);
+    term.feed("a中b".as_bytes());
+    assert_eq!(term.search("中"), vec![SearchHit { line: 0, col: 1, cols: 2 }]);
+}
+
+#[test]
+fn scrollback_limit_keeps_ten_thousand_lines() {
+    assert_eq!(SCROLLBACK_LIMIT, 10_000);
+    assert_eq!(clamp_scrollback(1), SCROLLBACK_MIN);
+    assert_eq!(clamp_scrollback(usize::MAX), SCROLLBACK_MAX);
+}
+
+#[test]
+fn set_scrollback_drops_the_oldest_lines() {
+    let mut term = emulator(10, 2, 4);
+    term.feed(b"zero\r\none\r\ntwo\r\nthree\r\nfour");
+    assert_eq!(lines(&term), ["zero", "one", "two", "three", "four"]);
+    term.set_scrollback(2);
+    assert_eq!(lines(&term), ["one", "two", "three", "four"]);
+    assert!(term.backend_events().is_empty());
+}
+
+#[test]
 fn history_is_bounded_and_ordered_oldest_first() {
     let mut term = emulator(10, 2, 2);
     term.feed(b"zero\r\none\r\ntwo\r\nthree\r\nfour");

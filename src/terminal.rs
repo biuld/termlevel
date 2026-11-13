@@ -100,22 +100,52 @@ pub(crate) fn indexed_color(index: u8) -> Rgb {
     }
 }
 
+/// Default lines kept above the screen. Older lines drop off the top.
+pub(crate) const SCROLLBACK_LIMIT: usize = 10_000;
+/// Smallest scrollback the settings control can apply.
+pub(crate) const SCROLLBACK_MIN: usize = 1_000;
+/// Largest scrollback the settings control can apply.
+pub(crate) const SCROLLBACK_MAX: usize = 100_000;
+/// Settings changes the limit by this many lines.
+pub(crate) const SCROLLBACK_STEP: usize = 1_000;
+
+pub(crate) fn clamp_scrollback(lines: usize) -> usize {
+    lines.clamp(SCROLLBACK_MIN, SCROLLBACK_MAX)
+}
+
+fn emulator_config(scrollback: usize) -> Config {
+    Config {
+        scrolling_history: scrollback,
+        // NSH's key encoder has no Kitty protocol support. Clipboard
+        // access is likewise outside this adapter's present contract.
+        kitty_keyboard: false,
+        osc52: Osc52::Disabled,
+        ..Default::default()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SearchHit {
+    pub line: usize,
+    pub col: usize,
+    pub cols: usize,
+}
+
 impl AlacrittyEmulator {
     pub(crate) fn new(size: TerminalSize, scrollback: usize) -> Self {
         let events = Events::default();
-        let config = Config {
-            scrolling_history: scrollback,
-            // NSH's key encoder has no Kitty protocol support. Clipboard
-            // access is likewise outside this adapter's present contract.
-            kitty_keyboard: false,
-            osc52: Osc52::Disabled,
-            ..Default::default()
-        };
         Self {
-            term: Term::new(config, &Size(size), events.clone()),
+            term: Term::new(emulator_config(scrollback), &Size(size), events.clone()),
             parser: Processor::new(),
             events,
         }
+    }
+
+    /// Changes how many lines stay above the screen. A smaller limit drops the oldest lines.
+    pub(crate) fn set_scrollback(&mut self, lines: usize) {
+        self.term.set_options(emulator_config(lines));
+        // set_options announces the current title. That event is not new program output.
+        let _ = self.backend_events();
     }
 
     pub(crate) fn backend_events(&mut self) -> Vec<Event> {
@@ -158,6 +188,56 @@ impl AlacrittyEmulator {
         cursor.col = point.column.0 as u16;
         cursor.row = point.line.0 as u16;
         cursor
+    }
+
+    /// Case-insensitive matches in scrollback and the screen, in reading order.
+    pub(crate) fn search(&self, query: &str) -> Vec<SearchHit> {
+        let needle: Vec<char> = query.chars().flat_map(|ch| ch.to_lowercase()).collect();
+        if needle.is_empty() {
+            return Vec::new();
+        }
+        let mut hits = Vec::new();
+        for line in 0..self.line_count() {
+            let runs = self.grid_runs(line);
+            let mut glyphs: Vec<(usize, usize, String)> = Vec::new();
+            for run in &runs {
+                if run.run.text.is_ascii() {
+                    for (offset, ch) in run.run.text.chars().enumerate() {
+                        glyphs.push((run.col + offset, 1, ch.to_string()));
+                    }
+                } else if !run.run.text.is_empty() {
+                    glyphs.push((run.col, run.cells, run.run.text.clone()));
+                }
+            }
+            let mut flat = String::new();
+            let mut owners = Vec::new();
+            for (index, (_, _, text)) in glyphs.iter().enumerate() {
+                for _ in text.chars() {
+                    owners.push(index);
+                }
+                flat.push_str(text);
+            }
+            let folded: Vec<char> = flat.chars().flat_map(|ch| ch.to_lowercase()).collect();
+            if folded.len() != owners.len() || folded.len() < needle.len() {
+                continue;
+            }
+            let mut at = 0;
+            while at + needle.len() <= folded.len() {
+                if folded[at..at + needle.len()] == needle {
+                    let start = owners[at];
+                    let end = owners[at + needle.len() - 1];
+                    hits.push(SearchHit {
+                        line,
+                        col: glyphs[start].0,
+                        cols: glyphs[end].0 + glyphs[end].1 - glyphs[start].0,
+                    });
+                    at += needle.len();
+                } else {
+                    at += 1;
+                }
+            }
+        }
+        hits
     }
 
     pub(crate) fn grid_runs(&self, index: usize) -> Vec<GridRun> {

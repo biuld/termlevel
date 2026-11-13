@@ -1,4 +1,4 @@
-import { cleanup, token, View, type GestureResponderEvent, type ViewRef } from "nsh";
+import { cleanup, token, View, type GestureResponderEvent, type Signal, type ViewRef } from "nsh";
 import { Menu } from "nsh/desktop";
 import { ResizeKeys, TerminalMetrics } from "termlevel/native";
 import { monoFont } from "./fonts";
@@ -10,7 +10,13 @@ import { groupColor } from "./theme";
 import type { Workspace } from "./workspace";
 import type { Divider, Direction, Rect } from "./tiling";
 
-export function TilingCanvas(props: { workspace: Workspace; preview: boolean; rename: (id: string) => void }) {
+export function TilingCanvas(props: {
+  workspace: Workspace;
+  preview: boolean;
+  rename: (id: string) => void;
+  finding: Signal<boolean>;
+  findQuery: Signal<string>;
+}) {
   const store = props.workspace;
   let canvas: ViewRef | undefined;
   let measuring = false;
@@ -46,6 +52,7 @@ export function TilingCanvas(props: { workspace: Workspace; preview: boolean; re
       { label: "Resize with arrow keys", disabled: store.paneList().length < 2 || store.constrained() || store.tiling().zoomed, onSelect: () => store.resizing.set(true) },
       { label: "Hide pane", disabled: store.paneList().length < 2, onSelect: () => store.hidePane() },
       { type: "separator" },
+      { label: "Find in terminal…", shortcut: "mod+f", onSelect: () => props.finding.set(true) },
       { label: "Rename terminal…", onSelect: () => props.rename(id) },
       { label: store.inSplit(id) ? "Move split to group" : "Move to group", submenu: [
         { label: "No group", disabled: store.inSplit(id) && !store.tab(id)?.groupId, onSelect: () => store.moveTab(id, null) },
@@ -95,9 +102,8 @@ export function TilingCanvas(props: { workspace: Workspace; preview: boolean; re
           <If when={tab()?.bell}><View testID={`pane-bell-${id}`} class="h-1.5 w-1.5 rounded-full bg-primary" /></If>
         </View>
         <View class="flex-row items-center">
-          <If when={store.paneList().length === 1}>
-            <IconButton icon="plus" label="New terminal" testID="titlebar-new-terminal" onPress={() => store.addTab()} />
-          </If>
+          <IconButton icon="search" label="Find in terminal" testID={focused() ? "pane-find" : `pane-find-${id}`}
+            onPress={() => { store.select(id); props.finding.set(true); }} />
           <IconButton icon="splitRight" label="Split right" testID={focused() ? "split-right" : `split-right-${id}`}
             disabled={!store.canSplit("right", store.paneForSession(id)?.id)} onPress={() => { store.select(id); store.splitTerminal("right"); }} />
           <If when={frame().width >= 400}>
@@ -111,7 +117,7 @@ export function TilingCanvas(props: { workspace: Workspace; preview: boolean; re
           <IconButton icon="more" label="Terminal actions" testID={focused() ? "terminal-actions" : `terminal-actions-${id}`} onPress={() => menu(id)} />
         </View>
       </View>
-      <View class="relative min-h-0 flex-1"><TerminalSurface id={id} workspace={store} preview={props.preview} /></View>
+      <View class="relative min-h-0 flex-1"><TerminalSurface id={id} workspace={store} preview={props.preview} finding={props.finding} findQuery={props.findQuery} /></View>
       <If when={focused() && store.paneList().length > 1}>
         <View testID="focused-pane-ring" class="absolute inset-0 rounded-(--radius-panel) border border-ring" style={{ pointerEvents: "none" }} />
       </If>

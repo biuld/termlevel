@@ -17,7 +17,10 @@ export function DialogKeys(props: { dismiss: () => void }) {
   return <NativeDialogKeys onDismiss={() => props.dismiss()} />;
 }
 
-/** Centered modal on NSH `Dialog`. The runtime supplies the layer; this draws the solid popup. */
+/** Inset field on the window floor. Same surface as a sidebar pane. */
+export const fieldClass = "h-(--height-input) rounded-(--radius-control) border border-sidebar-border bg-sidebar px-3 text-(length:--text-body) text-foreground";
+
+/** Centered modal on NSH `Dialog`. The runtime supplies the layer; this draws the window floor. */
 export function AppDialog(props: {
   testID?: string;
   open: boolean;
@@ -29,35 +32,43 @@ export function AppDialog(props: {
   frame: string;
   dismiss: () => void;
   closeLabel?: string;
+  /** When false, children sit edge to edge under the title bar. */
+  padded?: boolean;
   children?: JSX.Element;
 }) {
+  const alert = props.role === "alertdialog" || props.description != null;
   return <Dialog testID={props.testID} open={props.open} animation="fade" role={props.role ?? "dialog"}
     accessibilityLabel={props.label} accessibilityDescription={props.description}
     onOpenChange={({ open }) => { if (!open) props.dismiss(); }}
-    class={`m-auto gap-3 rounded-(--radius-dialog) border border-border bg-popover p-4 ${props.frame}`}
+    class={`m-auto overflow-hidden rounded-(--radius-panel) border border-sidebar-border bg-chrome ${props.frame}`}
     backdropClass="bg-scrim"
-    style={{ boxShadow: [{ x: 0, y: 16, blur: 40, color: token("panel-shadow") }] }}>
+    style={{ boxShadow: [{ x: 0, y: 12, blur: 32, color: token("panel-shadow") }] }}>
     <DialogKeys dismiss={props.dismiss} />
-    <If when={props.title != null}>
-      <View class="flex-row items-start gap-2">
-        <View class="min-w-0 flex-1 gap-1">
-          <Type role="title">{props.title}</Type>
-          <If when={props.description != null}>
-            <Type role="body" tone="muted-foreground">{props.description}</Type>
-          </If>
-        </View>
+    <If when={!alert && props.title != null}>
+      <View class="h-(--height-toolbar) flex-row items-center gap-2 px-2">
+        <Type role="body" class="min-w-0 flex-1 px-1" lines={1}>{props.title}</Type>
         <If when={props.closeLabel != null}>
           <IconButton icon="close" label={props.closeLabel ?? ""} onPress={props.dismiss} />
         </If>
       </View>
     </If>
-    {props.children}
+    <View class={alert ? "gap-3 px-4 py-4" : props.padded === false ? "" : "gap-3 px-3 pb-3"}>
+      <If when={alert && props.title != null}>
+        <View class="gap-1">
+          <Type role="title">{props.title}</Type>
+          <If when={props.description != null}>
+            <Type role="body" tone="muted-foreground">{props.description}</Type>
+          </If>
+        </View>
+      </If>
+      {props.children}
+    </View>
   </Dialog>;
 }
 
-/** Right-aligned actions under a hairline. */
+/** Right-aligned actions on the window floor. */
 export function DialogActions(props: { children: JSX.Element }) {
-  return <View class="flex-row justify-end gap-2 border-t border-border pt-3">{props.children}</View>;
+  return <View class="flex-row justify-end gap-2">{props.children}</View>;
 }
 
 export function IconButton(props: {
@@ -88,9 +99,13 @@ export function Action(props: { children: JSX.Element; onPress: () => void; prim
   return <Button
     testID={props.testID}
     onPress={props.onPress}
-    class="h-(--height-action) items-center justify-center rounded-(--radius-control) px-3 hover:opacity-90 active:opacity-80 focus-visible:ring-2 ring-ring"
-    classList={{ "bg-primary": props.primary && !props.destructive, "bg-secondary": !props.primary && !props.destructive, "bg-destructive": props.destructive }}
+    class="h-(--height-action) items-center justify-center rounded-(--radius-control) px-3 focus-visible:ring-2 ring-ring"
+    classList={{
+      "bg-tab-selected": props.primary && !props.destructive,
+      "hover:bg-control-hover active:bg-control-pressed": !props.primary && !props.destructive,
+      "bg-destructive": props.destructive,
+    }}
   >
-    <Text class="text-(length:--text-body) font-medium" style={{ color: token(props.destructive ? "destructive-foreground" : props.primary ? "primary-foreground" : "secondary-foreground") }}>{props.children}</Text>
+    <Text class="text-(length:--text-body) font-medium" style={{ color: token(props.destructive ? "destructive-foreground" : props.primary ? "tab-selected-foreground" : "foreground") }}>{props.children}</Text>
   </Button>;
 }

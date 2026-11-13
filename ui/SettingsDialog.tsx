@@ -1,6 +1,6 @@
 import { keymap, Scroll, setColorScheme, signal, Text, token, View, type Signal } from "nsh";
 import { Button } from "nsh/base";
-import { Action, AppDialog } from "./controls";
+import { AppDialog } from "./controls";
 import { applyFonts, interfaceFont, interfaceFonts, monoFont, monoFonts } from "./fonts";
 import { Type } from "./type";
 
@@ -16,17 +16,23 @@ type SettingsPage = typeof pages[number]["id"];
 
 const shortcuts = [
   { label: "New terminal", keys: "mod+t" },
-  { label: "Find terminal", keys: "mod+k" },
-  { label: "Toggle sidebar", keys: "mod+b" },
-  { label: "Next terminal", keys: "ctrl+tab" },
+  { label: "Close terminal", keys: "mod+w" },
   { label: "Split right", keys: "mod+d" },
   { label: "Split down", keys: "mod+shift+d" },
-  { label: "Maximize / restore pane", keys: "mod+shift+enter" },
   { label: "Focus pane (use any arrow)", keys: "mod+alt+right" },
   { label: "Swap pane (use any arrow)", keys: "mod+alt+shift+right" },
+  { label: "Maximize / restore pane", keys: "mod+shift+enter" },
+  { label: "New group", keys: "mod+shift+g" },
+  { label: "Find terminal", keys: "mod+k" },
+  { label: "Find in terminal", keys: "mod+f" },
+  { label: "Toggle sidebar", keys: "mod+b" },
+  { label: "Next terminal", keys: "ctrl+tab" },
+  { label: "Previous terminal", keys: "ctrl+shift+tab" },
+  { label: "Switch to terminal 1", keys: "mod+1" },
+  { label: "Settings", keys: "mod+," },
 ] as const;
 
-/** Two-column settings: a section list on the left, that section on the right. */
+/** Settings uses the window floor, with the section list beside one inset pane. */
 export function SettingsDialog(props: {
   open: boolean;
   dismiss: () => void;
@@ -34,13 +40,17 @@ export function SettingsDialog(props: {
   fontSize: Signal<number>;
   version: string;
   preview: boolean;
+  scrollback: Signal<number>;
+  scrollbackMin: number;
+  scrollbackMax: number;
+  scrollbackStep: number;
 }) {
   const page = signal<SettingsPage>("appearance");
   const lineHeight = () => props.fontSize() + token("line-gap-terminal");
   return <AppDialog testID="settings-dialog" open={props.open} label="Settings" title="Settings"
-    frame="w-[560px]" dismiss={props.dismiss} closeLabel="Close settings">
-    <View class="min-h-[280px] flex-row">
-      <View class="w-[148px] gap-0.5 border-r border-border pr-2" role="tablist" accessibilityLabel="Settings sections">
+    frame="w-[760px]" dismiss={props.dismiss} closeLabel="Close settings" padded={false}>
+    <View class="h-[480px] flex-row px-2 pb-2">
+      <View class="w-[148px] py-1" role="tablist" accessibilityLabel="Settings sections">
         <Each of={pages}>{(item) =>
           <Button
             testID={`settings-${item().id}`}
@@ -48,36 +58,35 @@ export function SettingsDialog(props: {
             selected={page() === item().id}
             accessibilityLabel={`${item().label} settings`}
             onPress={() => page.set(item().id)}
-            class="h-(--height-tab) items-start justify-center rounded-(--radius-control) px-2 hover:bg-control-hover focus-visible:ring-2 ring-ring"
-            classList={{ "bg-control-selected": page() === item().id }}
+            class="mx-1 h-(--height-tab) items-start justify-center rounded-(--radius-tab) px-2 hover:bg-tab-hover focus-visible:ring-2 ring-sidebar-ring"
+            classList={{ "bg-tab-selected hover:bg-tab-selected": page() === item().id }}
           >
             <Text class="font-medium" style={{
               fontSize: token("text-body"),
               lineHeight: token("leading-body"),
-              color: token(page() === item().id ? "control-selected-foreground" : "foreground"),
+              color: token(page() === item().id ? "tab-selected-foreground" : "sidebar-foreground"),
             }}>{item().label}</Text>
           </Button>
         }</Each>
       </View>
-      <Scroll class="max-h-[320px] min-w-0 flex-1 pl-4">
-        <View class="gap-3">
-          <Type role="title">{pages.find((item) => item.id === page())?.label}</Type>
+      <Scroll class="min-h-0 min-w-0 flex-1 rounded-(--radius-panel) bg-sidebar">
+        <View class="gap-4 p-3">
           <If when={page() === "appearance"}>
             <View class="gap-2">
-              <View class="flex-row gap-1 rounded-(--radius-tab) border border-border bg-background p-1">
+              <View class="flex-row rounded-(--radius-tab) bg-chrome p-0.5">
                 <Each of={["system", "light", "dark"] as const}>{(mode) =>
                   <Button
                     testID={`appearance-${mode()}`}
                     accessibilityLabel={`${mode()} appearance`}
                     selected={props.appearance() === mode()}
                     onPress={() => { props.appearance.set(mode()); setColorScheme(mode()); }}
-                    class="h-(--height-control) flex-1 items-center justify-center rounded-(--radius-control) hover:bg-control-hover focus-visible:ring-2 ring-ring"
-                    classList={{ "bg-control-selected": props.appearance() === mode() }}
+                    class="h-(--height-tab) flex-1 items-center justify-center rounded-(--radius-control) focus-visible:ring-2 ring-sidebar-ring"
+                    classList={{ "bg-sidebar": props.appearance() === mode() }}
                   >
                     <Text class="font-medium" style={{
                       fontSize: token("text-label"),
                       lineHeight: token("leading-label"),
-                      color: token(props.appearance() === mode() ? "control-selected-foreground" : "muted-foreground"),
+                      color: token(props.appearance() === mode() ? "sidebar-foreground" : "muted-foreground"),
                     }}>{mode() === "system" ? "System" : mode() === "light" ? "Light" : "Dark"}</Text>
                   </Button>
                 }</Each>
@@ -87,27 +96,36 @@ export function SettingsDialog(props: {
           </If>
           <If when={page() === "terminal"}>
             <View class="gap-3">
-              <View class="flex-row items-center gap-3">
+              <View class="flex-row items-center gap-2">
                 <View class="min-w-0 flex-1 gap-0.5">
                   <Type role="body">Font size</Type>
                   <Type role="caption">Size is the terminal only. The family is shared with the toolbar path, which stays at body size.</Type>
                 </View>
-                <Action onPress={() => props.fontSize.update((n) => Math.max(10, n - 1))}>−</Action>
+                <Step label="Smaller terminal font" onPress={() => props.fontSize.update((n) => Math.max(10, n - 1))}>−</Step>
                 <Type role="mono" class="w-12 text-center">{props.fontSize()} pt</Type>
-                <Action onPress={() => props.fontSize.update((n) => Math.min(24, n + 1))}>+</Action>
+                <Step label="Larger terminal font" onPress={() => props.fontSize.update((n) => Math.min(24, n + 1))}>+</Step>
+              </View>
+              <View class="flex-row items-center gap-2">
+                <View class="min-w-0 flex-1 gap-0.5">
+                  <Type role="body">Scrollback</Type>
+                  <Type role="caption">Open terminals keep this many lines. Lowering it drops the oldest lines now. It resets when the app restarts.</Type>
+                </View>
+                <Step testID="scrollback-less" label="Fewer scrollback lines" onPress={() => props.scrollback.update((n) => Math.max(props.scrollbackMin, n - props.scrollbackStep))}>−</Step>
+                <Type role="mono" class="w-16 text-center">{props.scrollback().toLocaleString("en-US")}</Type>
+                <Step testID="scrollback-more" label="More scrollback lines" onPress={() => props.scrollback.update((n) => Math.min(props.scrollbackMax, n + props.scrollbackStep))}>+</Step>
               </View>
               <FontChoices fonts={monoFonts} selected={monoFont} testID="mono-font" onSelect={(id) => { monoFont.set(id); applyFonts(); }} />
-              <View class="rounded-(--radius-control) bg-terminal-background px-3 py-2">
+              <View class="rounded-(--radius-tab) bg-chrome px-3 py-2">
                 <Text style={{ fontFamily: monoFont(), fontSize: props.fontSize(), lineHeight: lineHeight(), color: token("terminal-prompt") }}>~/Projects/termlevel</Text>
                 <Text style={{ fontFamily: monoFont(), fontSize: props.fontSize(), lineHeight: lineHeight(), color: token("terminal-foreground") }}>echo typography</Text>
               </View>
             </View>
           </If>
           <If when={page() === "interface"}>
-            <View class="gap-2">
+            <View class="gap-3">
               <Type role="caption">System is the platform font. The toolbar path uses the terminal family at body size, {token("text-body")} pt.</Type>
               <FontChoices fonts={interfaceFonts} selected={interfaceFont} testID="ui-font" onSelect={(id) => { interfaceFont.set(id); applyFonts(); }} />
-              <View class="gap-1 rounded-(--radius-control) border border-border bg-background px-3 py-2">
+              <View class="gap-1 rounded-(--radius-tab) bg-chrome px-3 py-2">
                 <Type role="title">Title {token("text-title")}</Type>
                 <Type role="body">Body {token("text-body")} keeps names and settings readable.</Type>
                 <Type role="body" family="mono" tone="muted-foreground">~/Projects/termlevel</Type>
@@ -117,8 +135,8 @@ export function SettingsDialog(props: {
             </View>
           </If>
           <If when={page() === "shortcuts"}>
-            <View class="gap-1.5">
-              <Each of={shortcuts}>{(shortcut) => <View class="flex-row items-center justify-between gap-3">
+            <View>
+              <Each of={shortcuts}>{(shortcut) => <View class="h-(--height-tab) flex-row items-center justify-between gap-3">
                 <Type role="body">{shortcut().label}</Type>
                 <Type role="mono">{keymap.label(shortcut().keys)}</Type>
               </View>}</Each>
@@ -136,6 +154,17 @@ export function SettingsDialog(props: {
   </AppDialog>;
 }
 
+function Step(props: { label: string; testID?: string; onPress: () => void; children: string }) {
+  return <Button
+    testID={props.testID}
+    accessibilityLabel={props.label}
+    onPress={props.onPress}
+    class="h-(--height-control) w-(--height-control) items-center justify-center rounded-(--radius-control) hover:bg-control-hover active:bg-control-pressed focus-visible:ring-2 ring-sidebar-ring"
+  >
+    <Text class="text-(length:--text-body) text-foreground">{props.children}</Text>
+  </Button>;
+}
+
 function FontChoices(props: {
   fonts: readonly { id: string; label: string }[];
   selected: Signal<string>;
@@ -149,14 +178,14 @@ function FontChoices(props: {
         accessibilityLabel={`${font().label} font`}
         selected={props.selected() === font().id}
         onPress={() => props.onSelect(font().id)}
-        class="h-(--height-tab) items-start justify-center rounded-(--radius-control) px-2 hover:bg-control-hover focus-visible:ring-2 ring-ring"
-        classList={{ "bg-control-selected": props.selected() === font().id }}
+        class="h-(--height-tab) items-start justify-center rounded-(--radius-tab) px-2 hover:bg-tab-hover focus-visible:ring-2 ring-sidebar-ring"
+        classList={{ "bg-tab-selected hover:bg-tab-selected": props.selected() === font().id }}
       >
         <Text style={{
           fontFamily: font().id,
           fontSize: token("text-body"),
           lineHeight: token("leading-body"),
-          color: token(props.selected() === font().id ? "control-selected-foreground" : "foreground"),
+          color: token(props.selected() === font().id ? "tab-selected-foreground" : "sidebar-foreground"),
         }}>{font().label}</Text>
       </Button>
     }</Each>

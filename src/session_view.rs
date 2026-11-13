@@ -55,6 +55,7 @@ pub enum SessionTerminalEvent {
 /// Native view methods. Closing is an explicit Sessions.close operation.
 pub struct SessionTerminalApi {
     input: ElementRef,
+    search: view::Search,
 }
 
 #[methods]
@@ -62,6 +63,22 @@ impl SessionTerminalApi {
     /// Gives the terminal's native input focus.
     pub fn focus(&self) {
         self.input.focus();
+    }
+
+    /// Finds `query` in scrollback and the screen, scrolls to the first hit,
+    /// and returns how many hits there are.
+    pub fn search(&self, query: String) -> u32 {
+        self.search.apply(&query)
+    }
+
+    /// Moves to another hit. Negative wraps backward. Returns the 1-based index, or 0.
+    pub fn search_move(&self, delta: i32) -> u32 {
+        self.search.move_by(delta)
+    }
+
+    /// Clears the query and its highlights.
+    pub fn clear_search(&self) {
+        self.search.clear();
     }
 }
 
@@ -79,6 +96,7 @@ pub fn SessionTerminal(
     let display = view::Display::new(session.clone(), props);
     cx.methods(SessionTerminalApi {
         input: display.input,
+        search: display.search.clone(),
     });
     let colors_session = session.clone();
     effect(move || {
@@ -98,6 +116,7 @@ pub fn SessionTerminal(
         }
         revision.set(next);
         refresh.revision.set(next);
+        refresh.search.refresh();
         let next_bells = session.bells.load(Ordering::Acquire);
         if bells.replace(next_bells) != next_bells {
             cx.emit(SessionTerminalEvent::Bell);

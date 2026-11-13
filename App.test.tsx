@@ -102,12 +102,18 @@ test("switching tabs and collapsing groups preserve terminal output", async () =
 test("creates a group and renames its terminal without resetting it", async () => {
   const app = await open("./App.tsx", options);
   await app.press("id:new-group");
-  expect(app.value("id:group-name-input")).toBe("termlevel");
-  expect(app.texts()).toContain("~/Projects/termlevel");
-  await app.clear("id:group-name-input");
-  await app.type("id:group-name-input", "Release");
-  await app.keyboard.press("enter");
-  await app.waitFor("text:Release");
+  await app.waitFor("id:new-group-path");
+  expect(app.shows("id:group-editor")).toBe(false);
+  expect(app.shows("id:terminal-tab-2")).toBe(false);
+  await app.keyboard.press("escape");
+  expect(app.shows("id:new-group-path")).toBe(false);
+  expect(app.shows("id:group-group-1")).toBe(false);
+  await app.press("id:new-group");
+  await app.press("id:group-path-0");
+  await app.waitUntil(() => !app.shows("id:new-group-path"));
+  expect(app.shows("id:group-editor")).toBe(false);
+  expect(app.shows("id:group-group-1")).toBe(true);
+  await app.waitFor("id:terminal-tab-2");
   await app.type("id:terminal-tab-2", "echo still-here");
   await app.keyboard.press("enter");
   await app.rightClick("id:tab-tab-2");
@@ -130,7 +136,9 @@ test("moves a terminal between groups and removes a group without closing termin
   expect(app.shows("id:group-playground")).toBe(false);
   expect(app.shows("id:tab-preview")).toBe(true);
   expect(app.shows("id:tab-colors")).toBe(true);
-  expect(app.texts()).toContain("4 terminals");
+  expect(app.shows("id:tab-home")).toBe(true);
+  await app.press("id:group-termlevel");
+  expect(app.shows("id:tab-prototype")).toBe(true);
 });
 
 test("closing an active group selects a remaining terminal and an empty workspace can recover", async () => {
@@ -139,13 +147,17 @@ test("closing an active group selects a remaining terminal and an empty workspac
   await app.press("id:group-editor-delete");
   await app.press("id:confirm-close-group");
   expect(app.shows("id:group-termlevel")).toBe(false);
-  expect(app.texts()).toContain("2 terminals");
+  expect(app.shows("id:tab-home")).toBe(true);
+  expect(app.shows("id:tab-colors")).toBe(true);
+  expect(app.shows("id:tab-prototype")).toBe(false);
+  expect(app.shows("id:tab-preview")).toBe(false);
   await app.keyboard.press("mod+w");
   await app.keyboard.press("mod+w");
   await app.waitFor("id:empty-state");
   await app.press("id:empty-new-terminal");
   await app.waitFor("id:terminal-tab-1");
-  expect(app.texts()).toContain("1 terminal");
+  expect(app.shows("id:tab-home")).toBe(false);
+  expect(app.shows("id:tab-colors")).toBe(false);
 });
 
 test("search opens a terminal in a collapsed group and compact sidebar keeps navigation", async () => {
@@ -160,7 +172,11 @@ test("search opens a terminal in a collapsed group and compact sidebar keeps nav
   await app.keyboard.press("mod+t");
   await app.waitFor("id:terminal-tab-1");
   await app.press("id:toggle-sidebar");
-  expect(app.texts()).toContain("5 terminals");
+  expect(app.shows("id:tab-tab-1")).toBe(true);
+  expect(app.shows("id:tab-home")).toBe(true);
+  expect(app.shows("id:tab-prototype")).toBe(true);
+  expect(app.shows("id:tab-preview")).toBe(true);
+  expect(app.shows("id:tab-colors")).toBe(true);
 });
 
 test("new terminal stays outside groups unless created from a group", async () => {
@@ -272,7 +288,7 @@ test("the group editor changes color and name inline while keeping terminal outp
   await app.press("id:group-menu-termlevel");
   await app.press("id:group-editor-new-terminal");
   expect(app.shows("id:group-editor")).toBe(false);
-  expect(app.texts()).toContain("5 terminals");
+  expect(app.shows("id:tab-tab-1")).toBe(true);
   await app.press("id:group-termlevel");
   expect(app.shows("id:tab-tab-1")).toBe(false);
   await app.press("id:group-termlevel");
