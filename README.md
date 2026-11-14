@@ -2,7 +2,7 @@
 
 用垂直标签页和分组组织终端会话。UI 参考新版 Firefox，使用 NSH 的原生桌面后端，以 TSX 编写。
 
-当前默认连接 **真实 PTY 和用户 shell**。Rust 使用 `alacritty_terminal` 0.26.0 解析输出、维护网格和滚动历史，Rust 原生网格视图负责显示，NSH 原生 Input 负责文字与输入法组合。会话独立于 UI 生命周期；切换标签、分组、主题及重新挂载不会终止进程。
+当前默认连接 **真实 PTY 和用户 shell**。Rust 使用官方 `libghostty-vt` 1.0.1 的预编译静态库解析输出、维护网格和滚动历史，Rust 原生网格视图负责显示，NSH 原生 Input 负责文字与输入法组合。会话独立于 UI 生命周期；切换标签、分组、主题及重新挂载不会终止进程。
 
 关闭终端会结束它的前台进程与 shell；关闭主窗口或退出应用会结束全部会话。工作区布局与设置尚未持久化，应用重启不恢复活着的进程。尚不声称 Neovim/tmux 完整兼容。
 ## 运行
@@ -60,6 +60,8 @@ Windows / Linux 的应用快捷键使用 Ctrl，平台验收属于后续工作�
 
 ## 结构与后续
 
+默认后端使用独立的 [libghostty-vt Rust 封装](crates/ghostty-vt/README.md)：sys 层固定官方 1.0.1 C ABI 和经过 SHA256 校验的 macOS 预编译静态库，安全层负责终端状态、渲染快照和输入编码；日常构建不需要 Zig。第一次构建会下载预编译库，离线时可通过 `GHOSTTY_VT_ARCHIVE` 指定官方 zip。独立验证命令：`cargo test -p termlevel-ghostty-vt-sys -p termlevel-ghostty-vt`。
+
 ```text
 App.tsx                       薄的 TSX 挂载入口
 ui/WorkspaceApp.tsx           窗口、菜单、快捷键、对话框及应用接线
@@ -70,7 +72,7 @@ terminal/*.test.tsx            内核、真实 PTY 和工作区重新绑定测�
 src/lib.rs                    Rust 原生导出注册
 src/sessions.rs               独立会话管理、PTY 与进程生命周期
 src/session_view.rs           Rust 网格视图、光标锚定原生 Input 与组合输入
-src/terminal.rs               Alacritty 到 NSH 的网格适配
+src/terminal.rs               Ghostty RenderState 到 NSH 的网格适配
 scripts/                      固定版本工具安装及启动
 ```
 

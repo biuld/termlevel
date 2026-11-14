@@ -5,9 +5,12 @@ edition = "2024"
 publish = false
 
 [workspace]
+members = ["crates/ghostty-vt-sys", "crates/ghostty-vt"]
+default-members = [".", "crates/ghostty-vt-sys", "crates/ghostty-vt"]
+resolver = "3"
 
 [dependencies]
-alacritty_terminal = "=0.26.0"
+termlevel-ghostty-vt = { path = "crates/ghostty-vt", version = "=0.1.0" }
 libc = "0.2"
 nsh-base = { version = "=0.5.0", default-features = false, features = ["term"] }
 nsh-core = "=0.5.0"

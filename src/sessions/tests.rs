@@ -114,6 +114,46 @@ fn replies_go_directly_from_parser_to_real_pty() {
 }
 
 #[test]
+fn ghostty_encoded_keys_text_paste_and_focus_reach_the_real_pty() {
+    use termlevel_ghostty_vt::{KeyEvent, raw};
+    let expected = [
+        b"\x1bOA\x1b[15;6~".as_slice(),
+        "中文".as_bytes(),
+        b"\x1b[200~hello\nworld\x1b[201~\x1b[I",
+    ]
+    .concat();
+    let mut manager = SessionManager::default();
+    let mut command = CommandBuilder::new("/bin/sh");
+    let script = format!(
+        "stty raw -echo; printf '\\033[?1h\\033[?2004h\\033[?1004hRAW_READY\\r\\n'; dd bs=1 count={} 2>/dev/null | od -An -tx1",
+        expected.len()
+    );
+    command.args(["-c", &script]);
+    let info = manager.open("/tmp".into(), command);
+    let session = manager.get(&info.id).unwrap();
+    wait_for(|| output(&session).contains("RAW_READY"));
+    session.key_input(&KeyEvent::press(raw::GHOSTTY_KEY_ARROW_UP, ""));
+    let mut f5 = KeyEvent::press(raw::GHOSTTY_KEY_F5, "");
+    f5.modifiers = (raw::GHOSTTY_MODS_SHIFT | raw::GHOSTTY_MODS_CTRL) as u16;
+    session.key_input(&f5);
+    session.text_input("中文");
+    session.paste("hello\nworld");
+    session.focus_input(true);
+    wait_for(|| session.info().exit_code == Some(0));
+    // Reaping the child can precede draining its PTY. Wait for the reader too;
+    // od's whitespace and raw-mode line wrapping are not part of the encoding.
+    wait_for(|| finished(&session));
+    let actual: Vec<_> = output(&session)
+        .split_whitespace()
+        .filter(|token| token.len() == 2 && token.bytes().all(|c| c.is_ascii_hexdigit()))
+        .map(|token| u8::from_str_radix(token, 16).unwrap())
+        .collect();
+    assert_eq!(actual, expected);
+    manager.shutdown();
+    wait_for(|| finished(&session));
+}
+
+#[test]
 fn real_pty_color_queries_use_the_ui_theme_before_first_paint() {
     let mut manager = SessionManager::default();
     let expected = b"\x1b]11;rgb:1010/2020/3030\x1b\\";
@@ -231,12 +271,18 @@ fn startup_failures_have_no_process_and_do_not_reopen_on_attach() {
 #[test]
 fn large_output_stays_bounded_and_finishes_before_view_attaches() {
     let mut manager = SessionManager::default();
+    // Exercise eviction at an explicit limit, independently of the UI default.
+    let history_limit = 3000;
+    manager.set_scrollback(history_limit);
     let mut command = CommandBuilder::new("/bin/sh");
     command.args(["-c", "i=0; while [ $i -lt 4000 ]; do printf 'line_%s\\r\\n' $i; i=$((i+1)); done; printf 'BULK_DONE\\r\\n'"]);
     let info = manager.open("/tmp".into(), command);
     let session = manager.get(&info.id).unwrap();
     wait_for(|| session.info().exit_code == Some(0) && output(&session).contains("BULK_DONE"));
-    assert!(session.emulator.lock().unwrap().line_count() <= 3024);
+    {
+        let emulator = session.emulator.lock().unwrap();
+        assert!(emulator.line_count() <= history_limit + emulator.screen_rows());
+    }
     assert!(!output(&session).contains("line_0\n"));
     assert!(output(&session).contains("line_3999"));
     manager.shutdown();

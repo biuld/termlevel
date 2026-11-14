@@ -145,7 +145,7 @@ export function SettingsDialog(props: {
           <If when={page() === "about"}>
             <View class="gap-1">
               <Type role="body">Termlevel {props.version}</Type>
-              <Type role="caption">{props.preview ? "Interactive UI preview. No shell is connected. Sessions and settings reset when the app restarts." : "Native terminal sessions powered by Alacritty. Closing a terminal ends its processes. Workspace layout and settings reset when the app restarts."}</Type>
+              <Type role="caption">{props.preview ? "Interactive UI preview. No shell is connected. Sessions and settings reset when the app restarts." : "Native terminal sessions powered by Ghostty. Closing a terminal ends its processes. Workspace layout and settings reset when the app restarts."}</Type>
             </View>
           </If>
         </View>

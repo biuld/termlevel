@@ -1,10 +1,10 @@
 use super::*;
 
-fn emulator(cols: u16, rows: u16, history: usize) -> AlacrittyEmulator {
-    AlacrittyEmulator::new(TerminalSize::new(cols, rows), history)
+fn emulator(cols: u16, rows: u16, history: usize) -> GhosttyEmulator {
+    GhosttyEmulator::new(TerminalSize::new(cols, rows), history)
 }
 
-fn lines(term: &AlacrittyEmulator) -> Vec<String> {
+fn lines(term: &GhosttyEmulator) -> Vec<String> {
     (0..term.line_count())
         .map(|i| term.line(i).text())
         .collect()
@@ -50,7 +50,14 @@ fn search_matches_case_insensitively_in_order() {
     term.feed(b"Hello\r\nhello\r\nnone");
     let hits = term.search("HELLO");
     assert_eq!(hits.len(), 2);
-    assert_eq!(hits[0], SearchHit { line: 0, col: 0, cols: 5 });
+    assert_eq!(
+        hits[0],
+        SearchHit {
+            line: 0,
+            col: 0,
+            cols: 5
+        }
+    );
     assert_eq!(hits[1].line, 1);
     assert!(term.search("").is_empty());
     assert!(term.search("missing").is_empty());
@@ -60,7 +67,14 @@ fn search_matches_case_insensitively_in_order() {
 fn search_wide_glyph_uses_its_column_span() {
     let mut term = emulator(20, 2, 4);
     term.feed("a中b".as_bytes());
-    assert_eq!(term.search("中"), vec![SearchHit { line: 0, col: 1, cols: 2 }]);
+    assert_eq!(
+        term.search("中"),
+        vec![SearchHit {
+            line: 0,
+            col: 1,
+            cols: 2
+        }]
+    );
 }
 
 #[test]
@@ -77,6 +91,12 @@ fn set_scrollback_drops_the_oldest_lines() {
     assert_eq!(lines(&term), ["zero", "one", "two", "three", "four"]);
     term.set_scrollback(2);
     assert_eq!(lines(&term), ["one", "two", "three", "four"]);
+    term.set_scrollback(20);
+    assert_eq!(
+        lines(&term),
+        ["one", "two", "three", "four"],
+        "growing the limit cannot resurrect discarded rows"
+    );
     assert!(term.backend_events().is_empty());
 }
 
@@ -170,7 +190,7 @@ fn synchronized_output_is_atomic_and_has_a_timeout() {
     let mut term = emulator(20, 3, 0);
     term.feed(b"A\x1b[?2026hB");
     assert_eq!(term.line(0).text(), "A");
-    let deadline = term.parser.sync_timeout().sync_timeout().unwrap();
+    let deadline = term.sync_deadline().unwrap();
     assert!(term.flush_sync(deadline + std::time::Duration::from_nanos(1), false));
     assert_eq!(term.line(0).text(), "AB");
     term.feed(b"\x1b[?2026hC\x1b[?2026l");
@@ -179,8 +199,46 @@ fn synchronized_output_is_atomic_and_has_a_timeout() {
 }
 
 #[test]
+fn synchronized_snapshot_does_not_consume_another_renderers_dirty_rows() {
+    let mut term = emulator(20, 3, 10);
+    term.feed(b"old");
+    assert_eq!(term.line(0).text(), "old");
+    // The hold callback captures `oldA`; no text is written after that capture.
+    // A renderer with its own incremental cache still has to pick up A.
+    term.feed(b"A\x1b[?2026h\x1b[?2026l");
+    assert_eq!(term.line(0).text(), "oldA");
+    term.feed(b"\x1b[?2026h\x1b[31mB");
+    assert_eq!(term.line(0).text(), "oldA");
+    assert!(term.flush_sync(Instant::now(), true));
+    assert_eq!(term.line(0).text(), "oldAB");
+}
+
+#[test]
+fn a_hold_started_after_output_in_the_same_chunk_keeps_history_bounded() {
+    let mut term = emulator(20, 2, 2);
+    term.feed(b"zero\r\none\r\ntwo\r\nthree\r\nfour\x1b[?2026hheld");
+    assert_eq!(term.line_count(), 4);
+    assert_eq!(lines(&term), ["one", "two", "three", "four"]);
+    assert!(term.flush_sync(Instant::now(), true));
+    assert_eq!(lines(&term), ["one", "two", "three", "fourheld"]);
+}
+
+#[test]
+fn ghostty_encodes_committed_unicode_and_function_keys() {
+    let mut term = emulator(80, 24, 100);
+    assert_eq!(
+        term.encode_text("中文e\u{301}").unwrap(),
+        "中文e\u{301}".as_bytes()
+    );
+    let event = termlevel_ghostty_vt::KeyEvent::press(raw::GHOSTTY_KEY_F5, "");
+    assert_eq!(term.encode_key(&event).unwrap(), b"\x1b[15~");
+    term.feed(b"\x1b[>8u");
+    assert_eq!(term.encode_text("a").unwrap(), b"\x1b[97u");
+}
+
+#[test]
 fn native_spans_anchor_wide_and_combining_text_to_grid_columns() {
-    let mut emu = AlacrittyEmulator::new(TerminalSize::new(20, 4), 10);
+    let mut emu = GhosttyEmulator::new(TerminalSize::new(20, 4), 10);
     emu.feed("ab中文e\u{301}Z".as_bytes());
     let runs = emu.grid_runs(0);
     let spans: Vec<_> = runs

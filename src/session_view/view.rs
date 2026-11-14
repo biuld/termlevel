@@ -1,8 +1,8 @@
 //! Native grid rendering and a stable AppKit-backed input at the grid cursor.
 use super::{SessionTerminalProps, input::InputState, keys};
 use crate::sessions::Session;
-use nsh_base::{TerminalColor, TerminalEmulator, TerminalSize, TerminalStyle, input, theme};
 use crate::terminal::SearchHit;
+use nsh_base::{TerminalColor, TerminalEmulator, TerminalSize, TerminalStyle, input, theme};
 use nsh_core::prelude::*;
 use std::{
     cell::{Cell, RefCell},
@@ -141,7 +141,7 @@ impl Display {
     fn send(&self, text: &str) {
         if !text.is_empty() {
             self.scroll.scroll_to_end(false);
-            self.session.input(text.as_bytes());
+            self.session.text_input(text);
         }
     }
 
@@ -188,7 +188,7 @@ impl Display {
             if !display.focused.get() || !display.props.active.get() || display.composing.get() {
                 return;
             }
-            for (key, bytes) in keys::bindings(apple_keys()) {
+            for (key, spec) in keys::bindings(apple_keys()) {
                 let display = display.clone();
                 on_key_with(
                     &key,
@@ -204,8 +204,8 @@ impl Display {
                         {
                             return;
                         }
-                        let modes = display.session.emulator.lock().unwrap().modes();
-                        display.send(&bytes.encode(modes));
+                        display.scroll.scroll_to_end(false);
+                        display.session.key_input(&spec.event());
                     },
                 );
             }
@@ -303,7 +303,8 @@ impl Display {
             }
             let emu = display.session.emulator.lock().unwrap();
             let c = emu.cursor()?;
-            (at.index() == emu.line_count() - emu.screen_rows() + c.row as usize).then_some(c.col)
+            (at.index() == emu.line_count() - emu.screen_rows() + c.row as usize)
+                .then_some((c.col, emu.cursor_style()))
         });
         let props = self.props;
         let cursor_ref = self.cursor_ref;
@@ -399,10 +400,32 @@ impl Display {
                     view()
                         .element_ref(&cursor_ref)
                         .absolute()
-                        .top_0()
+                        .top(move || {
+                            px(
+                                if cursor.get().is_some_and(|c| {
+                                    c.1 == termlevel_ghostty_vt::raw::GHOSTTY_CURSOR_STYLE_UNDERLINE
+                                }) {
+                                    (props.line_height.get().0 - 2.0).max(0.0)
+                                } else {
+                                    0.0
+                                },
+                            )
+                        })
                         .bottom_0()
-                        .left(move || Length::from(cw.get() * cursor.get().unwrap_or(0) as f32))
-                        .w(move || Length::from(cw.get()))
+                        .left(move || {
+                            Length::from(cw.get() * cursor.get().map_or(0, |c| c.0) as f32)
+                        })
+                        .w(move || {
+                            px(
+                                if cursor.get().is_some_and(|c| {
+                                    c.1 == termlevel_ghostty_vt::raw::GHOSTTY_CURSOR_STYLE_BAR
+                                }) {
+                                    2.0
+                                } else {
+                                    cw.get().0
+                                },
+                            )
+                        })
                         .pointer_events(PointerEvents::None)
                         .bg(move || default_color(props.default_foreground, theme().foreground))
                         .opacity(0.5)
@@ -437,6 +460,8 @@ impl Display {
         let viewport = self.viewport;
         let (change, composition, paste) = (self.clone(), self.clone(), self.clone());
         let focused = self.focused;
+        let focus_session = self.session.clone();
+        let blur_session = self.session.clone();
         input()
             .font_family(move || family(props))
             .text_size(move || Length::from(props.font_size.get()))
@@ -472,25 +497,18 @@ impl Display {
             .on_change(move |text: &str| change.changed(text))
             .on_composition_change(move |event: &Composition| composition.composition(event))
             .on_paste(move |event: &PasteEvent| {
-                let text = event.text.replace("\r\n", "\r").replace('\n', "\r");
-                let bracketed = paste
-                    .session
-                    .emulator
-                    .lock()
-                    .unwrap()
-                    .modes()
-                    .bracketed_paste;
-                paste.send(&if bracketed {
-                    format!("\x1b[200~{text}\x1b[201~")
-                } else {
-                    text
-                });
+                paste.scroll.scroll_to_end(false);
+                paste.session.paste(&event.text);
             })
             .on_focus(move || {
                 focused.set(true);
+                focus_session.focus_input(true);
                 cx.emit(super::SessionTerminalEvent::FocusRequest);
             })
-            .on_blur(move || focused.set(false))
+            .on_blur(move || {
+                focused.set(false);
+                blur_session.focus_input(false);
+            })
     }
 }
 

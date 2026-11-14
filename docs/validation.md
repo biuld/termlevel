@@ -2,7 +2,7 @@
 
 记录：2026-11-11 初始化，2026-11-12 更新侧栏贯顶布局。环境：macOS arm64，Rust / Cargo 1.99.0，NSH 0.5.0 (`f4d68f7`)。
 
-最新：默认已接入 Alacritty + 真实 PTY，40 项检查与 3 项原生场景通过。详见本文末尾“Alacritty + 真实 PTY 接入完成”；前文为逐阶段的历史记录。
+最新记录见本文末尾。默认真实会话和预览已接入 Ghostty 1.0.1；独立 Rust 封装、真实 PTY 和生产 UI 的原生验收分别记录，前文保留逐阶段历史。
 
 ## 已通过
 
@@ -290,3 +290,50 @@ Terminal 设置可以按 1,000 行调整滚动历史，范围 1,000 到 100,000�
 去掉单窗格工具栏上的新建按钮。非分屏终端仍由 ⌘T、窗口菜单和侧栏「New terminal」创建；没有终端时的空状态按钮保留。每个 pane 工具栏左侧第一个动作改为搜索，选中该 pane 并打开已有的内容查找条。
 
 `./scripts/nsh check` 通过。`./scripts/nsh test terminal/Find.test.tsx` 为 2 通过：预览查找关闭后，工具栏没有 `titlebar-new-terminal`，按下 `pane-find` 会再次出现查找条。没有重跑完整套件，也没有做原生 AppKit 验收。
+
+## 2026-11-14 · libghostty-vt 预编译 Rust crate
+
+新增 `termlevel-ghostty-vt-sys` / `termlevel-ghostty-vt` 两个独立 workspace 包，固定官方 libghostty-vt **1.0.1**。官方 XCFramework 的 SHA256 为 `c0f9631277f726154c8f521954d17cdc41aac4626fc0df8cf925a19ee58e829b`；sys 层下载并验证后提取 macOS 目标架构静态库。原版 C 头文件和 bindgen 0.72.1 生成声明均提交为源码；构建不运行 Zig 或 bindgen。详细接口与边界见 [crate README](../crates/ghostty-vt/README.md)。
+
+验证环境为 macOS arm64、Rust 1.99.0。两个 native crate 的测试均调用真实预编译库：9 项覆盖分段 UTF-8 / 转义序列、独立终端、备用屏幕、resize / reflow / history、reply / title / cwd / bell / reset、快照释放后可用、宽字符 / 组合字符 / truecolor / 下划线 / 光标、legacy / Kitty 按键、鼠标 / 焦点 / 粘贴编码和无效参数。另有 1 项使用 Clang 将 7 个关键 C 结构的尺寸与对齐和 Rust 对照，3 项 doctest 包含 `!Send` / `!Sync` 编译失败约束。
+
+构建路径另外验证：
+
+- 清除 archive/offline 环境覆盖后执行 `cargo test -p termlevel-ghostty-vt-sys -p termlevel-ghostty-vt`，自动下载官方库、校验并静态链接通过。
+- 缺包时 `GHOSTTY_VT_OFFLINE=1 CARGO_NET_OFFLINE=true` 正确拒绝下载；指定损坏 zip 时正确以 SHA256 不匹配失败。
+- 通过 `GHOSTTY_VT_ARCHIVE` 指定已验证 zip 可以在网络受限环境完成构建。缓存位于每次 Cargo 构建的 `OUT_DIR`，不同构建配置可能需要再次提供 archive 或下载。
+- 重新生成 bindings 与 helpers 得到完全相同内容；36 个 vendored 头文件逐字节匹配官方 XCFramework。
+- `cargo package --allow-dirty -p termlevel-ghostty-vt-sys` 的独立打包及校验编译通过，源码包压缩后约 153 KiB，不包含预编译二进制。包尚未发布。
+
+项目回归：`./scripts/nsh check`、`./scripts/nsh build` 通过；`./scripts/nsh test --junit artifacts/ghostty-crates-headless.xml` **80 / 80** 通过，包含新 crate 的 native / doctest 和原有 Rust / TSX 测试。受限网络下使用已下载 zip 的 `GHOSTTY_VT_ARCHIVE` 与 `CARGO_NET_OFFLINE=true`。两个新包的 `cargo clippy --all-targets -- -D warnings`、定向 `cargo fmt --check` 与 `git diff --check` 通过。
+
+首次全量运行发现既有 `large_output_stays_bounded_and_finishes_before_view_attaches` 仍按 3,000 行旧默认值断言。测试现显式配置 3,000 行，按该上限与实际屏幕行数检查边界，并保留最老行淘汰和最新行保留断言；生产默认的 10,000 行不变。修正后完整重跑取得上述 80 / 80。
+
+本轮没有把 Ghostty 接入生产 `SessionManager` / NSH surface，也没有进行原生 GUI 验收。x86_64 目标已配置，但未安装对应 Rust target，尚未执行该架构的 Rust 构建或运行；Windows / Linux 尚未接入。搜索、选区、超链接、图片、剪贴板和同步输出超时等安全层能力仍待补齐，不能据此声称生产终端兼容性已完成。
+
+## 2026-11-14 · Ghostty 接入默认应用
+
+默认 `SessionManager` 和显式预览 provider 均改用官方 libghostty-vt 1.0.1，移除应用的 Alacritty 依赖和旧适配实现。Rust 继续拥有会话 / PTY / reader / writer / reaper，UI 仍按稳定 session ID 绑定。活动屏幕使用 Rust RenderState 帧缓存，历史行按需读取；没有把完整网格或输出流发送到 JS。
+
+安全层补齐原生搜索、颜色默认值与调色板、尺寸查询回复、历史行与精确逻辑窗口、同步输出边界快照及主动提交。原生 page-granular 历史之外，通过各屏幕的 tracked reference 保留精确逻辑起点；改小再调大不会复活旧行。同步输出正常结束、150 ms 超时、EOF 和 resize 都有处理；另有回归覆盖 hold 快照消费 dirty state 后，另一个 renderer 不得漏掉之前的修改，以及同一 chunk 在开始 hold 前产生历史时逻辑窗口仍严格受限。
+
+线程契约经审查后调整为 Send / !Sync，应用以同一 `Session.emulator` Mutex 串行化解析、渲染、查询和输入编码，说明与上游契约来源见 [THREADING.md](../crates/ghostty-vt/THREADING.md)。原生终端和 renderer 的跨线程移动有独立测试。按键、IME 最终提交文字、粘贴和焦点事件经 Ghostty 编码；原生 Input 的组合确认 / 取消与稳定挂载机制保留。视图接入 block / bar / underline 光标几何。
+
+### 自动化回归
+
+- `GHOSTTY_VT_ARCHIVE=/tmp/termlevel-ghostty-vt-1.0.1.xcframework.zip CARGO_NET_OFFLINE=true ./scripts/nsh check` 与 `./scripts/nsh build` 通过。路径为本地已校验的官方 zip；可用同版本其他路径替代。
+- `./scripts/nsh test --junit artifacts/ghostty-integration-headless.xml`：**85 / 85** 通过，使用相同 archive/offline 环境。包括独立 C ABI / safe crate、全部旧终端回归迁移到 Ghostty、真实 PTY、UI 重绑、多 pane 输入隔离和全部 TSX 交互。
+- 新增真实 raw PTY 字节对照：应用编码的 SS3 方向键、Ctrl+Shift+F5、中文、保留换行的 bracketed paste 和焦点报告共 42 字节，与子进程通过 `dd | od` 实际读到的结果逐字节一致。初次测试把 od 的双空格写成单空格而超时；现在等待 reader 排空后解析 hex token 并比较完整字节数组，未为测试修改编码行为。
+- `cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check` 与新脚本 `sh -n` 通过。
+
+### macOS AppKit
+
+以下原生测试均连接真实 PTY，没有使用 preview transport。首次受限沙箱阻止本地 dev server 监听；在允许本地开发服务器和 AppKit 宿主后执行通过。
+
+- `./scripts/test-native-input`：1 / 1 通过。中文 marked text、确认一次、取消、快速输入、切换会话后的提交归属、滚动与字号变更后的 Input / 光标坐标对齐。报告 `artifacts/native-ime-tests.xml`。
+- `./scripts/test-native-tiling`：1 / 1 通过。真实双 PTY、pane 交换时继续组合、确认文字仍到原会话、方向焦点、分隔缩放、放大 / 还原和窄窗口恢复。报告 `artifacts/tiling-native.xml`；已查看两 pane 截图。
+- 新增可重复执行的 `./scripts/test-native-ghostty`：2 / 2 通过，fixture 为 `terminal/fixtures/Ghostty.acceptance.tsx`。直接打开默认 `App.tsx`，使用本机默认 fish，在 Dark / Light 下确认中文命令执行、真实搜索计数 / 高亮 / 跳转，以及 `seq 1 200 | /usr/bin/less -R` 跳到末尾、显示 200 / (END)、退出后恢复 shell 内容。报告 `artifacts/ghostty-production-native.xml`。截图包括 `artifacts/ghostty-production-{dark,light}{,-find,-less}.png`，已查看深色搜索与浅色 less。脚本的临时注册文件在退出时清理，截图 / 报告均为忽略的本地产物。
+
+### 尚未验证与未接通
+
+以上证明 macOS arm64 的内核迁移、真实输入与指定原生流程，不代表完整日用兼容性。鼠标编码器尚未接到 UI，图片 / 超链接 / 终端选区手势和系统剪贴板协议尚未接入；精细下划线仍退化为普通下划线。NSH 绑定没有完整 key release / repeat action / 物理布局信息，不能声称完整 Kitty 键盘协议。真实系统输入法候选列表、复杂 emoji、跨行选择复制和持续输出 / 大量会话性能仍需独立验收。当前 PATH 未找到 Neovim / tmux，未做这些 TUI 的实际兼容性测试；less 的上述限定流程已通过。x86_64 和其他平台尚未验收。

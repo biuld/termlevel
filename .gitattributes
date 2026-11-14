@@ -1,0 +1,2 @@
+# Preserve official vendored headers byte-for-byte, including upstream whitespace.
+crates/ghostty-vt-sys/include/** -whitespace

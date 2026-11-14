@@ -21,42 +21,46 @@ App.tsx                          mount 工作区，仅作入口
 src/lib.rs                       只注册 termlevel/native 的原生导出
 src/runtime.rs                   版本、启动目录、显式预览开关与原生 cell 测量
 src/dialog_keys.rs               对话框 Escape 与 pane 缩放模式的原生键盘优先级
-src/terminal.rs                  Alacritty parser/grid 到 NSH 的适配；预览 provider
+src/terminal.rs                  Ghostty 状态 / RenderState 到 NSH 的适配；预览 provider
 src/sessions.rs                  SessionManager、PTY、进程、reader/writer/reaper
   sessions/api.rs                TSX 可调用的显式会话操作
 src/session_view.rs              按 ID 绑定会话、低频状态通知
   session_view/view.rs           Rust 行视图、滚动/光标坐标、原生 Input
   session_view/input.rs          组合输入和提交状态
-  session_view/keys.rs           基础终端按键编码
+  session_view/keys.rs           NSH 按键到 Ghostty 输入事件的映射
 ```
 
 TSX 在 QuickJS 中执行，经 NSH 引擎由原生平台绘制。`termlevel/native` 是同进程 Rust 绑定，不是网络 RPC。类型声明由 NSH 生成到 `.nsh/types`，不手工维护。目录按职责划分，不为每个组件另建 crate。
 
 ## 终端数据通路
 
-固定使用 crates.io 上游 `alacritty_terminal =0.26.0`，不引入 Zed 的 GPL 终端封装或其 Alacritty fork。`portable-pty =0.9.0` 创建 PTY 和子进程。
+默认使用独立 Rust 封装的官方 `libghostty-vt =1.0.1` C ABI 和经过 SHA256 校验的 macOS 预编译静态库。应用不再依赖 `alacritty_terminal`。`portable-pty =0.9.0` 创建 PTY 和子进程。
 
 ```text
 TSX 工作区 ── open / close / list / shutdown ── Rust SessionManager
                                                    │ 强持有
-                                     PTY + child + Alacritty parser/grid
+                                     PTY + child + Ghostty terminal state
                                         │                 │
                                reader 原始字节 ────────────┘
                                         │
                                Rust revision → 原生视图（合并刷新）
                                         │
-                               Rust 单元格行视图 / 光标 / NSH 选区
+                               Ghostty RenderState → Rust 行视图 / 光标 / NSH 选区
                                         │
                                NSH 原生输入 → writer → PTY
 
 Rust → TSX：标题、运行/退出/错误状态、响铃；不发送终端 chunk 或 cell grid
 ```
 
-每个会话有独立 `Term`、持久的 `Processor`、事件队列与有限滚动历史。默认保留 10_000 行，设置可在 1_000 到 100_000 之间按 1_000 行调整。改小会立刻丢掉最老的行；新会话使用当前值。这个值不写入磁盘。备用屏幕没有历史。reader 直接处理原始字节，保留跨 chunk 的 UTF-8 和转义序列状态。
+每个会话有独立 Ghostty terminal、持久 parser、原生 RenderState 与 Rust 帧缓存。默认展示最新 10,000 行历史，设置可在 1,000 到 100,000 之间按 1,000 行调整；备用屏幕没有历史。Ghostty 底层按页回收，物理存储可能额外保留一页。安全层用两个屏幕各自的 tracked grid reference 记录逻辑起点，因此展示的上限精确，改小后再改大不会重新出现已丢弃的旧行。设置不写入磁盘。
 
-⌘F 在当前终端内容里查找。真实会话的匹配、滚动和高亮留在 Rust：`SessionTerminal.search` 返回命中数量，视图在单元格上画前景色遮罩，不把网格送进 JS，也不改 PTY 内容。新输出只刷新高亮，不跟着跳滚动位置。预览终端用 `terminal.text()` 计次，不能滚动或高亮。⌘K 仍是按标题、目录和分组找终端。同步输出协议在正常结束、超时和 EOF 时提交，不能因缺少结束序列而永久藏住输出。网格映射保留组合字符，跳过宽字符占位单元，并合并相邻同样式 run；Alacritty 负数历史行映射为 NSH 从最老历史起的行号。
+reader 直接将原始字节送入同一个 Rust/C parser，保留跨 chunk 的 UTF-8 和转义状态。活动屏幕按需生成拥有独立内存的 RenderState 帧，同一 revision 内复用；虚拟列表访问历史行时才在 Rust 中解析该行的 grid ref，不在每个输出 chunk 复制整份历史。宽字符与组合字符保留列坐标，ASCII 同样式 run 合并。所有终端字节、网格、历史与匹配都留在 Rust。
 
-程序指定的 ANSI、256 色、truecolor 和调色板覆盖保留其语义；未指定的默认颜色跟随主题。默认色查询使用工作区传入的主题颜色，之后随主题更新；协议回复直接从 Rust 进入 writer。PTY 与网格 resize 在 parser 锁内一致更新，避免 SIGWINCH 后的新尺寸输出落入旧尺寸网格。
+⌘F 使用 Ghostty 原生 ASCII 不区分大小写搜索，并将命中转换到逻辑历史行号；非 ASCII 查询使用 Rust Unicode 小写匹配，保留原有行为。原生视图负责命中滚动和单元格高亮。新输出只更新高亮，不强制跳到命中。预览仍使用 `terminal.text()` 计次，不支持命中定位和高亮。⌘K 仍按标题、目录和分组查找会话。
+
+程序指定的 ANSI / 256 色 / truecolor 与 OSC 调色板覆盖保留语义；未指定的颜色跟随主题。NSH 的基础 256 色写入 Ghostty 的默认 palette，主题写入默认前景 / 背景，程序覆盖不会被主题变更清掉。颜色、光标和设备协议回复直接经 Rust 回到 writer。字符尺寸查询有实际 rows / cols；NSH 此处只有 point 测量，没有设备像素尺寸，像素回复仍为 0。
+
+同步输出由 mode 2026 的原生回调在确切边界捕获可见屏幕，持有期间显示该帧；正常结束、150 ms 超时和 EOF 都会提交输出。安全层会让独立 renderer 在回调消费 dirty state 后重新建立快照，避免把一次渲染的状态误当成另一个 renderer 已处理。PTY 与网格 resize 仍在同一个 emulator 锁内完成，防止 SIGWINCH 后的新尺寸输出落入旧尺寸网格。
 
 ## 生命周期与并发
 
@@ -71,7 +75,7 @@ Rust → TSX：标题、运行/退出/错误状态、响铃；不发送终端 ch
 
 reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I/O；reader 以 8 KiB 块解析，writer 的输入队列最多 128 个请求，单次输入上限 1 MiB，拒绝会显示错误，不静默截断。原生视图最多约每 16 ms 检查一次 revision，只在有更新时更新 Rust 显示 signal，不经过 TSX。视图刷新计时器随视图销毁，会话工作线程不会随之销毁。
 
-`SessionTerminal` 直接读取同一个 Rust 会话网格，使用 NSH 原生虚拟列表绘制。ASCII 同样式单元格合并；宽字符与组合字符按 Alacritty 的列号单独锚定，字体 fallback 的 glyph advance 不影响下一列的位置。字符背景占完整单元格，单行文本裁剪，不以省略号代替终端内容。预览的 `TerminalEngine` 仍使用 `TerminalEmulatorFactory` 创建视图独享的 Alacritty 模拟器，预览生命周期不能照搬到真实 PTY。
+`SessionTerminal` 直接读取同一个 Rust 会话网格，使用 NSH 原生虚拟列表绘制。ASCII 同样式单元格合并；宽字符与组合字符按 Ghostty 的列号单独锚定，字体 fallback 的 glyph advance 不影响下一列的位置。字符背景占完整单元格，单行文本裁剪，不以省略号代替终端内容。预览的 `TerminalEngine` 仍使用 `TerminalEmulatorFactory` 创建视图独享的 Ghostty 模拟器，预览生命周期不能照搬到真实 PTY。
 
 一个稳定的原生 Input 放在滚动视图之外，与网格列表共用宿主 padding 以内的内容容器；两者必须具有同一个坐标原点。终端顶部不留内边距，左右及底部留 16 pt；滚动内容与 Input 均位于 pane 工具栏下方的同一内边距容器。按当前网格光标、滚动 offset 和底部对齐余量定位，宽度为当前行剩余空间。未组合时文字透明，由 PTY echo 决定显示；组合时由原生输入控件显示 marked text、插入光标和系统输入法交互。开始输入/组合时跟随滚动末尾。即使 TUI 隐藏输出光标，输入法锚点仍读取实际网格位置。
 
@@ -101,16 +105,26 @@ reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I
 
 ## 当前能力边界
 
-Alacritty 内核接入与真实 PTY 通路已实现，真实会话使用自己的 Rust 网格视图与 NSH 0.5.0 原生 Input/选区，不等同于嵌入 Alacritty 应用的 GPU renderer。
+真实 PTY、预览 provider 和 Rust 原生网格视图均已切到 Ghostty。渲染与 IME 仍由 NSH/AppKit 承担，不等同于嵌入 Ghostty 应用的 GPU renderer。
 
-- 可用通路包括应用光标键、括号粘贴、标题、响铃、光标位置与协议回复、备用屏幕、滚动历史、网格重排、调色板与默认色查询。
-- 鼠标报告、焦点报告、功能键/修饰键的完整编码、现代键盘协议、超链接元数据、光标形状与精细下划线尚未接通；下划线变体暂投影为普通下划线。Kitty 键盘协议与 OSC52 显式禁用。
-- 字符尺寸查询有实际 rows/cols；物理像素尺寸未知，回复为 0，不能声称像素协议已支持。
-- 实机 IME 候选窗、选区复制、大量输出的 GUI 性能和复杂 Unicode 绘制需独立验收；不声称 Neovim/tmux 完整兼容。
-- macOS 首先验证；Windows/Linux 尚未进行平台验收。
-- 工作区布局与设置尚不持久化；重启会结束并丢失会话，不能把 PID 当作恢复凭证。
+- 已接通应用光标键、F1–F24 与方向 / 编辑键的 Shift / Ctrl / Alt 组合、括号粘贴、焦点报告、标题、响铃、备用屏幕、滚动历史、重排、颜色与尺寸查询。
+- 已注册的按键和提交后的普通 / 组合文字都经 Ghostty 编码。NSH 0.5.0 的绑定接口不提供完整 key release、repeat action、物理键与布局信息，不能声称完整 Kitty 键盘协议兼容。工作区 Command 快捷键保持原有优先级。
+- 鼠标协议的安全编码器已经存在，但 UI 鼠标报告尚未接通。超链接目标与图片也尚未接入 native renderer；精细下划线仍投影成普通下划线。光标已接 block / bar / underline 几何，尚不含完整闪烁行为。
+- 剪贴板协议回调未注册，不将 OSC52 或 Kitty clipboard 请求连接到系统剪贴板。
+- 实际系统输入法候选列表、跨行选择复制、复杂 emoji、多会话持续输出的性能仍需独立验收；不声称 Neovim/tmux 完整兼容。
+- macOS arm64 已完成自动化验证；x86_64、Windows/Linux 尚未进行应用平台验收。
+- 布局与设置尚未持久化；应用重启会结束并丢失会话，PID 不能作为恢复凭证。
 
-后续继续补齐 Rust 原生终端视图的协议与交互能力。Ghostty 保留为后续对比方案，不是必经迁移阶段。
+### libghostty-vt 独立 Rust 封装
+
+工作区新增两个 crate，均不依赖 NSH、PTY 或应用的会话管理：
+
+- `crates/ghostty-vt-sys`（包名 `termlevel-ghostty-vt-sys`）：官方 libghostty-vt **1.0.1** C ABI、原版头文件、预生成绑定，以及通过固定 SHA256 验证的官方 macOS XCFramework。构建提取目标架构静态库，不需要 Zig。支持在 macOS host 上构建 arm64 / x86_64，其他目标明确报错。
+- `crates/ghostty-vt`（包名 `termlevel-ghostty-vt`）：句柄 RAII、字节解析、resize、文本导出、拥有独立内存的 viewport 快照、协议回复和元数据事件，以及随当前终端模式编码的键盘 / 鼠标 / 焦点 / 文本粘贴。原生句柄经线程契约审查后为 `Send`、保持 `!Sync`，每次访问均由 `Session.emulator` 的 Mutex 串行化；同步 C 回调只写入自己拥有的堆内存，不调用用户逻辑，复制后的帧可发送到绘制线程。
+
+这两层只拥有终端模拟状态，Rust `SessionManager` 继续拥有 PTY 与进程。生产路径已接入这两层，旧 Alacritty 依赖已移除。安全层包含历史窗口、搜索、颜色默认值与 render hold；选区手势、超链接目标、图片和剪贴板效果仍待接入，完整 C 声明留在 raw API。默认整 viewport 复制是首版接口，不作为最终 renderer 性能结论。
+
+下载、缓存、离线构建和版本来源见 [sys crate](../crates/ghostty-vt-sys/README.md)，安全层边界见 [wrapper](../crates/ghostty-vt/README.md)。两包尚未发布到 crates.io。
 
 ## 主题与预览
 

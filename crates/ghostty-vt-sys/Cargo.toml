@@ -1,0 +1,14 @@
+[package]
+name = "termlevel-ghostty-vt-sys"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+description = "Pinned libghostty-vt 1.0.1 C bindings with verified macOS prebuilt libraries"
+links = "ghostty-vt"
+
+[build-dependencies]
+sha2 = "0.10.9"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"

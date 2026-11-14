@@ -13,15 +13,11 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use alacritty_terminal::{
-    event::{Event, WindowSize},
-    vte::ansi::Rgb,
-};
 use nsh_base::{TerminalEmulator, TerminalSize};
 use nsh_core::prelude::*;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
-use crate::terminal::AlacrittyEmulator;
+use crate::terminal::{BackendEvent, GhosttyEmulator, Rgb};
 
 /// Low-frequency session metadata. No terminal output crosses this interface.
 #[derive(Debug, Clone, PartialEq, JsObject)]
@@ -49,10 +45,9 @@ struct Control {
 }
 
 pub(crate) struct Session {
-    pub(crate) emulator: Mutex<AlacrittyEmulator>,
+    pub(crate) emulator: Mutex<GhosttyEmulator>,
     pub(crate) revision: AtomicU64,
     pub(crate) bells: AtomicU64,
-    colors: Mutex<(Rgb, Rgb)>,
     info: Mutex<SessionInfo>,
     control: Mutex<Control>,
     closed: AtomicBool,
@@ -72,6 +67,7 @@ impl Session {
         command.env("COLORTERM", "truecolor");
         command.env("TERM_PROGRAM", "termlevel");
         command.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+        let emulator = GhosttyEmulator::try_new(TerminalSize::default(), scrollback)?;
         let pair = native_pty_system()
             .openpty(PtySize::default())
             .map_err(|e| e.to_string())?;
@@ -88,21 +84,9 @@ impl Session {
         let pid = child.process_id();
         let (input, receive) = mpsc::sync_channel::<Vec<u8>>(128);
         let session = Arc::new(Self {
-            emulator: Mutex::new(AlacrittyEmulator::new(TerminalSize::default(), scrollback)),
+            emulator: Mutex::new(emulator),
             revision: AtomicU64::new(1),
             bells: AtomicU64::new(0),
-            colors: Mutex::new((
-                Rgb {
-                    r: 0xd7,
-                    g: 0xd9,
-                    b: 0xe1,
-                },
-                Rgb {
-                    r: 0x19,
-                    g: 0x1a,
-                    b: 0x1e,
-                },
-            )),
             info: Mutex::new(SessionInfo {
                 id,
                 cwd,
@@ -259,52 +243,24 @@ impl Session {
     }
 
     pub(crate) fn set_scrollback(&self, lines: usize) {
-        self.emulator.lock().unwrap().set_scrollback(lines);
+        let events = {
+            let mut emulator = self.emulator.lock().unwrap();
+            emulator.set_scrollback(lines);
+            emulator.backend_events()
+        };
+        self.handle_events(events);
         self.revision.fetch_add(1, Ordering::Release);
     }
 
-    fn handle_events(&self, events: Vec<Event>) {
+    fn handle_events(&self, events: Vec<BackendEvent>) {
         for event in events {
             match event {
-                Event::Title(title) => self.info.lock().unwrap().title = title,
-                Event::ResetTitle => self.info.lock().unwrap().title.clear(),
-                Event::PtyWrite(data) => self.input(data.as_bytes()),
-                Event::Bell => {
+                BackendEvent::Title(title) => self.info.lock().unwrap().title = title,
+                BackendEvent::Reply(bytes) => self.input(&bytes),
+                BackendEvent::Bell => {
                     self.bells.fetch_add(1, Ordering::Release);
                 }
-                Event::ColorRequest(index, format) => {
-                    let (foreground, background) = *self.colors.lock().unwrap();
-                    let color = self
-                        .emulator
-                        .lock()
-                        .unwrap()
-                        .query_color(index, foreground, background);
-                    self.input(format(color).as_bytes());
-                }
-                Event::TextAreaSizeRequest(format) => {
-                    let size = self
-                        .control
-                        .lock()
-                        .unwrap()
-                        .master
-                        .as_ref()
-                        .and_then(|master| master.get_size().ok());
-                    if let Some(size) = size {
-                        // Cell geometry is authoritative; NSH has no physical
-                        // pixel size API here, so report unknown pixels as 0.
-                        self.input(
-                            format(WindowSize {
-                                num_lines: size.rows,
-                                num_cols: size.cols,
-                                cell_width: 0,
-                                cell_height: 0,
-                            })
-                            .as_bytes(),
-                        );
-                    }
-                }
-                // OSC52 and Kitty protocol are disabled in the emulator.
-                _ => {}
+                BackendEvent::Error(error) => self.fail(format!("Ghostty: {error}")),
             }
         }
     }
@@ -325,12 +281,14 @@ impl Session {
                 b: u8::from_str_radix(&value[4..6], 16).ok()?,
             })
         }
-        let mut colors = self.colors.lock().unwrap();
-        if let Some(color) = foreground.and_then(rgb) {
-            colors.0 = color;
-        }
-        if let Some(color) = background.and_then(rgb) {
-            colors.1 = color;
+        let (changed, events) = {
+            let mut emulator = self.emulator.lock().unwrap();
+            let changed = emulator.set_colors(foreground.and_then(rgb), background.and_then(rgb));
+            (changed, emulator.backend_events())
+        };
+        self.handle_events(events);
+        if changed {
+            self.revision.fetch_add(1, Ordering::Release);
         }
     }
 
@@ -356,6 +314,30 @@ impl Session {
         }
     }
 
+    fn encoded_input(&self, encoded: Result<Vec<u8>, String>) {
+        match encoded {
+            Ok(bytes) if !bytes.is_empty() => self.input(&bytes),
+            Ok(_) => {}
+            Err(error) => self.fail(format!("Encoding terminal input: {error}")),
+        }
+    }
+    pub(crate) fn text_input(&self, text: &str) {
+        let encoded = self.emulator.lock().unwrap().encode_text(text);
+        self.encoded_input(encoded);
+    }
+    pub(crate) fn key_input(&self, event: &termlevel_ghostty_vt::KeyEvent<'_>) {
+        let encoded = self.emulator.lock().unwrap().encode_key(event);
+        self.encoded_input(encoded);
+    }
+    pub(crate) fn paste(&self, text: &str) {
+        let encoded = self.emulator.lock().unwrap().encode_paste(text);
+        self.encoded_input(encoded);
+    }
+    pub(crate) fn focus_input(&self, focused: bool) {
+        let encoded = self.emulator.lock().unwrap().encode_focus(focused);
+        self.encoded_input(encoded);
+    }
+
     pub(crate) fn resize(&self, size: TerminalSize) {
         if self.closed.load(Ordering::Acquire) {
             return;
@@ -376,6 +358,9 @@ impl Session {
             return;
         }
         emulator.resize(size);
+        let events = emulator.backend_events();
+        drop(emulator);
+        self.handle_events(events);
         self.revision.fetch_add(1, Ordering::Release);
     }
 

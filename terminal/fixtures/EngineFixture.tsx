@@ -16,7 +16,7 @@ function EngineFixture() {
       onResize={() => {
         if (started) return;
         started = true;
-        // REP is supported by Alacritty but absent from NSH's default VT.
+        // REP is supported by Ghostty but absent from NSH's default VT.
         // This makes silently falling back to the old emulator observable.
         terminal?.write("Q\x1b[4b\r\n\x1b[38;2;12;34;56m中文é\x1b[0m");
       }} />
@@ -28,7 +28,7 @@ function EngineFixture() {
       terminal?.write("\x1b[?1h\x1b[?2004h");
       terminal?.focus();
     }}><Text>Input modes</Text></Button>
-    <Button testID="engine-query" onPress={() => terminal?.write("\x1b]0;Alacritty test\x07\x1b[6n")}><Text>Query</Text></Button>
+    <Button testID="engine-query" onPress={() => terminal?.write("\x1b]0;Ghostty test\x07\x1b[6n")}><Text>Query</Text></Button>
   </TerminalEngine>;
 }
 

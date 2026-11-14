@@ -1,6 +1,6 @@
 # Termlevel Roadmap
 
-目标：一个使用 Firefox 风格 vertical tabs 和 tab groups 组织会话的原生终端应用。先把工作区交互做清楚，以 Alacritty 内核与 NSH 原生视图接真实 shell，再验证并补齐终端兼容性。
+目标：一个使用 Firefox 风格 vertical tabs 和 tab groups 组织会话的原生终端应用。先把工作区交互做清楚，以 Ghostty 内核与 NSH 原生视图接真实 shell，再验证并补齐终端兼容性。
 
 平台顺序：macOS AppKit 优先；Windows / Linux 在核心行为通过后分别验收。NSH 的跨平台声明不代替 Termlevel 的平台测试。
 
@@ -41,12 +41,12 @@
 
 完成标准：重启恢复工作区结构；拖拽、取消拖拽、跨组移动不改变会话 ID；持久化不把进程 PID 当作可恢复会话。
 
-## M2 · Alacritty + NSH 原生 Terminal + 真实 PTY
+## M2 · 终端内核 + NSH 原生 Terminal + 真实 PTY
 
-- [x] 固定 Alacritty 0.26.0，通过 Rust `TerminalEmulatorFactory` 替换默认模拟器；保留确定性预览，单独验证内核与原生绑定。
+- [x] 最初以 Alacritty 接入内核，现已切换官方 Ghostty 1.0.1；通过 Rust `TerminalEmulatorFactory` 替换默认模拟器；保留确定性预览，单独验证内核与原生绑定。
 - [x] Rust `SessionManager` 创建和持有 PTY、子进程、reader / writer / reaper、退出状态。
 - [x] 使用 `portable-pty` 0.9.0，连接用户默认 shell；配置 cwd、TERM/COLORTERM/TERM_PROGRAM。
-- [x] 默认入口使用真实会话；reader 的原始字节在 Rust 内送入持久 Alacritty parser，保留跨 chunk 的 UTF-8 与转义状态，以及同步输出的结束/超时/EOF；演示 transport 只在显式预览模式启用。
+- [x] 默认入口使用真实会话；reader 的原始字节在 Rust 内送入持久 Ghostty parser，保留跨 chunk 的 UTF-8 与转义状态，以及同步输出的结束/超时/EOF；演示 transport 只在显式预览模式启用。
 - [x] 尺寸变化与网格同步到 PTY，处理基础输入、粘贴、标题、响铃、EOF、退出码和启动失败；默认色/调色板查询直接在 Rust 回复。
 - [x] 显式关闭标签/组结束会话；关闭主窗口或退出应用结束全部会话，含前台任务、shell HUP 清理与回收。
 - [x] 视图卸载不结束 Rust 会话；UI 工作区重建从 `Sessions.list` 按同一 ID 绑定，已退出会话保留输出与退出状态。
@@ -56,14 +56,16 @@
 ## M3 · 终端视图与兼容性
 
 - [x] 真实会话改用 Rust 原生网格行视图，原生 Input 随光标与滚动定位；组合文字显示、确认/取消与会话切换归属有 AppKit 自动化证据。
-- [x] 按 Alacritty 列号锚定宽字符与组合字符；共享显示与查询调色板。
+- [x] 按终端网格列号锚定宽字符与组合字符；共享显示与查询调色板。
 - [ ] 实际系统输入法候选列表、复杂组合序列、emoji、跨行选区和复制人工验收。
-- 在 Alacritty 内核之上继续验证样式、输入模式、选区和 renderer 的表达范围。
+- 在 Ghostty 内核之上继续验证样式、输入模式、选区和 renderer 的表达范围。
 - 补齐鼠标报告、焦点报告、按键编码、IME、光标样式及重排能力，逐项记录原生证据。
 - 真实会话已采用扩展的 Rust 原生终端组件；TSX 只挂载视图、传入 session ID / 配置并接收状态事件。
 - 不将完整 cell grid 或逐字节终端输出绕到 JS 再回 Rust 绘制。
 - 输入编码、鼠标报告、选择、IME、重排和绘制分别验证。
-- Ghostty 仅作为后续对比候选；若评估，固定 `libghostty-vt`、原生库与匹配工具链，不预设迁移结论。
+- [x] 基于官方 libghostty-vt 1.0.1 C ABI 封装独立 Rust sys / safe crate，固定预编译库校验和，macOS 构建无需 Zig。
+- [x] 真实会话和预览接入 Ghostty，移除 Alacritty 依赖；保留 session / PTY 所有权、搜索、精确逻辑滚动上限、颜色回复和同步输出，按键及文字经 Ghostty 编码。
+- [ ] 继续接入鼠标、终端选区 / 链接 / 图片，验证完整键盘协议和真实 TUI；内核迁移不代表这些能力已完整验收。
 
 完成标准：Neovim、tmux、less、top 以及常用 agent CLI 的真实使用验证；中文 / 组合字符 / emoji、ANSI / truecolor、备用屏幕、鼠标、滚动历史与重排有对应证据。测量大量输出和多会话时的响应、内存、帧耗时。图片协议按独立能力评估。
 
