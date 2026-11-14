@@ -48,6 +48,16 @@
 
 Windows / Linux 的应用快捷键使用 Ctrl，平台验收属于后续工作。AppKit 组合输入期间按键优先交给输入法。平铺的实现和验收边界见 [多终端平铺](docs/terminal-tiling.md)。
 
+## 打包
+
+macOS 应用包使用 `nsh.json` 中配置的 [图标 PNG](assets/brand/termlevel-icon-v1.png)，由 NSH 自动生成原生图标资源：
+
+```sh
+./scripts/nsh package --target macos
+```
+
+默认输出到 `.nsh/out`；也可用 `--out` 指定输出目录。macOS 包默认使用 ad hoc 签名，分发签名与公证另行配置。
+
 ## 检查
 
 ```sh

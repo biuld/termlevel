@@ -496,3 +496,15 @@ CARGO_NET_OFFLINE=true
 - `cargo clippy --workspace --all-targets -- -D warnings`、fmt 与 diff check 通过。
 
 实际 Codex / Claude 修复后的用户复验尚未进行。字体回退中的其他 Unicode 图形族、emoji、任意字体及平台的完整终端兼容性仍不在本轮验收范围内；没有据受控截图宣称完整 Ghostty 应用 renderer 等价性。
+
+## 2026-11-15：打包应用图标
+
+`nsh.json` 的 `icon` 指向 `assets/brand/termlevel-icon-v1.png`，生成提示词与来源保留在同目录 Markdown 中。图标为带 alpha 的正方形 PNG，由 NSH 0.5.0 自动转换为 macOS 图标资源；常规命令是 `./scripts/nsh package --target macos`，无需额外图标参数。README 已记录打包方式。
+
+- `./scripts/nsh check`、`./scripts/nsh build` 通过。
+- `./scripts/nsh package --target macos --out .nsh/package-icon-check` 通过，生成 `.nsh/package-icon-check/Termlevel.app`，日志 `artifacts/package-icon.log`。离线构建使用固定 Ghostty archive 与 `CARGO_NET_OFFLINE=true`。
+- 检查 `Info.plist`：bundle ID 为 `app.termlevel.desktop`，`CFBundleIconFile` 指向 `Contents/Resources/AppIcon.icns`。解码图标为 1024×1024 RGBA，alpha 范围 0–255；与源 PNG 同尺寸缩放后的像素均值差约 0.427 / 255，确认实际采用所选图标。
+- `codesign --verify --deep --strict .nsh/package-icon-check/Termlevel.app` 通过；包使用默认 ad hoc 签名，不等同于分发签名或公证。
+- 沙箱内首次调用 `iconutil` 报 Invalid Iconset；使用打包所需的系统工具权限重跑后成功。首次 release 宿主编译约三分钟，仍有此前诊断代码的 9 条警告。
+
+本次只改变图标资源与打包配置，没有重跑完整交互测试；验证针对真实应用包和图标资源，未额外启动打包应用确认 Finder / Dock 的图标缓存表现。打包与编译产物均位于忽略目录，不提交。
