@@ -18,14 +18,17 @@ App.tsx                          mount 工作区，仅作入口
   terminal/PreviewTerminal.tsx    显式预览模式的 NSH Terminal 与焦点
     preview-session.ts           确定性演示 transport，不执行命令
 
-src/lib.rs                       只注册 termlevel/native 的原生导出
+src/lib.rs                       注册 termlevel/native 导出与原生 renderer factory
 src/runtime.rs                   版本、启动目录、显式预览开关与原生 cell 测量
 src/dialog_keys.rs               对话框 Escape 与 pane 缩放模式的原生键盘优先级
 src/terminal.rs                  Ghostty 状态 / RenderState 到 NSH 的适配；预览 provider
 src/sessions.rs                  SessionManager、PTY、进程、reader/writer/reaper
   sessions/api.rs                TSX 可调用的显式会话操作
 src/session_view.rs              按 ID 绑定会话、低频状态通知
-  session_view/view.rs           Rust 行视图、滚动/光标坐标、原生 Input
+  session_view/view.rs           固定格网 surface、整数窗口、原生 Input
+  session_view/window.rs         展示窗口策略；原生内容锚点留在 Ghostty
+  session_view/paint.rs          owned 绘制场景、颜色和行语义
+  session_view/native_surface.rs 应用自有 NSView，CoreText / Core Graphics 绘制与缓存
   session_view/input.rs          组合输入和提交状态
   session_view/keys.rs           NSH 按键到 Ghostty 输入事件的映射
 ```
@@ -45,7 +48,7 @@ TSX 工作区 ── open / close / list / shutdown ── Rust SessionManager
                                         │
                                Rust revision → 原生视图（合并刷新）
                                         │
-                               Ghostty RenderState → Rust 行视图 / 光标 / NSH 选区
+                               Ghostty RenderState → 固定格网 / 光标 / Ghostty 选区
                                         │
                                NSH 原生输入 → writer → PTY
 
@@ -54,13 +57,13 @@ Rust → TSX：标题、运行/退出/错误状态、响铃；不发送终端 ch
 
 每个会话有独立 Ghostty terminal、持久 parser、原生 RenderState 与 Rust 帧缓存。默认展示最新 10,000 行历史，设置可在 1,000 到 100,000 之间按 1,000 行调整；备用屏幕没有历史。Ghostty 底层按页回收，物理存储可能额外保留一页。安全层用两个屏幕各自的 tracked grid reference 记录逻辑起点，因此展示的上限精确，改小后再改大不会重新出现已丢弃的旧行。设置不写入磁盘。
 
-reader 直接将原始字节送入同一个 Rust/C parser，保留跨 chunk 的 UTF-8 和转义状态。活动屏幕按需生成拥有独立内存的 RenderState 帧，同一 revision 内复用；虚拟列表访问历史行时才在 Rust 中解析该行的 grid ref，不在每个输出 chunk 复制整份历史。宽字符与组合字符保留列坐标，ASCII 同样式 run 合并。所有终端字节、网格、历史与匹配都留在 Rust。
+reader 直接将原始字节送入同一个 Rust/C parser，保留跨 chunk 的 UTF-8 和转义状态。活动屏幕按需生成拥有独立内存的 RenderState 帧；固定格网只复制当前窗口的行，历史锚点由 Ghostty tracked reference 随重排和淘汰维护，不在每个输出 chunk 复制整份历史。宽字符与组合字符保留列坐标，ASCII 同样式 run 合并。所有终端字节、网格、历史与匹配都留在 Rust。
 
-⌘F 使用 Ghostty 原生 ASCII 不区分大小写搜索，并将命中转换到逻辑历史行号；非 ASCII 查询使用 Rust Unicode 小写匹配，保留原有行为。原生视图负责命中滚动和单元格高亮。新输出只更新高亮，不强制跳到命中。预览仍使用 `terminal.text()` 计次，不支持命中定位和高亮。⌘K 仍按标题、目录和分组查找会话。
+⌘F 的 ASCII 查询使用 Ghostty 分步 feed/tick，保留原生软换行匹配；Unicode 使用分批复制行、锁外小写匹配。每次最多处理一批，输出变化后等待 150 ms 安静期重扫，不在绘制快照锁里全量查找。低频 SearchChange 只发送 query、计数、索引与 searching；查找栏显示 Searching…，异步完成不覆盖别的 query。新输出不强制跳到命中。预览仍使用 terminal.text() 计次。⌘K 仍按标题、目录和分组查找会话。
 
 程序指定的 ANSI / 256 色 / truecolor 与 OSC 调色板覆盖保留语义；未指定的颜色跟随主题。NSH 的基础 256 色写入 Ghostty 的默认 palette，主题写入默认前景 / 背景，程序覆盖不会被主题变更清掉。颜色、光标和设备协议回复直接经 Rust 回到 writer。字符尺寸查询有实际 rows / cols；NSH 此处只有 point 测量，没有设备像素尺寸，像素回复仍为 0。
 
-同步输出由 mode 2026 的原生回调在确切边界捕获可见屏幕，持有期间显示该帧；正常结束、150 ms 超时和 EOF 都会提交输出。安全层会让独立 renderer 在回调消费 dirty state 后重新建立快照，避免把一次渲染的状态误当成另一个 renderer 已处理。PTY 与网格 resize 仍在同一个 emulator 锁内完成，防止 SIGWINCH 后的新尺寸输出落入旧尺寸网格。
+同步输出由 mode 2026 的原生回调在确切边界捕获可见屏幕和屏幕身份。已挂载 surface 在 hold 期间冻结最后发布的整个窗口，初次绑定则展示 held 帧；正常结束、150 ms 超时和 EOF 都会提交输出。真实库测试确认 1.0.1 原生 resize 也会结束 hold，随后发布新尺寸。安全层会让独立 renderer 在回调消费 dirty state 后重新建立快照，避免把一次渲染的状态误当成另一个 renderer 已处理。PTY 与网格 resize 仍在同一个 emulator 锁内完成，防止 SIGWINCH 后的新尺寸输出落入旧尺寸网格。
 
 ## 生命周期与并发
 
@@ -73,13 +76,17 @@ reader 直接将原始字节送入同一个 Rust/C parser，保留跨 chunk 的 
 - 关闭主窗口或退出应用调用 `Sessions.shutdown`。Unix 上结束前台进程组，向 shell 发送 HUP，让它清理普通后台作业；50 ms 后仍未退出则强制结束 shell。主动脱离终端会话的 daemon 不属于可恢复会话模型。
 - child 的检查、终止和回收共用控制锁，避免对已回收并可能复用的 PID 发信号。关闭后 reader/writer 取消，reaper 回收 child；应用退出在 NSH 的 200 ms 清理预算内轮询 `Sessions.settled()`。
 
-reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I/O；reader 以 8 KiB 块解析，writer 的输入队列最多 128 个请求，单次输入上限 1 MiB，拒绝会显示错误，不静默截断。原生视图最多约每 16 ms 检查一次 revision，只在有更新时更新 Rust 显示 signal，不经过 TSX。视图刷新计时器随视图销毁，会话工作线程不会随之销毁。
+reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I/O；reader 以 8 KiB 块解析，writer 的输入队列最多 128 个请求，单次输入上限 1 MiB，拒绝会显示错误，不静默截断。原生视图最多约每 16 ms 检查一次 revision，只在有更新时更新 Rust 显示 signal，不经过 TSX。工作区传入低频 visible 属性；隐藏 pane 暂停抓帧、动画推进和查找，恢复可见时立即刷新，非活动但可见的 pane 仍继续绘制。视图刷新计时器随视图销毁，会话工作线程不会随之销毁。
 
-`SessionTerminal` 直接读取同一个 Rust 会话网格，使用 NSH 原生虚拟列表绘制。ASCII 同样式单元格合并；宽字符与组合字符按 Ghostty 的列号单独锚定，字体 fallback 的 glyph advance 不影响下一列的位置。字符背景占完整单元格，单行文本裁剪，不以省略号代替终端内容。预览的 `TerminalEngine` 仍使用 `TerminalEmulatorFactory` 创建视图独享的 Ghostty 模拟器，预览生命周期不能照搬到真实 PTY。
+`SessionTerminal` 通过 NSH 0.5.0 的 Native Components 公开接口嵌入应用自己的 NSView。src/lib.rs 的 #[native_components(macos)] 同时供开发与打包宿主注册；无需修改框架。测量视图是唯一 PTY resize 输入，格子宽高来自当前 Frame 行列数；剩余像素留在格子外。贴底 origin=line_count-Frame.rows，ED2 保留的历史不能切入屏幕。绘制规则与验收边界见 [终端格网设计](terminal-grid.md)。
 
-一个稳定的原生 Input 放在滚动视图之外，与网格列表共用宿主 padding 以内的内容容器；两者必须具有同一个坐标原点。终端顶部不留内边距，左右及底部留 16 pt；滚动内容与 Input 均位于 pane 工具栏下方的同一内边距容器。按当前网格光标、滚动 offset 和底部对齐余量定位，宽度为当前行剩余空间。未组合时文字透明，由 PTY echo 决定显示；组合时由原生输入控件显示 marked text、插入光标和系统输入法交互。开始输入/组合时跟随滚动末尾。即使 TUI 隐藏输出光标，输入法锚点仍读取实际网格位置。
+快照分成锁内复制 Frame/历史 cells/图片、锁外合并 run 与可访问文本两阶段。Rust 引擎以 Arc<Scene> 发布完整场景，主线程只短暂锁住场景槽以克隆最新 Arc，随后在无 emulator 锁时绘制；跨 NSH 属性只有槽 ID 与 revision。槽注册表保存 Weak，发布者和原生组件随挂载释放，不拥有会话。字体、CTLine 与 CGImage 留在主线程 renderer。
 
-`InputState` 缓存组合过程，只有结束后提交最终差量；取消删除 marked text 不发送残留拼音。原生值先确认，再通过 NSH `after_answer` 清空，避免 Rust host 属性比较跳过相同的空值；若已进入下一次组合，暂不清空。普通输入处理清空尚未到达平台时的累积值，避免快速输入重复。组合期间暂停终端按键绑定，Enter/方向键/Escape 交给输入法；基础键盘绑定只在该会话 active 且 Input focused 时生效。Command 编辑快捷键不占用工作区新建/关闭标签快捷键。
+原生 NSView 按图片层 0、单元格背景、图片层 1、搜索和字形、图片层 2 绘制。字体与字形排版有界缓存，图片按 owned 像素身份复用。run 按 Ghostty 列坐标锚定并独立裁剪，主字体基线一致，关闭可选连字。复杂 fallback、emoji 与细粒度 AX 仍需验收。一个无绘图操作的 Canvas Drawing 仅提供非空可见行 CanvasNode 语义给 NSH 测试模型；原生容器同时有整个窗口文本标签，不挂逐行视图。光标独立，闪烁不重绘字形。预览 TerminalEngine 仍是视图独享模拟器。
+
+唯一原生 Input 与格子同一原点，位置来自展示快照的 input_cursor，y 夹在格子内；组合时显示 marked text 和系统输入法交互，平时文字透明。开始输入/组合请求贴底，hold 期间延后到下一次发布。DECTCEM 隐藏输出光标不移除输入锚点。
+
+`InputState` 缓存组合过程，只有结束后提交最终差量；取消删除 marked text 不发送残留拼音。原生值先确认，再通过 NSH `after_answer` 清空，避免 Rust host 属性比较跳过相同的空值；若已进入下一次组合，暂不清空。普通输入处理清空尚未到达平台时的累积值，避免快速输入重复。组合期间暂停终端按键绑定，Enter/方向键/Escape 交给输入法；NSH 脚本回退绑定只在该会话 active 且 Input focused 时生效；生产 local monitor 以 active 授权，避免布局导致 field editor 失焦时丢键。Command 编辑快捷键不占用工作区新建/关闭标签快捷键。
 
 离开 macOS field editor 时，AppKit 可以确认当前 marked text；回调仍绑定旧 `Arc<Session>`，不向新活动会话转发。挂载、隐藏与焦点不拥有 PTY 生命周期。
 
@@ -105,12 +112,12 @@ reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I
 
 ## 当前能力边界
 
-真实 PTY、预览 provider 和 Rust 原生网格视图均已切到 Ghostty。渲染与 IME 仍由 NSH/AppKit 承担，不等同于嵌入 Ghostty 应用的 GPU renderer。
+真实 PTY、预览 provider 和 Rust 原生网格视图均已切到 Ghostty。渲染由 Termlevel 自有 AppKit NSView 承担，IME 继续使用 NSH field editor；不等同于嵌入 Ghostty 应用的 GPU renderer。
 
 - 已接通应用光标键、F1–F24 与方向 / 编辑键的 Shift / Ctrl / Alt 组合、括号粘贴、焦点报告、标题、响铃、备用屏幕、滚动历史、重排、颜色与尺寸查询。
-- macOS 以 AppKit local monitor 提供物理键、布局文字、按下 / repeat / release 与修饰键事件，再交给 Ghostty 协议编码器。监听器只接收当前 session 对应的真实 field editor；工作区 Command 快捷键、Copy / Paste / Select All、IME marked text 保持原有归属。非 ASCII 输入源上的字符键仍交给 IME，直到提交；无组合文本时 Enter、方向键和功能键继续编码。NSH 快捷键绑定在生产路径透传，避免两个监听器争抢协议按键。`scripts/nsh test` 显式开启仅 debug 构建支持的脚本输入回退；原生协议测试再显式关闭该回退，并向前台 AppKit 窗口同步投递事件。
+- macOS 以 AppKit local monitor 提供物理键、布局文字、按下 / repeat / release 与修饰键事件，再交给 Ghostty 协议编码器。监听器按当前 active session 授权，遇到查找、重命名和设置的外部文本编辑器则透传；需要输入法时先取得本会话 field editor；工作区 Command 快捷键、Copy / Paste / Select All、IME marked text 保持原有归属。非 ASCII 输入源上的字符键仍交给 IME，直到提交；无组合文本时 Enter、方向键和功能键继续编码。NSH 快捷键绑定在生产路径透传，避免两个监听器争抢协议按键。`scripts/nsh test` 显式开启仅 debug 构建支持的脚本输入回退；原生协议测试再显式关闭该回退，并向前台 AppKit 窗口同步投递事件。
 - 鼠标点击 / 释放 / 拖动 / 移动 / 双轴滚轮按当前 DEC 模式编码。Shift 临时绕过程序鼠标报告，允许终端选区 / 历史滚动；普通拖选、双击词、三击行、Alt 矩形选区由 Ghostty tracked selection 持有，Cmd+C / Cmd+A 面向终端选区。OSC8 目标随 cell 保留，链接有下划线与提示，Cmd+点击打开 HTTP(S) / mailto。
-- 原生视图接入 Kitty 内联 RGB / RGBA / PNG 图片，按原生 placement 的裁剪、缩放、偏移、三层 z 顺序绘制；像素留在 Rust `ImageSrc::rgba`，动画使用原生 generation 更新。历史图片快照恢复 viewport 时保留“跟随底部”语义，并使其他 renderer 的脏行缓存失效。文件 / 临时文件 / 共享内存 medium 仍关闭。
+- 原生视图接入 Kitty 内联 RGB / RGBA / PNG 图片，按原生 placement 的裁剪、缩放、偏移、三层 z 顺序绘制；像素留在 Rust owned RGBA，并在原生 renderer 缓存 CGImage，动画使用原生 generation 更新。历史图片快照恢复 viewport 时保留“跟随底部”语义，并使其他 renderer 的脏行缓存失效。文件 / 临时文件 / 共享内存 medium 仍关闭。
 - 光标支持 block / bar / underline、程序指定的颜色与闪烁模式；组合输入期间隐藏输出光标。
 - OSC52 / 文本剪贴板回调同步接入 macOS 系统剪贴板，单次上限 1 MiB。默认允许复制，读取需设置中的“Read and write”明确开启，重启复位。回调使用有超时的 pbcopy / pbpaste helper，不在持有 parser mutex 时等待 AppKit 主线程，避免主线程与 reader 互等；不支持非文本 MIME 和 primary / selection 剪贴板。
 - 实际系统输入法候选列表、跨行选择复制、复杂 emoji、多会话持续输出的性能仍需独立验收；不声称 Neovim/tmux 完整兼容。

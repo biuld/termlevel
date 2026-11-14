@@ -5,7 +5,7 @@ use nsh_core::prelude::*;
 use objc2::{MainThreadMarker, rc::Retained};
 use objc2_app_kit::{
     NSAccessibility, NSEvent, NSEventMask, NSEventModifierFlags, NSEventType, NSTextField,
-    NSTextInputClient, NSTextView, NSView,
+    NSTextInputClient, NSTextView, NSView, NSWindow,
 };
 use std::{
     cell::RefCell,
@@ -22,7 +22,7 @@ use termlevel_ghostty_vt::{KeyEvent, raw::*};
 pub(super) fn synthetic_keys() -> bool {
     #[cfg(debug_assertions)]
     {
-        return synthetic_flag().load(Ordering::Acquire);
+        synthetic_flag().load(Ordering::Acquire)
     }
     #[cfg(not(debug_assertions))]
     {
@@ -43,7 +43,7 @@ pub(super) fn set_synthetic_keys(value: bool) {
 pub(super) fn physical_keys() -> bool {
     #[cfg(debug_assertions)]
     {
-        return physical_flag().load(Ordering::Acquire);
+        physical_flag().load(Ordering::Acquire)
     }
     #[cfg(not(debug_assertions))]
     {
@@ -70,13 +70,14 @@ thread_local! {static MONITORS:RefCell<Vec<(Arc<AtomicBool>,Monitor)>>=const{Ref
 pub(super) fn install(
     session: Arc<Session>,
     active: Prop<bool>,
-    focused: Signal<bool>,
     cw: Memo<Points>,
     lh: Prop<Points>,
 ) {
     let enabled = Arc::new(AtomicBool::new(false));
     let gate = enabled.clone();
-    effect(move || gate.store(active.get() && focused.get(), Ordering::Release));
+    // Stay armed while this pane is the active session. A layout pass can
+    // blur the field editor; requiring its focus signal dropped every key.
+    effect(move || gate.store(active.get(), Ordering::Release));
     let gate = enabled.clone();
     cleanup(move || {
         gate.store(false, Ordering::Release);
@@ -152,12 +153,20 @@ fn process_mouse(e: &NSEvent, weak: &Weak<Session>, id: &str, metrics: &Mutex<(f
     };
     let p = grid.convertPoint_fromView(e.locationInWindow(), None);
     let bounds = grid.bounds();
+    let visible = grid.visibleRect();
     let x = (p.x - bounds.origin.x) as f32;
     let mut y = (p.y - bounds.origin.y) as f32;
     if !grid.isFlipped() {
         y = bounds.size.height as f32 - y;
     }
     if x < 0.0 || y < 0.0 || x >= bounds.size.width as f32 || y >= bounds.size.height as f32 {
+        return false;
+    }
+    if p.x < visible.origin.x
+        || p.y < visible.origin.y
+        || p.x >= visible.origin.x + visible.size.width
+        || p.y >= visible.origin.y + visible.size.height
+    {
         return false;
     }
     let flags = e.modifierFlags();
@@ -231,6 +240,62 @@ fn editor_in(view: &NSView, editor: &NSTextView) -> bool {
     let children = view.subviews();
     (0..children.count()).any(|i| editor_in(&children.objectAtIndex(i), editor))
 }
+enum KeyOwner {
+    /// Our field editor. IME composition stays with it.
+    Ours,
+    /// Another text field (find, rename, settings). Do not take the key.
+    Foreign,
+    /// Click landed in this terminal, but the field editor is not focused.
+    Grid,
+    /// The window itself has no focused control.
+    Bare,
+    Other,
+}
+fn key_owner(window: &NSWindow, input_id: &str) -> KeyOwner {
+    let Some(root) = window.contentView() else {
+        return KeyOwner::Other;
+    };
+    let Some(responder) = window.firstResponder() else {
+        return KeyOwner::Bare;
+    };
+    if let Some(editor) = responder.downcast_ref::<NSTextView>() {
+        return if editor_matches(&root, input_id, editor) {
+            KeyOwner::Ours
+        } else {
+            KeyOwner::Foreign
+        };
+    }
+    let grid_id = input_id.replacen("terminal-input-", "terminal-grid-", 1);
+    if let Some(view) = responder.downcast_ref::<NSView>() {
+        let inside = find_view(&root, &grid_id).is_some_and(|grid| {
+            std::ptr::eq(view as *const NSView, &*grid as *const NSView)
+                || view.isDescendantOf(&grid)
+        });
+        return if inside {
+            KeyOwner::Grid
+        } else {
+            KeyOwner::Other
+        };
+    }
+    KeyOwner::Bare
+}
+fn claim_field(window: &NSWindow, input_id: &str) -> bool {
+    let Some(root) = window.contentView() else {
+        return false;
+    };
+    let Some(view) = find_view(&root, input_id) else {
+        return false;
+    };
+    let target = text_target(&view).unwrap_or(view);
+    window.makeFirstResponder(Some(&*target))
+}
+fn text_target(view: &NSView) -> Option<Retained<NSView>> {
+    if view.downcast_ref::<NSTextField>().is_some() || view.downcast_ref::<NSTextView>().is_some() {
+        return unsafe { Retained::retain(view as *const NSView as *mut NSView) };
+    }
+    let children = view.subviews();
+    (0..children.count()).find_map(|i| text_target(&children.objectAtIndex(i)))
+}
 fn process(
     e: &NSEvent,
     weak: &Weak<Session>,
@@ -246,18 +311,14 @@ fn process(
     let Some(window) = e.window(mtm) else {
         return false;
     };
-    let Some(responder) = window.firstResponder() else {
-        return false;
-    };
-    let Some(editor) = responder.downcast_ref::<NSTextView>() else {
-        return false;
-    };
-    let Some(root) = window.contentView() else {
-        return false;
-    };
-    if !editor_matches(&root, id, editor) {
+    let owner = key_owner(&window, id);
+    // Find, rename and settings keep their own text fields. Every other
+    // focus owner loses keys while this session is active: the root view
+    // sits outside the grid, so a failed input.focus() used to drop typing.
+    if matches!(owner, KeyOwner::Foreign) {
         return false;
     }
+    let ours = matches!(owner, KeyOwner::Ours);
     let Some(session) = weak.upgrade() else {
         return false;
     };
@@ -269,13 +330,24 @@ fn process(
     if !up && !changed && reserved(code, flags) {
         return false;
     }
-    if editor.hasMarkedText() {
+    if ours
+        && window
+            .firstResponder()
+            .and_then(|r| r.downcast::<NSTextView>().ok())
+            .is_some_and(|editor| editor.hasMarkedText())
+    {
         held.borrow_mut().clear();
         return false;
     }
-    // Character keys on a non-ASCII source belong to the IME until it commits.
-    // Enter, arrows and other non-character keys still encode while nothing is marked.
-    if !changed && !up && defer_character_to_ime(code, flags) {
+    // A focused field editor owns IME composition. Character keys on a
+    // non-ASCII source stay with it. If focus is elsewhere, give the field
+    // the key so the same insertion path runs; encode when it cannot focus.
+    if !changed
+        && !up
+        && character_key(code)
+        && defer_character_to_ime(code, flags)
+        && (ours || claim_field(&window, id))
+    {
         return false;
     }
     let action = if changed {

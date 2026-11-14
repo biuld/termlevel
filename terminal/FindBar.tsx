@@ -24,11 +24,12 @@ export function FindBar(props: {
   query: Signal<string>;
   count: Signal<number>;
   index: Signal<number>;
+  searching?: Signal<boolean>;
   onQuery: (value: string) => void;
   onMove: (delta: number) => void;
   onClose: () => void;
 }) {
-  const label = () => props.query() ? (props.count() ? `${props.index()} of ${props.count()}` : "No matches") : "";
+  const label = () => props.query() ? (props.searching?.() ? "Searching…" : props.count() ? `${props.index()} of ${props.count()}` : "No matches") : "";
   return <View testID="find-in-terminal" class="h-(--height-toolbar) shrink-0 flex-row items-center gap-1 border-b border-sidebar-border bg-chrome px-2">
     <DialogKeys dismiss={props.onClose} />
     <Input testID="find-query" accessibilityLabel="Find in terminal" value={props.query()} autoFocus placeholder="Find"

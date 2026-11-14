@@ -51,6 +51,105 @@ pub(crate) enum BackendEvent {
     Reply(Vec<u8>),
     Error(String),
 }
+/// A complete display window. All native data is owned before the lock is released.
+#[derive(Clone)]
+pub(crate) struct WindowSnap {
+    pub frame: Arc<Frame>,
+    pub origin: usize,
+    pub count: usize,
+    pub alternate: bool,
+    pub rows: Vec<Vec<GridRun>>,
+    pub images: Vec<termlevel_ghostty_vt::ImagePlacement>,
+    pub text: String,
+}
+impl PartialEq for WindowSnap {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.frame, &other.frame)
+            && self.origin == other.origin
+            && self.count == other.count
+            && self.alternate == other.alternate
+    }
+}
+
+/// Host-side second phase: only owned memory, no terminal or lock access.
+pub(crate) enum WindowCapture {
+    Cached(Arc<WindowSnap>),
+    Fresh(Box<WindowData>),
+}
+pub(crate) struct WindowData {
+    frame: Arc<Frame>,
+    origin: usize,
+    count: usize,
+    alternate: bool,
+    history: Vec<Vec<GridCell>>,
+    images: Vec<termlevel_ghostty_vt::ImagePlacement>,
+    colors: Colors,
+    foreground: Rgb,
+    background: Rgb,
+}
+impl WindowCapture {
+    pub(crate) fn finish(self) -> Arc<WindowSnap> {
+        let data = match self {
+            Self::Cached(previous) => return previous,
+            Self::Fresh(data) => data,
+        };
+        let WindowData {
+            frame,
+            origin,
+            count,
+            alternate,
+            history,
+            images,
+            colors,
+            foreground,
+            background,
+        } = *data;
+        let active = count.saturating_sub(frame.rows as usize);
+        let rows: Vec<_> = (origin..origin + frame.rows as usize)
+            .map(|row| {
+                let cells = if row >= active {
+                    frame
+                        .lines
+                        .get(row - active)
+                        .map(|line| line.cells.as_slice())
+                } else {
+                    history.get(row - origin).map(Vec::as_slice)
+                };
+                cells
+                    .map(|cells| grid_runs_from(cells, &colors, foreground, background))
+                    .unwrap_or_default()
+            })
+            .collect();
+        let text = rows
+            .iter()
+            .map(|runs| {
+                let mut text = String::new();
+                let mut col = 0;
+                for span in runs {
+                    text.extend(std::iter::repeat_n(' ', span.col.saturating_sub(col)));
+                    if span.run.style.hidden {
+                        text.extend(std::iter::repeat_n(' ', span.cells));
+                    } else {
+                        text.push_str(&span.run.text);
+                    }
+                    col = span.col + span.cells;
+                }
+                text.trim_end_matches(' ').to_owned()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        Arc::new(WindowSnap {
+            frame,
+            origin,
+            count,
+            alternate,
+            rows,
+            images,
+            text,
+        })
+    }
+}
+
 struct State {
     terminal: Terminal,
     renderer: RenderState,
@@ -61,6 +160,8 @@ struct State {
     size: TerminalSize,
     foreground: Rgb,
     background: Rgb,
+    /// When the playing Kitty animation next needs a frame. `None` if idle.
+    next_image_frame: Option<u64>,
     errors: Vec<String>,
 }
 impl State {
@@ -105,7 +206,8 @@ impl State {
         if native >= self.range.end {
             return Ok(Vec::new());
         }
-        let active = self.range.end.saturating_sub(self.size.rows as usize);
+        let drawn_rows = self.frame()?.rows as usize;
+        let active = self.range.end.saturating_sub(drawn_rows);
         if native >= active {
             let frame = self.frame()?;
             Ok(frame
@@ -190,6 +292,7 @@ impl GhosttyEmulator {
                     size,
                     foreground,
                     background,
+                    next_image_frame: None,
                     errors: Vec::new(),
                 }),
             })
@@ -272,9 +375,125 @@ impl GhosttyEmulator {
         }
         true
     }
+    pub(crate) fn render_held(&self) -> bool {
+        self.state.borrow().terminal.render_hold().is_some()
+    }
+
+    /// Preserve the published window throughout mode 2026, including its
+    /// history, screen identity and input anchor. Native live state may change.
+    pub(crate) fn begin_window(
+        &self,
+        window: &mut crate::session_view::window::Window,
+        user: bool,
+        previous: Option<&Arc<WindowSnap>>,
+    ) -> Result<WindowCapture, String> {
+        let mut state = self.state.borrow_mut();
+        let s = &mut *state;
+        if s.terminal.render_hold().is_some()
+            && let Some(previous) = previous
+        {
+            return Ok(WindowCapture::Cached(previous.clone()));
+        }
+        let frame = s.frame()?;
+        let alternate = if let Some(held) = s.terminal.render_hold() {
+            held.alternate_screen
+        } else {
+            s.terminal.alternate_screen().map_err(|e| e.to_string())?
+        };
+        let count = s.range.len();
+        let anchor = if user {
+            Some(window.origin)
+        } else {
+            s.terminal
+                .scroll_anchor_row()
+                .map_err(|e| e.to_string())?
+                .map(|row| row.saturating_sub(s.range.start))
+        };
+        window.follow(count, frame.rows as usize, frame.cols, alternate, anchor);
+        if !alternate && s.terminal.render_hold().is_none() && (user || window.pinned) {
+            s.terminal
+                .set_scroll_anchor(if window.pinned {
+                    None
+                } else {
+                    Some(s.range.start + window.origin)
+                })
+                .map_err(|e| e.to_string())?;
+        }
+        if let Some(previous) = previous
+            && Arc::ptr_eq(&frame, &previous.frame)
+            && previous.origin == window.origin
+            && previous.count == count
+            && previous.alternate == alternate
+        {
+            return Ok(WindowCapture::Cached(previous.clone()));
+        }
+        let active = count.saturating_sub(frame.rows as usize);
+        let mut history = Vec::new();
+        for row in window.origin..(window.origin + frame.rows as usize).min(active) {
+            history.push(
+                s.terminal
+                    .screen_row(s.range.start + row)
+                    .map_err(|e| e.to_string())?,
+            );
+        }
+        let mut images = if window.origin >= active {
+            let mut images = frame.images.clone();
+            for image in &mut images {
+                image.row += active as i32;
+            }
+            images
+        } else {
+            let mut images = s
+                .image_renderer
+                .images_at(&mut s.terminal, s.range.start + window.origin)
+                .map_err(|e| e.to_string())?;
+            for image in &mut images {
+                image.row += window.origin as i32;
+            }
+            images
+        };
+        images.sort_by_key(|image| image.z);
+        Ok(WindowCapture::Fresh(Box::new(WindowData {
+            frame,
+            origin: window.origin,
+            count,
+            alternate,
+            history,
+            images,
+            colors: s.colors.clone(),
+            foreground: s.foreground,
+            background: s.background,
+        })))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn capture_window(
+        &self,
+        window: &mut crate::session_view::window::Window,
+        user: bool,
+        previous: Option<&Arc<WindowSnap>>,
+    ) -> Result<Arc<WindowSnap>, String> {
+        self.begin_window(window, user, previous)
+            .map(WindowCapture::finish)
+    }
+
+    pub(crate) fn resize_cells(&mut self, size: TerminalSize, cw: u32, lh: u32) {
+        let s = self.state.get_mut();
+        s.size = size;
+        if let Err(error) = s
+            .terminal
+            .resize(size.cols.max(1), size.rows.max(1), cw, lh)
+            .map_err(|e| e.to_string())
+            .and_then(|_| s.update())
+        {
+            s.errors.push(error);
+        }
+    }
+
     pub(crate) fn columns(&self) -> u16 {
         self.state.borrow().size.cols
     }
+    #[cfg(test)]
     pub(crate) fn screen_rows(&self) -> usize {
         self.state.borrow().size.rows as usize
     }
@@ -291,38 +510,21 @@ impl GhosttyEmulator {
         cursor.row = row;
         cursor
     }
-    pub(crate) fn cursor_appearance(&self) -> Option<(termlevel_ghostty_vt::Cursor, Option<Rgb>)> {
-        self.state
-            .borrow_mut()
-            .frame()
-            .ok()
-            .map(|f| (f.cursor, f.cursor_color))
-    }
-    pub(crate) fn images_at(&self, first: usize) -> Vec<termlevel_ghostty_vt::ImagePlacement> {
-        let s = &mut *self.state.borrow_mut();
-        let _ = s.frame();
-        let first = first.min(s.range.len().saturating_sub(s.size.rows as usize));
-        let mut images = s
-            .image_renderer
-            .images_at(&mut s.terminal, first + s.range.start)
-            .unwrap_or_default();
-        for image in &mut images {
-            image.row += first as i32;
-        }
-        images
-    }
-    pub(crate) fn cell_size(&mut self, cw: u32, lh: u32) {
-        let s = self.state.get_mut();
-        let _ = s.terminal.resize(s.size.cols, s.size.rows, cw, lh);
-        s.frame = None;
-    }
     pub(crate) fn tick_images(&mut self, now: u64) -> bool {
         let s = self.state.get_mut();
-        if s.terminal.tick_images(now).unwrap_or(false) {
-            s.frame = None;
-            true
-        } else {
-            false
+        if s.next_image_frame.is_some_and(|due| now < due) {
+            return false;
+        }
+        match s.terminal.tick_images(now) {
+            Ok(Some(due)) => {
+                s.next_image_frame = Some(due);
+                s.frame = None;
+                true
+            }
+            _ => {
+                s.next_image_frame = None;
+                false
+            }
         }
     }
     pub(crate) fn mouse_enabled(&self) -> bool {
@@ -442,6 +644,45 @@ impl GhosttyEmulator {
             .encode_focus(focused)
             .map_err(|e| e.to_string())
     }
+    pub(crate) fn clear_search(&self) {
+        self.state.borrow_mut().terminal.clear_search();
+    }
+
+    pub(crate) fn search_ascii_step(&self, query: &str) -> Result<Option<Vec<SearchHit>>, String> {
+        let mut s = self.state.borrow_mut();
+        let Some(matches) = s.terminal.search_step(query).map_err(|e| e.to_string())? else {
+            return Ok(None);
+        };
+        let range = s.range.clone();
+        let cols = s.size.cols as usize;
+        let mut hits = Vec::new();
+        for hit in matches {
+            for row in hit.start_row..=hit.end_row {
+                if !range.contains(&row) {
+                    continue;
+                }
+                let col = if row == hit.start_row {
+                    hit.start_column as usize
+                } else {
+                    0
+                };
+                let end = if row == hit.end_row {
+                    hit.end_column as usize
+                } else {
+                    cols
+                };
+                hits.push(SearchHit {
+                    line: row - range.start,
+                    col,
+                    cols: end.saturating_sub(col),
+                });
+            }
+        }
+        hits.sort_by_key(|hit| (hit.line, hit.col));
+        Ok(Some(hits))
+    }
+
+    #[cfg(test)]
     pub(crate) fn search(&self, query: &str) -> Vec<SearchHit> {
         if query.is_empty() {
             return Vec::new();
@@ -522,6 +763,30 @@ impl GhosttyEmulator {
     }
     pub(crate) fn grid_runs(&self, index: usize) -> Vec<GridRun> {
         let mut state = self.state.borrow_mut();
+        let native = state.range.start + index;
+        if native >= state.range.end {
+            return Vec::new();
+        }
+        let drawn_rows = match state.frame() {
+            Ok(frame) => frame.rows as usize,
+            Err(_) => return Vec::new(),
+        };
+        let active = state.range.end.saturating_sub(drawn_rows);
+        if native >= active {
+            let frame = match state.frame() {
+                Ok(frame) => frame,
+                Err(error) => {
+                    state.errors.push(error);
+                    return Vec::new();
+                }
+            };
+            // The live screen is already in the frame. Cloning every cell
+            // before merging runs doubled the allocation on each redraw.
+            let Some(cells) = frame.lines.get(native - active).map(|row| &row.cells) else {
+                return Vec::new();
+            };
+            return state.grid_runs_from(cells);
+        }
         let cells = match state.cells(index) {
             Ok(cells) => cells,
             Err(error) => {
@@ -529,96 +794,101 @@ impl GhosttyEmulator {
                 return Vec::new();
             }
         };
-        let mut spans: Vec<GridRun> = Vec::new();
-        for cell in cells {
-            if matches!(
-                cell.wide,
-                raw::GHOSTTY_CELL_WIDE_SPACER_TAIL | raw::GHOSTTY_CELL_WIDE_SPACER_HEAD
-            ) {
-                continue;
-            }
-            let mut style = TerminalStyle::default();
-            let convert = |color, effective: Rgb, default: Rgb| match color {
-                StyleColor::Default => {
-                    if effective != default {
-                        Some(TerminalColor::Rgb(effective.r, effective.g, effective.b))
-                    } else {
-                        None
-                    }
-                }
-                StyleColor::Palette(n) => {
-                    let rgb = state.colors.palette[n as usize];
-                    if rgb == indexed_color(n) {
-                        Some(TerminalColor::Indexed(n))
-                    } else {
-                        Some(TerminalColor::Rgb(rgb.r, rgb.g, rgb.b))
-                    }
-                }
-                StyleColor::Rgb(rgb) => Some(TerminalColor::Rgb(rgb.r, rgb.g, rgb.b)),
-            };
-            style.fg = convert(
-                cell.style.foreground,
-                state.colors.foreground,
-                state.foreground,
-            );
-            style.bg = convert(
-                cell.style.background,
-                state.colors.background,
-                state.background,
-            );
-            let flags = cell.style.flags;
-            style.bold = flags & raw::GHOSTTY_STYLE_FLAG_BOLD != 0;
-            style.dim = flags & raw::GHOSTTY_STYLE_FLAG_FAINT != 0;
-            style.italic = flags & raw::GHOSTTY_STYLE_FLAG_ITALIC != 0;
-            style.underline = flags & raw::GHOSTTY_STYLE_UNDERLINE_MASK != 0;
-            style.strikethrough = flags & raw::GHOSTTY_STYLE_FLAG_STRIKETHROUGH != 0;
-            style.inverse = flags & raw::GHOSTTY_STYLE_FLAG_INVERSE != 0;
-            style.hidden = flags & raw::GHOSTTY_STYLE_FLAG_INVISIBLE != 0;
-            let col = cell.column as usize;
-            let width = if cell.wide == raw::GHOSTTY_CELL_WIDE_WIDE {
-                2
-            } else {
-                1
-            };
-            let text = if cell.text.is_empty() {
-                " ".to_owned()
-            } else {
-                cell.text
-            };
-            if text.is_ascii()
-                && let Some(last) = spans.last_mut()
-                && last.run.text.is_ascii()
-                && last.run.style == style
-                && last.selected == cell.selected
-                && last.hyperlink == cell.hyperlink
-                && last.col + last.cells == col
-            {
-                last.run.text.push_str(&text);
-                last.cells += width;
-            } else {
-                spans.push(GridRun {
-                    col,
-                    selected: cell.selected,
-                    hyperlink: cell.hyperlink,
-                    cells: width,
-                    run: TerminalRun::new(text, style),
-                });
-            }
-        }
-        if let Some(last) = spans.last_mut()
-            && last.run.style == TerminalStyle::default()
-            && !last.selected
-            && last.hyperlink.is_none()
-        {
-            let trimmed = last.run.text.trim_end_matches(' ').len();
-            last.cells -= last.run.text.len() - trimmed;
-            last.run.text.truncate(trimmed);
-            if trimmed == 0 {
-                spans.pop();
-            }
-        }
-        spans
+        state.grid_runs_from(&cells)
     }
+}
+impl State {
+    fn grid_runs_from(&self, cells: &[GridCell]) -> Vec<GridRun> {
+        grid_runs_from(cells, &self.colors, self.foreground, self.background)
+    }
+}
+fn grid_runs_from(
+    cells: &[GridCell],
+    colors: &Colors,
+    foreground: Rgb,
+    background: Rgb,
+) -> Vec<GridRun> {
+    let mut spans: Vec<GridRun> = Vec::new();
+    for cell in cells {
+        if matches!(
+            cell.wide,
+            raw::GHOSTTY_CELL_WIDE_SPACER_TAIL | raw::GHOSTTY_CELL_WIDE_SPACER_HEAD
+        ) {
+            continue;
+        }
+        let mut style = TerminalStyle::default();
+        let convert = |color, effective: Rgb, default: Rgb| match color {
+            StyleColor::Default => {
+                if effective != default {
+                    Some(TerminalColor::Rgb(effective.r, effective.g, effective.b))
+                } else {
+                    None
+                }
+            }
+            StyleColor::Palette(n) => {
+                let rgb = colors.palette[n as usize];
+                if rgb == indexed_color(n) {
+                    Some(TerminalColor::Indexed(n))
+                } else {
+                    Some(TerminalColor::Rgb(rgb.r, rgb.g, rgb.b))
+                }
+            }
+            StyleColor::Rgb(rgb) => Some(TerminalColor::Rgb(rgb.r, rgb.g, rgb.b)),
+        };
+        style.fg = convert(cell.style.foreground, colors.foreground, foreground);
+        style.bg = convert(cell.style.background, colors.background, background);
+        let flags = cell.style.flags;
+        style.bold = flags & raw::GHOSTTY_STYLE_FLAG_BOLD != 0;
+        style.dim = flags & raw::GHOSTTY_STYLE_FLAG_FAINT != 0;
+        style.italic = flags & raw::GHOSTTY_STYLE_FLAG_ITALIC != 0;
+        style.underline = flags & raw::GHOSTTY_STYLE_UNDERLINE_MASK != 0;
+        style.strikethrough = flags & raw::GHOSTTY_STYLE_FLAG_STRIKETHROUGH != 0;
+        style.inverse = flags & raw::GHOSTTY_STYLE_FLAG_INVERSE != 0;
+        style.hidden = flags & raw::GHOSTTY_STYLE_FLAG_INVISIBLE != 0;
+        let col = cell.column as usize;
+        let width = if cell.wide == raw::GHOSTTY_CELL_WIDE_WIDE {
+            2
+        } else {
+            1
+        };
+        let text = if cell.text.is_empty() {
+            " "
+        } else {
+            cell.text.as_str()
+        };
+        if text.is_ascii()
+            && let Some(last) = spans.last_mut()
+            && last.run.text.is_ascii()
+            && last.run.style == style
+            && last.selected == cell.selected
+            && last.hyperlink == cell.hyperlink
+            && last.col + last.cells == col
+        {
+            last.run.text.push_str(text);
+            last.cells += width;
+        } else {
+            spans.push(GridRun {
+                col,
+                selected: cell.selected,
+                hyperlink: cell.hyperlink.clone(),
+                cells: width,
+                run: TerminalRun::new(text.to_owned(), style),
+            });
+        }
+    }
+    if let Some(last) = spans.last_mut()
+        && last.run.style == TerminalStyle::default()
+        && !last.selected
+        && last.hyperlink.is_none()
+    {
+        let trimmed = last.run.text.trim_end_matches(' ').len();
+        last.cells -= last.run.text.len() - trimmed;
+        last.run.text.truncate(trimmed);
+        if trimmed == 0 {
+            spans.pop();
+        }
+    }
+    spans
 }
 impl TerminalEmulator for GhosttyEmulator {
     fn feed(&mut self, bytes: &[u8]) {
@@ -633,16 +903,7 @@ impl TerminalEmulator for GhosttyEmulator {
         }
     }
     fn resize(&mut self, size: TerminalSize) {
-        let state = self.state.get_mut();
-        state.size = size;
-        if let Err(error) = state
-            .terminal
-            .resize(size.cols.max(1), size.rows.max(1), 0, 0)
-            .map_err(|e| e.to_string())
-            .and_then(|_| state.update())
-        {
-            state.errors.push(error);
-        }
+        self.resize_cells(size, 0, 0);
     }
     fn line_count(&self) -> usize {
         self.state.borrow().range.len()

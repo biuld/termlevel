@@ -1,5 +1,10 @@
 import { expect, open, test } from "nsh/test";
 
+// A fixed canvas exposes the visible window as one semantic region.
+async function waitForOutput(app: Awaited<ReturnType<typeof open>>, text: string) {
+  await app.waitUntil(() => app.texts().some(value => value.includes(text)));
+}
+
 // Production entry, default user shell, real Ghostty session; no preview or
 // module replacement. Kept outside the default headless test discovery.
 for (const colorScheme of ["dark", "light"] as const) {
@@ -19,11 +24,18 @@ for (const colorScheme of ["dark", "light"] as const) {
     await app.keyboard.press("enter");
     await app.wait(200);
     await app.keyboard.press("shift+g");
-    await app.waitFor("text:(END)");
-    expect(app.texts()).toContain("200");
+    await waitForOutput(app, "(END)");
+    expect(app.texts().flatMap(text => text.split("\n"))).toContain("200");
     await app.screenshot(`artifacts/ghostty-production-${colorScheme}-less.png`);
     await app.keyboard.press("q");
     await app.waitUntil(() => app.texts().join("").includes("GHOSTTY_PROD_中文"));
     await app.screenshot(`artifacts/ghostty-production-${colorScheme}.png`);
+    // ED2 must retain history in the emulator while excluding it from the
+    // pinned visible grid, including this non-integral pane height.
+    await app.type("id:session-panel", "printf '\\033[H\\033[2JGRID_CLEAR_%s\\n' OK");
+    await app.keyboard.press("enter");
+    await waitForOutput(app, "GRID_CLEAR_OK");
+    expect(app.texts().join("\n").includes("GHOSTTY_PROD_")).toBe(false);
+    await app.screenshot(`artifacts/ghostty-production-${colorScheme}-clear.png`);
   });
 }

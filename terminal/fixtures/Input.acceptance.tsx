@@ -1,5 +1,10 @@
 import { open, test, expect } from "nsh/test";
 
+// A fixed canvas exposes the visible window as one semantic region.
+async function waitForOutput(app: Awaited<ReturnType<typeof open>>, text: string) {
+  await app.waitUntil(() => app.texts().some(value => value.includes(text)));
+}
+
 test("native AppKit composition commits once, cancels, and follows the grid cursor", async () => {
   const app = await open("./terminal/fixtures/InputFixture.tsx", { platform: "macos", width: 1000, height: 700 });
   const snapshot = () => JSON.parse(app.texts().find(text => text.startsWith('{"marked":')) ?? "null");
@@ -48,7 +53,7 @@ test("native AppKit composition commits once, cancels, and follows the grid curs
     await probe("commit");
     expect((await probe("read")).text).toBe("");
     await app.keyboard.press("enter");
-    await app.waitFor("text:IME_RESULT_");
+    await waitForOutput(app, "IME_RESULT_");
     expect((await readOutput()).includes("\nIME_RESULT_中文\n")).toBe(true);
     const afterLine = await probe("read");
     expect(Math.abs(Math.abs(afterLine.y - before.y) - 44) < 3).toBe(true);
@@ -58,7 +63,7 @@ test("native AppKit composition commits once, cancels, and follows the grid curs
     expect((await readOutput()).includes("zhongwen")).toBe(false);
     await app.type("id:ime-terminal", "printf 'AFTER_%s\\n' CANCEL");
     await app.keyboard.press("enter");
-    await app.waitFor("text:AFTER_CANCEL");
+    await waitForOutput(app, "AFTER_CANCEL");
     // Leaving an AppKit field editor commits its marked text to its own
     // session. It must never migrate to the newly focused session.
     await probe("mark");
@@ -70,7 +75,7 @@ test("native AppKit composition commits once, cancels, and follows the grid curs
     expect((output() as string).includes("中文")).toBe(false);
     await app.type("id:other-terminal", "printf 'OTHER_%s\\n' FOCUSED");
     await app.keyboard.press("enter");
-    await app.waitFor("text:OTHER_FOCUSED");
+    await waitForOutput(app, "OTHER_FOCUSED");
     await app.press("id:probe-switch");
     await app.wait(100);
     const original = await readOutput();
@@ -79,10 +84,10 @@ test("native AppKit composition commits once, cancels, and follows the grid curs
     await app.keyboard.press("ctrl+u");
     await app.type("id:ime-terminal", "printf 'RESTORED_%s\\n' FOCUS");
     await app.keyboard.press("enter");
-    await app.waitFor("text:RESTORED_FOCUS");
+    await waitForOutput(app, "RESTORED_FOCUS");
     await app.type("id:ime-terminal", "i=0; while [ $i -lt 65 ]; do printf 'SCROLL_%s\\n' $i; i=$((i+1)); done");
     await app.keyboard.press("enter");
-    await app.waitFor("text:SCROLL_64");
+    await waitForOutput(app, "SCROLL_64");
     const scrolled = await probe("read");
     await checkAlignment();
     await probe("mark");

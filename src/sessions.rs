@@ -336,8 +336,41 @@ impl Session {
         self.encoded_input(encoded);
     }
     pub(crate) fn mouse_input(&self, event: termlevel_ghostty_vt::MouseEvent, cw: u32, lh: u32) {
-        let encoded = self.emulator.lock().unwrap().encode_mouse(event, cw, lh);
-        self.encoded_input(encoded);
+        self.mouse_repeat(event, 1, cw, lh);
+    }
+
+    /// Encodes `count` copies of one mouse report under a single emulator lock.
+    /// A trackpad flick otherwise locks once per wheel row while the reader is parsing.
+    pub(crate) fn mouse_repeat(
+        &self,
+        event: termlevel_ghostty_vt::MouseEvent,
+        count: usize,
+        cw: u32,
+        lh: u32,
+    ) {
+        if count == 0 {
+            return;
+        }
+        let mut bytes = Vec::new();
+        {
+            let mut emulator = self.emulator.lock().unwrap();
+            for _ in 0..count {
+                match emulator.encode_mouse(event, cw, lh) {
+                    Ok(part) => bytes.extend(part),
+                    Err(error) => {
+                        drop(emulator);
+                        self.fail(format!("Encoding terminal input: {error}"));
+                        return;
+                    }
+                }
+            }
+        }
+        if !bytes.is_empty() {
+            // All mouse entrances, including AppKit middle/side buttons, ask
+            // the display to follow before publishing its next window.
+            self.input_epoch.fetch_add(1, Ordering::Release);
+            self.input(&bytes);
+        }
     }
     pub(crate) fn selection_changed(&self) {
         self.revision.fetch_add(1, Ordering::Release);
@@ -352,7 +385,12 @@ impl Session {
         self.encoded_input(encoded);
     }
 
+    #[cfg(test)]
     pub(crate) fn resize(&self, size: TerminalSize) {
+        self.resize_grid(size, 0, 0);
+    }
+
+    pub(crate) fn resize_grid(&self, size: TerminalSize, cw: u32, lh: u32) {
         if self.closed.load(Ordering::Acquire) {
             return;
         }
@@ -371,14 +409,14 @@ impl Session {
             self.fail(format!("Resizing terminal: {error}"));
             return;
         }
-        emulator.resize(size);
+        emulator.resize_cells(size, cw, lh);
         let events = emulator.backend_events();
         drop(emulator);
         self.handle_events(events);
         self.revision.fetch_add(1, Ordering::Release);
     }
 
-    fn fail(&self, error: String) {
+    pub(crate) fn fail(&self, error: String) {
         let mut info = self.info.lock().unwrap();
         if self.closed.load(Ordering::Acquire) {
             return;

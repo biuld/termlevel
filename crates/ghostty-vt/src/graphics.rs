@@ -276,9 +276,10 @@ pub(super) unsafe fn read_images(
 }
 
 impl super::Terminal {
-    /// Advance Kitty animations on a monotonic host clock. True asks the host
-    /// for another frame; the native generation selects reusable pixel copies.
-    pub fn tick_images(&mut self, now_ms: u64) -> Result<bool> {
+    /// Advance Kitty animations on a monotonic host clock.
+    /// `Some(next_ms)` means an animation is playing and `next_ms` is when
+    /// the next frame is due. The host should redraw, then wait until then.
+    pub fn tick_images(&mut self, now_ms: u64) -> Result<Option<u64>> {
         let mut graphics: sys::GhosttyKittyGraphics = ptr::null_mut();
         let code = unsafe {
             sys::ghostty_terminal_get(
@@ -288,17 +289,17 @@ impl super::Terminal {
             )
         };
         if code == sys::GHOSTTY_UNSUPPORTED || code == sys::GHOSTTY_NO_VALUE || graphics.is_null() {
-            return Ok(false);
+            return Ok(None);
         }
         check(code)?;
         let mut next = 0;
         let code =
             unsafe { sys::ghostty_kitty_graphics_animation_tick(graphics, now_ms, &mut next) };
         if code == sys::GHOSTTY_NO_VALUE || code == sys::GHOSTTY_UNSUPPORTED {
-            Ok(false)
+            Ok(None)
         } else {
             check(code)?;
-            Ok(true)
+            Ok(Some(next))
         }
     }
 }

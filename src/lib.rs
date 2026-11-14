@@ -23,3 +23,10 @@ fn native(registry: &mut Registry) {
         .register::<runtime::TerminalMetrics>()
         .register::<session_view::SessionTerminal>();
 }
+
+/// Register the app-owned AppKit renderer in development and packaged hosts.
+#[cfg(target_os = "macos")]
+#[native_components(macos)]
+fn native_components(components: &nsh_platform_macos::Components) {
+    session_view::native_surface::register(components);
+}

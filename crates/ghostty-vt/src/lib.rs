@@ -109,6 +109,7 @@ struct Events {
 pub struct RenderHold {
     pub frame: std::sync::Arc<Frame>,
     pub total_rows: usize,
+    pub alternate_screen: bool,
     pub since: std::time::Instant,
 }
 
@@ -444,9 +445,19 @@ unsafe extern "C" fn on_hold(terminal: sys::GhosttyTerminal, userdata: *mut c_vo
                     (&mut total_rows as *mut usize).cast(),
                 )
             })?;
+            let mut screen = sys::GHOSTTY_TERMINAL_SCREEN_PRIMARY;
+            // SAFETY: freeze screen identity at the same boundary as the frame.
+            check(unsafe {
+                sys::ghostty_terminal_get(
+                    terminal,
+                    sys::GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN,
+                    (&mut screen as *mut sys::GhosttyTerminalScreen).cast(),
+                )
+            })?;
             Some(RenderHold {
                 frame: std::sync::Arc::new(unsafe { render::capture_raw(terminal) }?),
                 total_rows,
+                alternate_screen: screen == sys::GHOSTTY_TERMINAL_SCREEN_ALTERNATE,
                 since: std::time::Instant::now(),
             })
         } else {

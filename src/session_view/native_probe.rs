@@ -1,8 +1,10 @@
 //! Debug-only native test driver. Exercises the actual AppKit field editor,
 //! without adding composition injection to the production terminal API.
 use nsh_core::prelude::*;
-use objc2::{rc::Retained, MainThreadMarker};
-use objc2_app_kit::{NSAccessibility, NSApplication, NSTextField, NSTextInputClient, NSTextView, NSView};
+use objc2::{MainThreadMarker, rc::Retained};
+use objc2_app_kit::{
+    NSAccessibility, NSApplication, NSTextField, NSTextInputClient, NSTextView, NSView,
+};
 use objc2_foundation::{NSNotFound, NSRange, NSString};
 
 use std::cell::RefCell;
@@ -60,6 +62,75 @@ pub struct NativeInputProbe;
 
 #[module]
 impl NativeInputProbe {
+    /// Native host identity for local CPU sampling of terminal fixtures.
+    pub fn process_id() -> u32 {
+        std::process::id()
+    }
+
+    /// Deliver a pixel wheel event to the actual non-scrolling grid. NSH's
+    /// test scroll primitive requires a ScrollView, which terminals do not use.
+    pub async fn wheel(session_id: String, dy: i32) -> Result<(), String> {
+        run_on_main_thread(move || {
+            use objc2_app_kit::{NSEvent, NSScreen};
+            use objc2_core_graphics::{CGEvent, CGEventField, CGScrollEventUnit};
+            let mtm = MainThreadMarker::new().ok_or("not AppKit")?;
+            let windows = NSApplication::sharedApplication(mtm).windows();
+            let id = format!("terminal-grid-{session_id}");
+            let grid = (0..windows.count())
+                .find_map(|i| {
+                    let root = windows.objectAtIndex(i).contentView()?;
+                    view_with_prefix(&root, &id)
+                })
+                .ok_or("no terminal grid")?;
+            let b = grid.bounds();
+            let point = grid.convertPoint_toView(
+                objc2_foundation::NSPoint::new(
+                    b.origin.x + b.size.width / 2.0,
+                    b.origin.y + b.size.height / 2.0,
+                ),
+                None,
+            );
+            let main_height = NSScreen::screens(mtm)
+                .firstObject()
+                .map_or(0.0, |s| s.frame().size.height);
+            let event =
+                CGEvent::new_scroll_wheel_event2(None, CGScrollEventUnit::Pixel, 1, -dy, 0, 0)
+                    .ok_or("creating wheel event")?;
+            CGEvent::set_location(
+                Some(&event),
+                objc2_foundation::NSPoint::new(point.x, main_height - point.y),
+            );
+            CGEvent::set_integer_value_field(
+                Some(&event),
+                CGEventField::ScrollWheelEventScrollPhase,
+                2,
+            );
+            let event = NSEvent::eventWithCGEvent(&event).ok_or("creating NSEvent")?;
+            grid.scrollWheel(&event);
+            Ok(())
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    /// Number of actual drawRect calls in the app-owned terminal NSView.
+    pub async fn surface_frames(session_id: String) -> Result<u32, String> {
+        run_on_main_thread(move || {
+            let mtm = MainThreadMarker::new().ok_or("not AppKit")?;
+            let windows = NSApplication::sharedApplication(mtm).windows();
+            let id = format!("terminal-grid-{session_id}");
+            (0..windows.count())
+                .find_map(|i| {
+                    let root = windows.objectAtIndex(i).contentView()?;
+                    let grid = view_with_prefix(&root, &id)?;
+                    super::native_surface::frames(&grid)
+                })
+                .ok_or_else(|| "no Termlevel native surface".to_owned())
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
     /// Chooses the scripted NSH fallback versus actual AppKit hardware events.
     pub fn synthetic_keys(enabled: bool) {
         super::keyboard::set_synthetic_keys(enabled);

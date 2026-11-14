@@ -1,22 +1,101 @@
-//! Native grid rendering and a stable AppKit-backed input at the grid cursor.
-use super::{SessionTerminalProps, input::InputState, keys};
-use crate::sessions::Session;
-use crate::terminal::SearchHit;
-use nsh_base::{TerminalColor, TerminalEmulator, TerminalSize, TerminalStyle, input, theme};
-use nsh_core::element::ImageSrc;
+//! A fixed terminal grid. Rust owns snapshots and native drawing; NSH owns layout.
+use super::{SessionTerminalProps, input::InputState, keys, paint, window::Window};
+use crate::{
+    sessions::Session,
+    terminal::{GridRun, SearchHit, WindowSnap},
+};
+use nsh_base::{TerminalColor, TerminalEmulator, TerminalSize, input, theme};
 use nsh_core::prelude::*;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
     sync::Arc,
+    time::{Duration, Instant},
 };
+
+#[derive(Clone)]
+struct Grid {
+    session: Arc<Session>,
+    window: Rc<RefCell<Window>>,
+    snap: Signal<Arc<WindowSnap>>,
+    epoch: Rc<Cell<u64>>,
+    pending_pin: Rc<Cell<bool>>,
+    last_error: Rc<RefCell<Option<String>>>,
+}
+impl Grid {
+    fn capture(&self, user: bool) {
+        use std::sync::atomic::Ordering;
+        let started = Instant::now();
+        let emulator = self.session.emulator.lock().unwrap();
+        // Freeze all published geometry and history during synchronized output.
+        if emulator.render_held() {
+            return;
+        }
+        let epoch = self.session.input_epoch.load(Ordering::Acquire);
+        if self.epoch.replace(epoch) != epoch {
+            self.pending_pin.set(true);
+        }
+        let mut window = self.window.borrow_mut();
+        if self.pending_pin.replace(false) {
+            window.pin();
+        }
+        let previous = self.snap.get_untracked();
+        let next = emulator.begin_window(&mut window, user, Some(&previous));
+        drop(window);
+        drop(emulator);
+        let captured = started.elapsed();
+        let next = next.map(crate::terminal::WindowCapture::finish);
+        match next {
+            Ok(next) => {
+                self.last_error.borrow_mut().take();
+                if *next != *previous {
+                    self.snap.set(next);
+                }
+            }
+            Err(error) => {
+                if self.last_error.borrow().as_ref() != Some(&error) {
+                    *self.last_error.borrow_mut() = Some(error.clone());
+                    self.session.fail(format!("Rendering terminal: {error}"));
+                }
+            }
+        }
+        #[cfg(debug_assertions)]
+        if started.elapsed().as_millis() >= 8 {
+            eprintln!(
+                "terminal snapshot+lock wait: {:?}, unlocked merge+publish: {:?} (excludes native replay)",
+                captured,
+                started.elapsed().saturating_sub(captured)
+            );
+        }
+        let _ = (started, captured);
+    }
+    fn pin(&self) {
+        self.pending_pin.set(true);
+        self.capture(false);
+    }
+    fn reveal(&self, origin: usize) {
+        if self.session.emulator.lock().unwrap().render_held() {
+            return;
+        }
+        self.window.borrow_mut().follow_user(origin);
+        self.capture(true);
+    }
+    fn wheel(&self, dy: f32) {
+        if self.session.emulator.lock().unwrap().render_held() {
+            return;
+        }
+        let changed = self.window.borrow_mut().wheel(dy);
+        if changed {
+            self.capture(true);
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct Display {
     session: Arc<Session>,
     props: SessionTerminalProps,
     pub input: ElementRef,
-    scroll: ElementRef,
     cursor_ref: ElementRef,
     pub revision: Signal<u64>,
     focused: Signal<bool>,
@@ -24,41 +103,78 @@ pub(super) struct Display {
     value: Signal<String>,
     state: Rc<RefCell<InputState>>,
     viewport: Signal<Size<Points>>,
-    offset: Signal<Points>,
     cell_width: Memo<Points>,
     drag: Rc<Cell<Option<(u16, usize)>>>,
     blink: Signal<bool>,
     synthetic_keys: Signal<bool>,
-    images: Signal<Vec<termlevel_ghostty_vt::ImagePlacement>>,
-    last_count: Rc<Cell<usize>>,
     wheel_delta: Rc<Cell<(f32, f32)>>,
+    hover: Signal<Option<String>>,
+    surface: Grid,
     pub search: Search,
 }
 
-/// The active find for one terminal view.
+struct Scan {
+    revision: u64,
+    next: usize,
+    count: usize,
+    hits: Vec<SearchHit>,
+}
 #[derive(Clone)]
 pub(super) struct Search {
     query: Rc<RefCell<String>>,
     hits: Rc<RefCell<Vec<SearchHit>>>,
     index: Rc<Cell<usize>>,
     rev: Signal<u64>,
-    scroll: ElementRef,
-    session: Arc<Session>,
+    surface: Grid,
+    deadline: Rc<Cell<Option<Instant>>>,
+    scan: Rc<RefCell<Option<Scan>>>,
+    reveal_pending: Rc<Cell<bool>>,
 }
-
 impl Search {
+    pub(super) fn watch(&self) {
+        self.rev.get();
+    }
     pub(super) fn apply(&self, query: &str) -> u32 {
+        if query.is_empty() || !query.is_ascii() {
+            self.surface.session.emulator.lock().unwrap().clear_search();
+        }
         *self.query.borrow_mut() = query.to_owned();
-        self.rescan();
+        self.deadline.set(if query.is_empty() {
+            None
+        } else {
+            Some(Instant::now())
+        });
+        self.scan.borrow_mut().take();
+        self.hits.borrow_mut().clear();
         self.index.set(0);
+        self.reveal_pending.set(!query.is_empty());
+        self.rev.update(|n| *n += 1);
+        self.step();
+        self.hits.borrow().len() as u32
+    }
+    pub(super) fn status(&self) -> super::SearchStatus {
         let count = self.hits.borrow().len() as u32;
-        if count > 0 {
-            self.reveal(0);
+        super::SearchStatus {
+            query: self.query.borrow().clone(),
+            count,
+            index: if count == 0 {
+                0
+            } else {
+                self.index.get() as u32 + 1
+            },
+            searching: self.deadline.get().is_some(),
+        }
+    }
+    fn publish(&self, hits: Vec<SearchHit>) {
+        self.index
+            .set(self.index.get().min(hits.len().saturating_sub(1)));
+        *self.hits.borrow_mut() = hits;
+        self.deadline.set(None);
+        if self.reveal_pending.replace(false) && !self.hits.borrow().is_empty() {
+            self.reveal(self.index.get());
         }
         self.rev.update(|n| *n += 1);
-        count
     }
-
     pub(super) fn move_by(&self, delta: i32) -> u32 {
         let len = self.hits.borrow().len();
         if len == 0 {
@@ -70,58 +186,167 @@ impl Search {
         self.rev.update(|n| *n += 1);
         next as u32 + 1
     }
-
     pub(super) fn clear(&self) {
-        self.query.borrow_mut().clear();
-        self.hits.borrow_mut().clear();
-        self.index.set(0);
-        self.rev.update(|n| *n += 1);
+        self.apply("");
     }
-
-    /// Keeps highlights current after new output without jumping the viewport.
-    pub(super) fn refresh(&self) {
+    fn invalidate(&self) {
         if self.query.borrow().is_empty() {
             return;
         }
-        self.rescan();
-        let len = self.hits.borrow().len();
-        if self.index.get() >= len {
-            self.index.set(0);
+        let was_searching = self.deadline.get().is_some();
+        self.deadline
+            .set(Some(Instant::now() + Duration::from_millis(150)));
+        self.scan.borrow_mut().take();
+        if !self.hits.borrow().is_empty() || !was_searching {
+            self.hits.borrow_mut().clear();
+            self.rev.update(|n| *n += 1);
         }
-        self.rev.update(|n| *n += 1);
     }
-
-    fn rescan(&self) {
-        let query = self.query.borrow().clone();
-        let hits = self.session.emulator.lock().unwrap().search(&query);
-        *self.hits.borrow_mut() = hits;
+    fn copy_rows(&self, first: usize, end: usize) -> Vec<Vec<GridRun>> {
+        let emulator = self.surface.session.emulator.lock().unwrap();
+        if emulator.render_held() {
+            let snap = self.surface.snap.get_untracked();
+            return (first..end)
+                .map(|row| {
+                    row.checked_sub(snap.origin)
+                        .and_then(|i| snap.rows.get(i))
+                        .cloned()
+                        .unwrap_or_default()
+                })
+                .collect();
+        }
+        (first..end).map(|row| emulator.grid_runs(row)).collect()
     }
-
-    fn reveal(&self, index: usize) {
-        let Some(hit) = self.hits.borrow().get(index).copied() else {
+    fn step(&self) {
+        use std::sync::atomic::Ordering;
+        let Some(due) = self.deadline.get() else {
             return;
         };
-        // Percentage is a 0..=1 fraction. 0.3 keeps the hit near the top of the viewport.
-        self.scroll
-            .scroll_to_index(hit.line as u32, Percentage(0.3), Points(0.0), false);
+        if Instant::now() < due || self.surface.session.emulator.lock().unwrap().render_held() {
+            return;
+        }
+        let revision = self.surface.session.revision.load(Ordering::Acquire);
+        let query = self.query.borrow().clone();
+        if query.is_ascii() {
+            let next = self
+                .surface
+                .session
+                .emulator
+                .lock()
+                .unwrap()
+                .search_ascii_step(&query);
+            match next {
+                Ok(Some(hits)) => self.publish(hits),
+                Ok(None) => {}
+                Err(error) => {
+                    self.publish(Vec::new());
+                    self.surface
+                        .session
+                        .fail(format!("Searching terminal: {error}"));
+                }
+            }
+            return;
+        }
+        let mut pending = self.scan.borrow_mut();
+        let scan = pending.get_or_insert_with(|| Scan {
+            revision,
+            next: 0,
+            count: self.surface.session.emulator.lock().unwrap().line_count(),
+            hits: Vec::new(),
+        });
+        if scan.revision != revision {
+            pending.take();
+            self.deadline
+                .set(Some(Instant::now() + Duration::from_millis(150)));
+            return;
+        }
+        let end = scan.count.min(scan.next + 64);
+        let rows = self.copy_rows(scan.next, end);
+        scan.hits
+            .extend(match_rows(&self.query.borrow(), scan.next, &rows));
+        scan.next = end;
+        if end == scan.count && self.surface.session.revision.load(Ordering::Acquire) == revision {
+            let hits = std::mem::take(&mut scan.hits);
+            pending.take();
+            drop(pending);
+            self.publish(hits);
+        }
     }
+    fn reveal(&self, index: usize) {
+        if let Some(hit) = self.hits.borrow().get(index).copied() {
+            let rows = self.surface.snap.get_untracked().frame.rows as usize;
+            self.surface
+                .reveal(hit.line.saturating_sub((rows as f32 * 0.3) as usize));
+        }
+    }
+}
+fn match_rows(query: &str, first: usize, rows: &[Vec<GridRun>]) -> Vec<SearchHit> {
+    let needle: Vec<_> = query.chars().flat_map(char::to_lowercase).collect();
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let mut hits = Vec::new();
+    for (row, runs) in rows.iter().enumerate() {
+        let mut chars = Vec::new();
+        let mut owners = Vec::new();
+        for run in runs {
+            for (offset, ch) in run.run.text.chars().enumerate() {
+                let ascii = run.run.text.is_ascii();
+                for lower in ch.to_lowercase() {
+                    chars.push(lower);
+                    owners.push((
+                        run.col + if ascii { offset } else { 0 },
+                        if ascii { 1 } else { run.cells },
+                    ));
+                }
+            }
+        }
+        let mut at = 0;
+        while at + needle.len() <= chars.len() {
+            if chars[at..at + needle.len()] == needle {
+                let (col, _) = owners[at];
+                let (last, width) = owners[at + needle.len() - 1];
+                hits.push(SearchHit {
+                    line: first + row,
+                    col,
+                    cols: last + width - col,
+                });
+                at += needle.len();
+            } else {
+                at += 1;
+            }
+        }
+    }
+    hits
 }
 
 impl Display {
-    pub fn new(session: Arc<Session>, props: SessionTerminalProps) -> Self {
+    pub fn new(session: Arc<Session>, props: SessionTerminalProps) -> Result<Self, String> {
         let cell_width = computed(move || {
-            let family = family(props);
             Points(crate::runtime::terminal_cell_width(
-                &family,
+                &family(props),
                 props.font_size.get().0,
             ))
         });
-        let scroll = element_ref();
+        let mut window = Window::default();
+        let capture = session
+            .emulator
+            .lock()
+            .unwrap()
+            .begin_window(&mut window, false, None)?;
+        let snap = capture.finish();
+        let surface = Grid {
+            session: session.clone(),
+            window: Rc::new(RefCell::new(window)),
+            snap: signal(snap),
+            epoch: Rc::new(Cell::new(0)),
+            pending_pin: Rc::new(Cell::new(false)),
+            last_error: Rc::default(),
+        };
         let display = Self {
             session: session.clone(),
             props,
             input: element_ref(),
-            scroll,
             cursor_ref: element_ref(),
             revision: signal(0),
             focused: signal(false),
@@ -129,45 +354,50 @@ impl Display {
             value: signal(String::new()),
             state: Rc::default(),
             viewport: signal(Size::default()),
-            offset: signal(Points(0.0)),
             cell_width,
             drag: Rc::default(),
             blink: signal(true),
             synthetic_keys: signal(synthetic_keys()),
-            images: signal(Vec::new()),
             wheel_delta: Rc::default(),
-            last_count: Rc::new(Cell::new(session.emulator.lock().unwrap().line_count())),
+            hover: signal(None),
+            surface: surface.clone(),
             search: Search {
                 query: Rc::default(),
                 hits: Rc::default(),
                 index: Rc::default(),
                 rev: signal(0),
-                scroll,
-                session: session.clone(),
+                surface,
+                deadline: Rc::default(),
+                scan: Rc::default(),
+                reveal_pending: Rc::default(),
             },
         };
         #[cfg(all(debug_assertions, target_os = "macos"))]
         super::native_probe::track(display.session.info().id, display.input, display.cursor_ref);
         let clock = display.clone();
         let epoch = Cell::new(0);
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         let reset = Cell::new(started);
         let rev = Cell::new(0);
-        set_interval(std::time::Duration::from_millis(16), move || {
+        set_interval(Duration::from_millis(16), move || {
             use std::sync::atomic::Ordering;
             clock.synthetic_keys.set(synthetic_keys());
+            if !clock.props.visible.get_untracked() {
+                return;
+            }
             let next = clock.session.input_epoch.load(Ordering::Acquire);
             if epoch.replace(next) != next {
-                clock.scroll.scroll_to_end(false);
-                reset.set(std::time::Instant::now());
+                clock.pin();
+                reset.set(Instant::now());
             }
             let next = clock.revision.get_untracked();
             if rev.replace(next) != next {
-                reset.set(std::time::Instant::now());
+                reset.set(Instant::now());
             }
-            clock
-                .blink
-                .set(reset.get().elapsed().as_millis() % 1000 < 500);
+            let phase = reset.get().elapsed().as_millis() % 1000 < 500;
+            if clock.blink.get_untracked() != phase {
+                clock.blink.set(phase);
+            }
             if clock
                 .session
                 .emulator
@@ -177,28 +407,42 @@ impl Display {
             {
                 clock.session.selection_changed();
             }
+            clock.search.step();
         });
-        display
+        Ok(display)
     }
-
     pub(super) fn output_changed(&self) {
-        let count = self.session.emulator.lock().unwrap().line_count();
-        let old = self.last_count.replace(count);
-        let lh = self.props.line_height.get_untracked().0;
-        if self.offset.get_untracked().0 + self.viewport.get_untracked().height.0
-            >= old as f32 * lh - 1.0
-        {
-            let scroll = self.scroll;
-            after_answer(move || scroll.scroll_to_end(false));
+        if !self.props.visible.get_untracked() {
+            return;
         }
+        let before = self.surface.snap.get_untracked();
+        self.surface.capture(false);
+        let after = self.surface.snap.get_untracked();
+        if !Arc::ptr_eq(&before.frame, &after.frame) || before.count != after.count {
+            self.search.invalidate();
+            self.hover.set(None);
+        }
+    }
+    fn at_end(&self) -> bool {
+        self.surface.window.borrow().pinned
+    }
+    fn pin(&self) {
+        self.surface.pin();
     }
     fn send(&self, text: &str) {
         if !text.is_empty() {
-            self.scroll.scroll_to_end(false);
+            self.pin();
             self.session.text_input(text);
         }
     }
-
+    fn grid_point(&self, p: Point<Points>) -> (u16, usize) {
+        self.surface.window.borrow().hit(
+            p.x.0,
+            p.y.0,
+            self.cell_width.get_untracked().0,
+            self.props.line_height.get_untracked().0,
+        )
+    }
     fn changed(&self, text: &str) {
         let committed = self.state.borrow_mut().changed(text);
         // Acknowledge the native value first. NSH diffs Rust host props;
@@ -221,7 +465,7 @@ impl Display {
 
     fn composition(&self, event: &Composition) {
         if event.composing && !self.composing.get_untracked() {
-            self.scroll.scroll_to_end(false);
+            self.pin();
         }
         let committed = self
             .state
@@ -236,21 +480,6 @@ impl Display {
         }
     }
 
-    fn grid_point(&self, p: Point<Points>) -> (u16, usize) {
-        let emu = self.session.emulator.lock().unwrap();
-        let lh = self.props.line_height.get_untracked().0.max(1.0);
-        let top = (self.viewport.get_untracked().height.0 - emu.line_count() as f32 * lh).max(0.0);
-        let row = ((p.y.0 + self.offset.get_untracked().0 - top) / lh)
-            .floor()
-            .max(0.0) as usize;
-        let col = (p.x.0 / self.cell_width.get_untracked().0.max(1.0))
-            .floor()
-            .max(0.0) as u16;
-        (
-            col.min(emu.columns() - 1),
-            row.min(emu.line_count().saturating_sub(1)),
-        )
-    }
     fn reporting(&self, mods: nsh_core::keymap::Modifiers) -> bool {
         !mods.shift && self.session.emulator.lock().unwrap().mouse_enabled()
     }
@@ -262,11 +491,24 @@ impl Display {
         button: Option<u32>,
         pressed: bool,
     ) {
+        self.report_n(p, mods, action, button, pressed, 1);
+    }
+    fn report_n(
+        &self,
+        p: Point<Points>,
+        mods: nsh_core::keymap::Modifiers,
+        action: u32,
+        button: Option<u32>,
+        pressed: bool,
+        count: usize,
+    ) {
         let cw = self.cell_width.get_untracked().0.max(1.0);
         let lh = self.props.line_height.get_untracked().0.max(1.0);
         // Protocol coordinates describe the active screen, independent of scrollback.
-        self.scroll.scroll_to_end(false);
-        self.session.mouse_input(
+        if !self.at_end() {
+            self.pin();
+        }
+        self.session.mouse_repeat(
             termlevel_ghostty_vt::MouseEvent {
                 action,
                 button,
@@ -275,12 +517,17 @@ impl Display {
                 y: p.y.0.max(0.0) / lh * lh.round(),
                 any_button_pressed: pressed,
             },
+            count,
             cw.round() as u32,
             lh.round() as u32,
         );
     }
     fn press(&self, e: &PressEvent) {
         use termlevel_ghostty_vt::raw::*;
+        let held = self.session.emulator.lock().unwrap().render_held();
+        if held && (e.modifiers.cmd || !self.reporting(e.modifiers)) {
+            return;
+        }
         let at = self.grid_point(e.position);
         if e.modifiers.cmd {
             if let Some(uri) = self.session.emulator.lock().unwrap().hyperlink(at.0, at.1)
@@ -305,6 +552,9 @@ impl Display {
             return;
         }
         let mut emu = self.session.emulator.lock().unwrap();
+        if emu.render_held() {
+            return;
+        }
         emu.clear_selection();
         if e.clicks >= 3 {
             let last = emu.columns() - 1;
@@ -332,8 +582,22 @@ impl Display {
             );
             return;
         }
+        let at = self.grid_point(e.position);
+        let mut emu = self.session.emulator.lock().unwrap();
+        let uri = if emu.render_held() {
+            None
+        } else {
+            emu.hyperlink(at.0, at.1)
+        };
+        drop(emu);
+        if self.hover.get_untracked() != uri {
+            self.hover.set(uri);
+        }
         if e.pressed_button != Some(MouseButton::Left) {
             self.drag.set(None);
+            return;
+        }
+        if self.session.emulator.lock().unwrap().render_held() {
             return;
         }
         if self.drag.get().is_some() {
@@ -357,6 +621,10 @@ impl Display {
                 false,
             )
         }
+        if self.session.emulator.lock().unwrap().render_held() {
+            self.drag.set(None);
+            return;
+        }
         if self
             .drag
             .get()
@@ -368,7 +636,11 @@ impl Display {
         self.drag.set(None);
     }
     fn copy(&self) {
-        if let Some(text) = self.session.emulator.lock().unwrap().selection_text() {
+        if self.session.emulator.lock().unwrap().render_held() {
+            return;
+        }
+        let text = self.session.emulator.lock().unwrap().selection_text();
+        if let Some(text) = text {
             set_clipboard(text);
         }
     }
@@ -395,7 +667,12 @@ impl Display {
                     ..Default::default()
                 },
                 move |_| {
-                    all.session.emulator.lock().unwrap().select_all();
+                    let mut emu = all.session.emulator.lock().unwrap();
+                    if emu.render_held() {
+                        return;
+                    }
+                    emu.select_all();
+                    drop(emu);
                     all.session.selection_changed();
                 },
             );
@@ -408,7 +685,6 @@ impl Display {
                         when: nsh_core::keymap::When::Always,
                         repeat: true,
                         pass_through: !synthetic,
-                        ..Default::default()
                     },
                     move |_| {
                         if !synthetic_keys() {
@@ -420,7 +696,7 @@ impl Display {
                         {
                             return;
                         }
-                        display.scroll.scroll_to_end(false);
+                        display.pin();
                         display.session.key_input(&spec.event());
                     },
                 );
@@ -434,52 +710,26 @@ impl Display {
         super::keyboard::install(
             self.session.clone(),
             self.props.active,
-            self.focused,
             self.cell_width,
             self.props.line_height,
         );
         let props = self.props;
         let input = self.input;
         effect(move || {
-            if props.active.get() {
+            if props.active.get() && props.visible.get() {
                 input.focus();
             } else {
                 input.blur();
             }
         });
-        let image_display = self.clone();
+        let resumed = self.clone();
         effect(move || {
-            image_display.revision.get();
-            let first = (image_display.offset.get().0
-                / image_display.props.line_height.get().0.max(1.0))
-            .floor()
-            .max(0.0) as usize;
-            image_display.images.set(
-                image_display
-                    .session
-                    .emulator
-                    .lock()
-                    .unwrap()
-                    .images_at(first),
-            );
+            if props.visible.get() {
+                resumed.output_changed();
+            }
         });
-        let scroll = self.scroll;
-        let offset = self.offset;
-        watch_scroll(move || scroll.node(), move |e| offset.set(e.offset.y));
-        let count_display = self.clone();
-        let row_display = self.clone();
-        let rows = virtual_list(
-            move || {
-                count_display.revision.get();
-                count_display.session.emulator.lock().unwrap().line_count()
-            },
-            move |at| row_display.row(at),
-        )
-        .element_ref(&self.scroll)
-        .alignment(ListAlignment::Bottom)
-        .estimated_item_size(props.line_height.get_untracked());
         let layout = self.clone();
-        let previous_size = Cell::new(None);
+        let previous = Cell::new(None);
         effect(move || {
             let viewport = layout.viewport.get();
             let (cw, lh) = (layout.cell_width.get().0, props.line_height.get().0);
@@ -490,404 +740,209 @@ impl Display {
                 (viewport.width.0 / cw).floor().clamp(1.0, u16::MAX as f32) as u16,
                 (viewport.height.0 / lh).floor().clamp(1.0, u16::MAX as f32) as u16,
             );
-            if previous_size.replace(Some(size)) != Some(size) {
-                layout.session.resize(size);
-                layout
-                    .session
-                    .emulator
-                    .lock()
-                    .unwrap()
-                    .cell_size(cw.round() as u32, lh.round() as u32);
-                layout.session.selection_changed();
+            let key = (size, cw.round().max(1.0) as u32, lh.round().max(1.0) as u32);
+            if previous.replace(Some(key)) != Some(key) {
+                layout.session.resize_grid(size, key.1, key.2);
             }
         });
-        let down = self.clone();
-        let movement = self.clone();
-        let up = self.clone();
-        let wheel = self.clone();
-        let right = self.clone();
-        let enabled = self.clone();
-        let mouse = computed(move || {
-            enabled.revision.get();
-            enabled.session.emulator.lock().unwrap().mouse_enabled()
-        });
+        let (down, movement, up, right, wheel) = (
+            self.clone(),
+            self.clone(),
+            self.clone(),
+            self.clone(),
+            self.clone(),
+        );
         let viewport = self.viewport;
+        let cw = self.cell_width;
+        let snap = self.surface.snap;
+        let cursor_display = self.clone();
+        let cursor = computed(move || {
+            if cursor_display.composing.get() {
+                return None;
+            }
+            let snap = cursor_display.surface.snap.get();
+            let c = snap.frame.cursor;
+            if !c.visible {
+                return None;
+            }
+            let (col, row) = c.position?;
+            let logical = snap.count.saturating_sub(snap.frame.rows as usize) + row as usize;
+            if logical < snap.origin || logical >= snap.origin + snap.frame.rows as usize {
+                return None;
+            }
+            Some((
+                col,
+                logical - snap.origin,
+                c.style,
+                c.blinking,
+                snap.frame.cursor_color,
+            ))
+        });
+        let cursor_ref = self.cursor_ref;
+        let focus = self.focused;
+        let blink = self.blink;
+        let hover = self.hover;
         let first_layout = Cell::new(true);
-        view()
-            .overflow_hidden()
+        view().overflow_hidden()
             .font_family(move || family(props))
             .text_size(move || Length::from(props.font_size.get()))
             .text_color(move || default_color(props.default_foreground, theme().foreground))
-            .on_press(move |_: &PressEvent| {
-                cx.emit(super::SessionTerminalEvent::FocusRequest);
-                input.focus();
-            })
-            // Host classes may add padding. Give the list and its input
-            // overlay the same unpadded content box and coordinate origin.
-            .child(
-                view()
-                    .test_id(&format!("terminal-grid-{}", self.session.info().id))
-                    .flex_1()
-                    .min_h(px(0.0))
-                    .overflow_hidden()
-                    .on_press_down(move |e: &PressEvent| down.press(e))
+            .on_press(move |_: &PressEvent| { cx.emit(super::SessionTerminalEvent::FocusRequest); input.focus(); })
+            .child(view().flex_1().min_h(px(0.0)).overflow_hidden()
+                .on_layout(move |b: &Bounds<Points>| {
+                    viewport.set(b.size);
+                    if first_layout.replace(false) && props.active.get_untracked() { input.focus(); }
+                })
+                .child(view().test_id(&format!("terminal-grid-{}", self.session.info().id))
+                    .absolute().top_0().left_0().overflow_hidden()
+                    .w(move || px(snap.get().frame.cols as f32 * cw.get().0))
+                    .h(move || px(snap.get().frame.rows as f32 * props.line_height.get().0))
+                    .on_press_down(move |e: &PressEvent| {
+                        cx.emit(super::SessionTerminalEvent::FocusRequest);
+                        input.focus();
+                        down.press(e);
+                    })
                     .on_mouse_move(move |e: &MouseEvent| movement.motion(e))
                     .on_mouse_up(move |e: &MouseEvent| up.release(e))
                     .on_context_menu(move |e: &ContextMenuEvent| {
                         if right.reporting(e.modifiers) {
-                            right.report(
-                                e.position,
-                                e.modifiers,
+                            right.report(e.position, e.modifiers,
                                 termlevel_ghostty_vt::raw::GHOSTTY_MOUSE_ACTION_PRESS,
-                                Some(termlevel_ghostty_vt::raw::GHOSTTY_MOUSE_BUTTON_RIGHT),
-                                true,
-                            )
+                                Some(termlevel_ghostty_vt::raw::GHOSTTY_MOUSE_BUTTON_RIGHT), true);
                         }
                     })
-                    .child(rows.selectable(false).flex_1().min_h(px(0.0)).on_layout(
-                        move |b: &Bounds<Points>| {
-                            viewport.set(b.size);
-                            if first_layout.replace(false) && props.active.get_untracked() {
-                                input.focus();
-                            }
-                        },
-                    ))
-                    .child(when(
-                        move || mouse.get(),
-                        move || {
-                            let wheel = wheel.clone();
-                            view().absolute().inset_0().on_wheel(move |e: &WheelEvent| {
-                                if e.modifiers.shift {
-                                    wheel.scroll.scroll_to_offset(
-                                        Points(
-                                            (wheel.offset.get_untracked().0
-                                                + e.delta
-                                                    .points(wheel.props.line_height.get_untracked())
-                                                    .y
-                                                    .0)
-                                                .max(0.0),
-                                        ),
-                                        false,
-                                    );
-                                    return;
-                                }
-                                let (dx, dy) = e.delta.xy();
-                                let (dx, dy) = if e.delta.precise() {
-                                    (
-                                        dx / wheel.cell_width.get_untracked().0.max(1.0),
-                                        dy / wheel.props.line_height.get_untracked().0.max(1.0),
-                                    )
-                                } else {
-                                    (dx, dy)
-                                };
-                                let (oldx, oldy) = wheel.wheel_delta.get();
-                                let x = oldx + dx;
-                                let y = oldy + dy;
-                                wheel.wheel_delta.set((x - x.trunc(), y - y.trunc()));
-                                use termlevel_ghostty_vt::raw::*;
-                                for (amount, positive, negative) in [
-                                    (y, GHOSTTY_MOUSE_BUTTON_FIVE, GHOSTTY_MOUSE_BUTTON_FOUR),
-                                    (x, GHOSTTY_MOUSE_BUTTON_SEVEN, GHOSTTY_MOUSE_BUTTON_SIX),
-                                ] {
-                                    for _ in 0..(amount.abs().floor().min(32.0) as usize) {
-                                        wheel.report(
-                                            e.position,
-                                            e.modifiers,
-                                            GHOSTTY_MOUSE_ACTION_PRESS,
-                                            Some(if amount > 0.0 { positive } else { negative }),
-                                            false,
-                                        )
-                                    }
-                                }
-                            })
-                        },
-                    ))
-                    .child(self.sink(cx)),
+                    .on_wheel(move |e: &WheelEvent| wheel.wheel(e))
+                    .child(self.native_paint())
+                    .child(canvas(move || paint::semantics(&snap.get(), cw.get().0, props.line_height.get().0))
+                        .absolute().inset_0().pointer_events(PointerEvents::None))
+                    .child(when(move || cursor.get().is_some(), move || {
+                        view().element_ref(&cursor_ref).absolute()
+                            .left(move || px(cursor.get().map_or(0.0, |c| c.0 as f32 * cw.get().0)))
+                            .top(move || px(cursor.get().map_or(0.0, |c| c.1 as f32 * props.line_height.get().0
+                                + if c.2 == termlevel_ghostty_vt::raw::GHOSTTY_CURSOR_STYLE_UNDERLINE {
+                                    (props.line_height.get().0 - 2.0).max(0.0) } else { 0.0 })))
+                            .w(move || px(if cursor.get().is_some_and(|c| c.2 == termlevel_ghostty_vt::raw::GHOSTTY_CURSOR_STYLE_BAR) { 2.0 } else { cw.get().0 }))
+                            .h(move || px(if cursor.get().is_some_and(|c| c.2 == termlevel_ghostty_vt::raw::GHOSTTY_CURSOR_STYLE_UNDERLINE) { 2.0 } else { props.line_height.get().0 }))
+                            .bg(move || cursor.get().and_then(|c| c.4)
+                                .map(|c| color(TerminalColor::Rgb(c.r,c.g,c.b)))
+                                .unwrap_or_else(|| default_color(props.default_foreground, theme().foreground)))
+                            .opacity(move || if cursor.get().is_some_and(|c| c.3) && focus.get() && !blink.get() { 0.0_f32 } else { 0.5_f32 })
+                            .pointer_events(PointerEvents::None).app_class(props.cursor_class)
+                    }))
+                    .child(dynamic(move || {
+                        hover.get().map(|uri| view().absolute().inset_0().tooltip(text(uri)).into_element())
+                    }))
+                    .child(self.sink(cx))))
+    }
+
+    fn paint_config(&self) -> paint::PaintConfig {
+        let t = theme();
+        paint::PaintConfig {
+            cw: self.cell_width.get().0,
+            lh: self.props.line_height.get().0,
+            family: family(self.props).to_string(),
+            size: self.props.font_size.get().0,
+            foreground: nsh_core::element::color(default_color(
+                self.props.default_foreground,
+                t.foreground,
+            )),
+            background: nsh_core::element::color(default_color(
+                self.props.default_background,
+                t.background,
+            )),
+            selection: nsh_core::element::color(t.primary),
+            search: nsh_core::element::color(t.foreground),
+        }
+    }
+
+    fn wheel(&self, e: &WheelEvent) {
+        let (dx, dy) = e.delta.xy();
+        let (dx, dy) = if e.delta.precise() {
+            (
+                dx / self.cell_width.get_untracked().0.max(1.0),
+                dy / self.props.line_height.get_untracked().0.max(1.0),
             )
-    }
-
-    fn row(&self, at: Position) -> impl IntoElement + use<> {
-        let display = self.clone();
-        let spans = computed(move || {
-            display.revision.get();
-            display
-                .session
-                .emulator
-                .lock()
-                .unwrap()
-                .grid_runs(at.index())
-        });
-        let display = self.clone();
-        let cursor = computed(move || {
-            display.revision.get();
-            if display.composing.get() {
-                return None;
-            }
-            let emu = display.session.emulator.lock().unwrap();
-            let c = emu.cursor()?;
-            (at.index() == emu.line_count() - emu.screen_rows() + c.row as usize).then(|| {
-                let (appearance, color) = emu.cursor_appearance().unwrap();
-                (c.col, appearance.style, appearance.blinking, color)
-            })
-        });
-        let blink = self.blink;
-        let focus = self.focused;
-        let props = self.props;
-        let cursor_ref = self.cursor_ref;
-        let marks = {
-            let display = self.clone();
-            computed(move || {
-                display.search.rev.get();
-                let hits = display.search.hits.borrow();
-                let current = display.search.index.get();
-                hits.iter()
-                    .enumerate()
-                    .filter(|(_, hit)| hit.line == at.index())
-                    .map(|(index, hit)| (hit.col, hit.cols, index == current))
-                    .collect::<Vec<_>>()
-            })
+        } else {
+            (dx, dy)
         };
-        let cw = self.cell_width;
-        view()
-            .h(move || Length::from(props.line_height.get()))
-            .child(dynamic(move || {
-                let width = cw.get();
-                view().absolute().inset_0().children(
-                    marks
-                        .get()
-                        .into_iter()
-                        .map(|(col, cols, current)| {
-                            view()
-                                .absolute()
-                                .top_0()
-                                .bottom_0()
-                                .left(Length::from(width * col as f32))
-                                .w(Length::from(width * cols.max(1) as f32))
-                                .bg(theme().foreground)
-                                .opacity(if current { 0.28 } else { 0.12 })
-                                .pointer_events(PointerEvents::None)
-                                .into_element()
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            }))
-            .child(self.image_strip(at.index(), 0))
-            .child(dynamic(move || {
-                view().absolute().inset_0().children(
-                    spans
-                        .get()
-                        .into_iter()
-                        .filter_map(move |span| {
-                            let (_, bg) = colors(span.run.style, props);
-                            let bg = if span.selected {
-                                Some(theme().primary)
-                            } else {
-                                bg
-                            };
-                            bg.map(|bg| {
-                                view()
-                                    .absolute()
-                                    .top_0()
-                                    .bottom_0()
-                                    .left(Length::from(cw.get() * span.col as f32))
-                                    .w(Length::from(cw.get() * span.cells as f32))
-                                    .bg(bg)
-                                    .pointer_events(PointerEvents::None)
-                                    .into_element()
-                            })
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            }))
-            .child(self.image_strip(at.index(), 1))
-            .child(dynamic(move || {
-                view().absolute().inset_0().children(
-                    spans
-                        .get()
-                        .into_iter()
-                        .enumerate()
-                        .map(move |(index, span)| {
-                            let s = span.run.style;
-                            let (fg, _) = colors(s, props);
-                            let mut glyph = text(span.run.text)
-                                .font_family(move || family(props))
-                                .text_size(move || Length::from(props.font_size.get()))
-                                .continues_text(index > 0)
-                                .number_of_lines(1u32)
-                                .text_overflow(nsh_core::EllipsizeMode::Clip);
-                            if let Some(fg) = fg {
-                                glyph = glyph.text_color(fg);
-                            }
-                            if s.bold {
-                                glyph = glyph.font_weight(FontWeight::BOLD);
-                            }
-                            if s.italic {
-                                glyph = glyph.italic();
-                            }
-                            if s.underline || span.hyperlink.is_some() {
-                                glyph = glyph.underline();
-                            }
-                            if s.strikethrough {
-                                glyph = glyph.line_through();
-                            }
-                            if s.hidden || s.dim {
-                                glyph = glyph.opacity(if s.hidden { 0.0 } else { 0.6 });
-                            }
-                            let cell = view()
-                                .absolute()
-                                .top_0()
-                                .bottom_0()
-                                .left(Length::from(cw.get() * span.col as f32))
-                                .w(Length::from(cw.get() * span.cells as f32))
-                                .justify_center();
-                            let cell = if let Some(uri) = span.hyperlink {
-                                cell.tooltip(text(uri))
-                            } else {
-                                cell
-                            };
-                            cell.child(glyph).into_element()
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            }))
-            .child(self.image_strip(at.index(), 2))
-            .child(when(
-                move || cursor.get().is_some(),
-                move || {
-                    view()
-                        .element_ref(&cursor_ref)
-                        .absolute()
-                        .top(move || {
-                            px(
-                                if cursor.get().is_some_and(|c| {
-                                    c.1 == termlevel_ghostty_vt::raw::GHOSTTY_CURSOR_STYLE_UNDERLINE
-                                }) {
-                                    (props.line_height.get().0 - 2.0).max(0.0)
-                                } else {
-                                    0.0
-                                },
-                            )
-                        })
-                        .bottom_0()
-                        .left(move || {
-                            Length::from(cw.get() * cursor.get().map_or(0, |c| c.0) as f32)
-                        })
-                        .w(move || {
-                            px(
-                                if cursor.get().is_some_and(|c| {
-                                    c.1 == termlevel_ghostty_vt::raw::GHOSTTY_CURSOR_STYLE_BAR
-                                }) {
-                                    2.0
-                                } else {
-                                    cw.get().0
-                                },
-                            )
-                        })
-                        .pointer_events(PointerEvents::None)
-                        .bg(move || {
-                            cursor
-                                .get()
-                                .and_then(|c| c.3)
-                                .map(|c| color(TerminalColor::Rgb(c.r, c.g, c.b)))
-                                .unwrap_or_else(|| {
-                                    default_color(props.default_foreground, theme().foreground)
-                                })
-                        })
-                        .opacity(move || {
-                            if cursor.get().is_some_and(|c| c.2) && focus.get() && !blink.get() {
-                                0.0_f32
-                            } else {
-                                0.5_f32
-                            }
-                        })
-                        .app_class(props.cursor_class)
-                },
-            ))
+        if !self.reporting(e.modifiers) {
+            self.wheel_delta.set((0.0, 0.0));
+            self.surface.wheel(dy);
+            return;
+        }
+        let (oldx, oldy) = self.wheel_delta.get();
+        let (x, y) = (oldx + dx, oldy + dy);
+        self.wheel_delta.set((x - x.trunc(), y - y.trunc()));
+        use termlevel_ghostty_vt::raw::*;
+        for (amount, positive, negative) in [
+            (y, GHOSTTY_MOUSE_BUTTON_FIVE, GHOSTTY_MOUSE_BUTTON_FOUR),
+            (x, GHOSTTY_MOUSE_BUTTON_SEVEN, GHOSTTY_MOUSE_BUTTON_SIX),
+        ] {
+            let count = amount.abs().floor().min(32.0) as usize;
+            if count > 0 {
+                self.report_n(
+                    e.position,
+                    e.modifiers,
+                    GHOSTTY_MOUSE_ACTION_PRESS,
+                    Some(if amount > 0.0 { positive } else { negative }),
+                    false,
+                    count,
+                );
+            }
+        }
     }
 
-    fn image_strip(&self, row: usize, layer: u32) -> impl IntoElement + use<> {
-        let images = self.images;
-        let cw = self.cell_width;
-        let lh = self.props.line_height;
-        dynamic(move || {
-            let height = lh.get().0;
-            let width = cw.get().0;
+    fn native_paint(&self) -> impl IntoElement + use<> {
+        let display = self.clone();
+        let snap = self.surface.snap;
+        #[cfg(target_os = "macos")]
+        {
+            let publisher = super::native_surface::Publisher::new();
+            super::native_surface::element()
+                .prop("frame", move || {
+                    display.search.rev.get();
+                    publisher.publish(paint::Scene {
+                        snap: display.surface.snap.get(),
+                        config: display.paint_config(),
+                        hits: display.search.hits.borrow().clone(),
+                        current: display.search.index.get(),
+                    })
+                })
+                .absolute()
+                .inset_0()
+                .role(AccessibilityRole::Text)
+                .label(move || SharedString::from(snap.get().text.clone()))
+                .pointer_events(PointerEvents::None)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = display;
             view()
                 .absolute()
                 .inset_0()
-                .overflow_hidden()
-                .pointer_events(PointerEvents::None)
-                .children(
-                    images
-                        .get()
-                        .iter()
-                        .filter(|p| p.layer == layer)
-                        .filter_map(|p| {
-                            let dx = width / width.round().max(1.0);
-                            let dy = height / height.round().max(1.0);
-                            let x = p.column as f32 * width + p.offset_x as f32 * dx;
-                            let y = (p.row as f32 - row as f32) * height + p.offset_y as f32 * dy;
-                            if y >= height
-                                || y + p.height as f32 * dy <= 0.0
-                                || p.source_width == 0
-                                || p.source_height == 0
-                            {
-                                return None;
-                            }
-                            let sx = p.width as f32 * dx / p.source_width as f32;
-                            let sy = p.height as f32 * dy / p.source_height as f32;
-                            Some(
-                                view()
-                                    .absolute()
-                                    .left(px(x))
-                                    .top(px(y))
-                                    .w(px(p.width as f32 * dx))
-                                    .h(px(p.height as f32 * dy))
-                                    .overflow_hidden()
-                                    .child(
-                                        image(ImageSrc::rgba(
-                                            p.pixels.width,
-                                            p.pixels.height,
-                                            p.pixels.rgba.clone(),
-                                        ))
-                                        .absolute()
-                                        .left(px(-(p.source_x as f32) * sx))
-                                        .top(px(-(p.source_y as f32) * sy))
-                                        .w(px(p.pixels.width as f32 * sx))
-                                        .h(px(p.pixels.height as f32 * sy))
-                                        .object_fit(ResizeMode::Stretch),
-                                    )
-                                    .into_element(),
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                )
-        })
+                .label(move || SharedString::from(snap.get().text.clone()))
+        }
     }
+
     fn sink(&self, cx: Scope<super::SessionTerminalEvent>) -> impl IntoElement + use<> {
         let display = self.clone();
         let anchor = computed(move || {
-            display.revision.get();
-            let emu = display.session.emulator.lock().unwrap();
-            let cursor = emu.input_cursor();
+            let snap = display.surface.snap.get();
+            let (col, row) = snap.frame.cursor.position.unwrap_or_default();
             let lh = display.props.line_height.get().0;
-            let viewport = display.viewport.get();
-            let x = cursor.col as f32 * display.cell_width.get().0;
-            let content_top = (viewport.height.0 - emu.line_count() as f32 * lh).max(0.0);
-            let y = content_top
-                + (emu.line_count() - emu.screen_rows() + cursor.row as usize) as f32 * lh
-                - display.offset.get().0;
-            // Stay in the viewport when history is being inspected. Typing
-            // follows the end before the next PTY output is rendered.
+            let x = col as f32 * display.cell_width.get().0;
+            let logical = snap.count.saturating_sub(snap.frame.rows as usize) + row as usize;
+            let y = (logical as f32 - snap.origin as f32) * lh;
             (
-                x.min(viewport.width.0),
-                y.clamp(0.0, (viewport.height.0 - lh).max(0.0)),
+                x,
+                y.clamp(0.0, (snap.frame.rows.saturating_sub(1)) as f32 * lh),
             )
         });
         let props = self.props;
         let composing = self.composing;
         let value = self.value;
-        let viewport = self.viewport;
+        let snap = self.surface.snap;
+        let cw = self.cell_width;
         let (change, composition, paste) = (self.clone(), self.clone(), self.clone());
         let focused = self.focused;
         let focus_session = self.session.clone();
@@ -900,7 +955,7 @@ impl Display {
             .absolute()
             .left(move || px(anchor.get().0))
             .top(move || px(anchor.get().1))
-            .w(move || px((viewport.get().width.0 - anchor.get().0).max(1.0)))
+            .w(move || px((snap.get().frame.cols as f32 * cw.get().0 - anchor.get().0).max(1.0)))
             .h(move || Length::from(props.line_height.get()))
             .p_0()
             .border(px(0.0))
@@ -928,7 +983,7 @@ impl Display {
             .on_change(move |text: &str| change.changed(text))
             .on_composition_change(move |event: &Composition| composition.composition(event))
             .on_paste(move |event: &PasteEvent| {
-                paste.scroll.scroll_to_end(false);
+                paste.pin();
                 paste.session.paste(&event.text);
             })
             .on_focus(move || {
@@ -955,20 +1010,6 @@ fn default_color(prop: Prop<Option<SharedString>>, fallback: AdaptiveColor) -> A
         .and_then(|c| c.parse::<Hsla>().ok())
         .map(AdaptiveColor::from)
         .unwrap_or(fallback)
-}
-fn colors(
-    s: TerminalStyle,
-    props: SessionTerminalProps,
-) -> (Option<AdaptiveColor>, Option<AdaptiveColor>) {
-    let (fg, bg) = (s.fg.map(color), s.bg.map(color));
-    if s.inverse {
-        (
-            Some(bg.unwrap_or_else(|| default_color(props.default_background, theme().background))),
-            Some(fg.unwrap_or_else(|| default_color(props.default_foreground, theme().foreground))),
-        )
-    } else {
-        (fg, bg)
-    }
 }
 fn color(c: TerminalColor) -> AdaptiveColor {
     let (r, g, b) = match c {

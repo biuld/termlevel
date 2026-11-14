@@ -110,6 +110,15 @@ fn history_is_bounded_and_ordered_oldest_first() {
 }
 
 #[test]
+fn clear_erases_the_screen_and_keeps_scrolled_history() {
+    let mut term = emulator(20, 3, 10);
+    term.feed(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\n");
+    term.feed(b"\x1b[H\x1b[2Jnew prompt");
+    assert_eq!(lines(&term), ["one", "two", "three", "new prompt", "", ""]);
+    assert_eq!(term.cursor().unwrap().row, 0);
+}
+
+#[test]
 fn alternate_screen_restores_primary_and_has_no_history() {
     let mut term = emulator(20, 2, 10);
     term.feed(b"history\r\nshell\r\nprompt");
@@ -263,4 +272,139 @@ fn native_spans_anchor_wide_and_combining_text_to_grid_columns() {
         8,
         "IME anchor remains valid with hidden TUI cursor"
     );
+}
+
+fn window_text(snap: &WindowSnap, row: usize) -> String {
+    snap.rows[row]
+        .iter()
+        .map(|run| run.run.text.as_str())
+        .collect()
+}
+
+#[test]
+fn grid_window_uses_frame_rows_and_clear_never_reveals_history() {
+    use crate::session_view::window::Window;
+    let mut term = emulator(20, 3, 10);
+    term.feed(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\n");
+    let mut w = Window::default();
+    let before = term.capture_window(&mut w, false, None).unwrap();
+    term.feed(b"\x1b[H\x1b[2Jnew prompt");
+    let snap = term.capture_window(&mut w, false, Some(&before)).unwrap();
+    assert_eq!(snap.origin, snap.count - 3);
+    assert_eq!(window_text(&snap, 0), "new prompt");
+    assert!(window_text(&snap, 1).is_empty());
+    let repeated = term.capture_window(&mut w, false, Some(&snap)).unwrap();
+    assert!(Arc::ptr_eq(&snap, &repeated));
+}
+
+#[test]
+fn grid_history_anchor_follows_reflow_and_survives_alternate_screen() {
+    use crate::session_view::window::Window;
+    let mut term = emulator(12, 3, 20);
+    term.feed(b"abcdefghijkl\r\nTARGET\r\nnext\r\nlast\r\nprompt");
+    let mut w = Window::default();
+    term.capture_window(&mut w, false, None).unwrap();
+    w.follow_user(1);
+    let snap = term.capture_window(&mut w, true, None).unwrap();
+    assert_eq!(window_text(&snap, 0), "TARGET");
+    term.resize(TerminalSize::new(6, 3));
+    let snap = term.capture_window(&mut w, false, Some(&snap)).unwrap();
+    assert_eq!(window_text(&snap, 0), "TARGET");
+    assert!(snap.origin > 1, "preceding soft line gained a physical row");
+    term.feed(b"\x1b[?1049hFULL SCREEN");
+    let alt = term.capture_window(&mut w, false, Some(&snap)).unwrap();
+    assert!(alt.alternate);
+    assert_eq!(alt.origin, 0);
+    term.feed(b"\x1b[2J\x1b[?1049l");
+    let restored = term.capture_window(&mut w, false, Some(&alt)).unwrap();
+    assert!(!restored.alternate);
+    assert_eq!(window_text(&restored, 0), "TARGET");
+    term.resize(TerminalSize::new(20, 3));
+    let wide = term.capture_window(&mut w, false, Some(&restored)).unwrap();
+    assert_eq!(window_text(&wide, 0), "TARGET");
+}
+
+#[test]
+fn held_window_freezes_screen_identity_until_native_resize_commits() {
+    use crate::session_view::window::Window;
+    let mut term = emulator(12, 3, 20);
+    term.feed(b"old0\r\nold1\r\nold2\r\nold3\r\nprompt");
+    let mut w = Window::default();
+    term.capture_window(&mut w, false, None).unwrap();
+    w.follow_user(0);
+    let before = term.capture_window(&mut w, true, None).unwrap();
+    term.feed(b"\x1b[?2026h\x1b[?1049hSECRET");
+    assert!(term.render_held(), "hold survived screen switch");
+    let held = term.capture_window(&mut w, false, Some(&before)).unwrap();
+    assert!(Arc::ptr_eq(&held, &before));
+    assert_eq!(
+        (held.frame.cols, held.frame.rows, held.alternate),
+        (12, 3, false)
+    );
+    assert_eq!(w.origin, before.origin);
+    let mut initial = Window::default();
+    let initial = term.capture_window(&mut initial, false, None).unwrap();
+    assert_eq!(
+        (initial.frame.cols, initial.frame.rows, initial.alternate),
+        (12, 3, false)
+    );
+    term.resize(TerminalSize::new(30, 8));
+    assert!(
+        !term.render_held(),
+        "libghostty-vt 1.0.1 resize commits the hold"
+    );
+    let released = term.capture_window(&mut w, false, Some(&held)).unwrap();
+    assert_eq!(
+        (released.frame.cols, released.frame.rows, released.alternate),
+        (30, 8, true)
+    );
+}
+
+#[test]
+fn grid_selection_changes_snapshot_even_when_text_does_not_change() {
+    use crate::session_view::window::Window;
+    let mut term = emulator(20, 3, 10);
+    term.feed(b"select me");
+    let mut w = Window::default();
+    let before = term.capture_window(&mut w, false, None).unwrap();
+    term.select((0, 0), (5, 0), false, false);
+    let selected = term.capture_window(&mut w, false, Some(&before)).unwrap();
+    assert!(!Arc::ptr_eq(&before.frame, &selected.frame));
+    assert!(selected.rows[0].iter().any(|run| run.selected));
+}
+
+#[test]
+fn grid_image_snapshot_uses_active_frame_and_animation_idle_keeps_identity() {
+    use crate::session_view::window::Window;
+    let mut term = emulator(10, 3, 10);
+    term.resize_cells(TerminalSize::new(10, 3), 8, 16);
+    term.feed(b"\x1b_Ga=T,f=32,s=1,v=1,c=1,r=1,i=42;/wAA/w==\x1b\\");
+    let mut w = Window::default();
+    let before = term.capture_window(&mut w, false, None).unwrap();
+    assert_eq!(before.images.len(), 1);
+    assert!(Arc::ptr_eq(
+        &before.images[0].pixels,
+        &before.frame.images[0].pixels
+    ));
+    assert!(!term.tick_images(1));
+    let after = term.capture_window(&mut w, false, Some(&before)).unwrap();
+    assert!(Arc::ptr_eq(&before, &after));
+}
+
+#[test]
+fn window_second_phase_uses_only_owned_data_after_terminal_mutation_and_drop() {
+    use crate::session_view::window::Window;
+    let mut term = emulator(20, 3, 10);
+    term.feed(b"old\x1b[31mRED");
+    let mut w = Window::default();
+    let capture = term.begin_window(&mut w, false, None).unwrap();
+    term.feed(b"\x1b[2J\x1b[HNEW\x1b]4;1;rgb:00/ff/00\x07");
+    drop(term);
+    let snap = capture.finish();
+    assert_eq!(window_text(&snap, 0), "oldRED");
+    assert_eq!(
+        snap.rows[0][1].run.style.fg,
+        Some(TerminalColor::Indexed(1))
+    );
+    assert!(snap.text.starts_with("oldRED\n"));
 }

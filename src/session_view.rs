@@ -6,7 +6,11 @@ mod keyboard;
 mod keys;
 #[cfg(all(debug_assertions, target_os = "macos"))]
 pub(crate) mod native_probe;
+#[cfg(target_os = "macos")]
+pub(crate) mod native_surface;
+mod paint;
 mod view;
+pub(crate) mod window;
 
 use crate::sessions::{SessionInfo, manager};
 use nsh_core::prelude::*;
@@ -24,6 +28,10 @@ pub struct SessionTerminalProps {
     /// Whether to focus this view, independently of its session's lifetime.
     #[prop(default = true)]
     pub active: Prop<bool>,
+    /// Whether a pane is actually displayed. Hidden sessions keep their PTY,
+    /// but do not sample frames or record drawings for new output.
+    #[prop(default = true)]
+    pub visible: Prop<bool>,
     /// Monospaced text family.
     pub font_family: Prop<Option<SharedString>>,
     /// Text size in points.
@@ -42,12 +50,24 @@ pub struct SessionTerminalProps {
     pub default_background: Prop<Option<SharedString>>,
 }
 
+/// Find-bar results arrive independently of frame updates.
+#[derive(Debug, Clone, PartialEq, JsObject)]
+pub struct SearchStatus {
+    pub query: String,
+    pub count: u32,
+    pub index: u32,
+    pub searching: bool,
+}
+
 /// Low-frequency updates only; PTY output and keystrokes stay in Rust.
 #[derive(Debug, Clone, PartialEq, Event)]
 pub enum SessionTerminalEvent {
     /// Initial status and changes to title, exit status or errors.
     #[args(info)]
     StatusChange(SessionInfo),
+    /// Bounded background search progressed or was invalidated.
+    #[args(result)]
+    SearchChange(SearchStatus),
     /// The program rang the terminal bell.
     Bell,
     /// A displayed terminal was clicked or its native input acquired focus.
@@ -67,8 +87,8 @@ impl SessionTerminalApi {
         self.input.focus();
     }
 
-    /// Finds `query` in scrollback and the screen, scrolls to the first hit,
-    /// and returns how many hits there are.
+    /// Starts a bounded search. Returns immediately available hits; SearchChange
+    /// supplies completed counts and the first match is revealed once ready.
     pub fn search(&self, query: String) -> u32 {
         self.search.apply(&query)
     }
@@ -95,10 +115,18 @@ pub fn SessionTerminal(
         Ok(session) => session,
         Err(error) => return view().child(text(error)).into_element(),
     };
-    let display = view::Display::new(session.clone(), props);
+    let display = match view::Display::new(session.clone(), props) {
+        Ok(display) => display,
+        Err(error) => return view().child(text(error)).into_element(),
+    };
     cx.methods(SessionTerminalApi {
         input: display.input,
         search: display.search.clone(),
+    });
+    let search = display.search.clone();
+    effect(move || {
+        search.watch();
+        cx.emit(SessionTerminalEvent::SearchChange(search.status()));
     });
     let colors_session = session.clone();
     effect(move || {
@@ -119,7 +147,6 @@ pub fn SessionTerminal(
         revision.set(next);
         refresh.output_changed();
         refresh.revision.set(next);
-        refresh.search.refresh();
         let next_bells = session.bells.load(Ordering::Acquire);
         if bells.replace(next_bells) != next_bells {
             cx.emit(SessionTerminalEvent::Bell);

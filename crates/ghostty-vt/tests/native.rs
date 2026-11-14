@@ -342,3 +342,61 @@ fn png_images_and_history_placements_survive_viewport_capture() -> Result<()> {
     assert!(r.capture(&mut t)?.images.is_empty());
     Ok(())
 }
+
+#[test]
+fn tracked_scroll_anchor_follows_content_and_is_clamped_after_eviction() -> Result<()> {
+    let mut t = Terminal::new(12, 3)?;
+    t.set_scrollback(4)?;
+    t.write(b"abcdefghijkl\r\nTARGET\r\nnext\r\nlast\r\nprompt")?;
+    t.set_scroll_anchor(Some(1))?;
+    t.resize(6, 3, 8, 16)?;
+    let row = t.scroll_anchor_row()?.unwrap();
+    assert_eq!(
+        t.screen_row(row)?
+            .iter()
+            .map(|c| c.text.as_str())
+            .collect::<String>()
+            .trim(),
+        "TARGET"
+    );
+    t.write(b"\x1b[?1049hother\x1b[?1049l")?;
+    assert_eq!(t.scroll_anchor_row()?, Some(row));
+    for n in 0..2000 {
+        t.write(format!("\r\n{n}").as_bytes())?;
+    }
+    let range = t.retained_range()?;
+    if let Some(row) = t.scroll_anchor_row()? {
+        // Native page recycling may clamp to the oldest retained physical row.
+        assert!(row < range.start);
+    }
+    t.set_scroll_anchor(None)?;
+    assert_eq!(t.scroll_anchor_row()?, None);
+    Ok(())
+}
+
+#[test]
+fn incremental_search_preserves_native_wrapped_matches_and_screen_results() -> Result<()> {
+    let mut t = Terminal::new(6, 3)?;
+    t.set_scrollback(2000)?;
+    for _ in 0..1000 {
+        t.write(b"abcdefghi\r\n")?;
+    }
+    let expected = t.find_all("defghi")?;
+    let mut found = None;
+    for _ in 0..10000 {
+        if let Some(matches) = t.search_step("defghi")? {
+            found = Some(matches);
+            break;
+        }
+    }
+    assert_eq!(found.unwrap(), expected);
+    t.write(b"\x1b[?1049hXYZ")?;
+    assert!(t.alternate_screen()?);
+    for _ in 0..1000 {
+        if let Some(matches) = t.search_step("defghi")? {
+            assert!(matches.is_empty());
+            return Ok(());
+        }
+    }
+    panic!("incremental search did not complete");
+}

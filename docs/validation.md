@@ -337,3 +337,73 @@ Terminal 设置可以按 1,000 行调整滚动历史，范围 1,000 到 100,000�
 ### 尚未验证与未接通
 
 以上证明 macOS arm64 的内核迁移、真实输入与指定原生流程，不代表完整日用兼容性。鼠标编码器尚未接到 UI，图片 / 超链接 / 终端选区手势和系统剪贴板协议尚未接入；精细下划线仍退化为普通下划线。NSH 绑定没有完整 key release / repeat action / 物理布局信息，不能声称完整 Kitty 键盘协议。真实系统输入法候选列表、复杂 emoji、跨行选择复制和持续输出 / 大量会话性能仍需独立验收。当前 PATH 未找到 Neovim / tmux，未做这些 TUI 的实际兼容性测试；less 的上述限定流程已通过。x86_64 和其他平台尚未验收。
+
+## 2026-11-14 · 固定终端格网替换
+
+工作目录 `/Users/biu/Projects/termlevel`，`main` 基于 `4e8c7ff` 的未提交工作树。保留交接时已有改动，没有提交或推送。NSH 仍固定 0.5.0，libghostty-vt 为 1.0.1；使用本机 `/tmp/termlevel-ghostty-vt-1.0.1.xcframework.zip` 与 `CARGO_NET_OFFLINE=true`。
+
+生产 surface 已删除 virtual_list、逐行 canvas、PaintedScreen、image_strip、滚轮遮罩和列表滚动 API，改为两张画布、三层图片、独立光标和原 field editor。测量盒与整格绘制矩形分开，历史以整数窗口和 Ghostty tracked anchor 定位。锁内只取拥有内存的 Frame/历史 cells/图片与颜色上下文，锁外合并 run、整理语义文本和录制 Painter。查找改为原生 ASCII 分步 feed/tick、Unicode 64 行批次，SearchChange 提供异步计数；隐藏 pane 不随新输出抓帧。设计和限制见 [terminal-grid.md](terminal-grid.md)。
+
+### 自动化
+
+- `./scripts/nsh check`、`./scripts/nsh build` 通过。
+- `./scripts/nsh test --junit artifacts/terminal-grid-tests.xml`：**102 / 102** 通过。包含真实 PTY、工作区重绑、多 pane 输入隔离、Unicode 异步查找和旧查询替换，以及独立 C ABI / safe crate 测试。
+- 新增真实库证据：历史锚点跟随缩窄/放宽的 reflow、备用屏幕和淘汰；held 窗口冻结屏幕身份与历史；选区使快照失效；活动图片共享 Frame 像素；纯窗口跟随与亚行触控板累加；每个 run 的独立 begin_path/clip；锁外第二阶段在 terminal 被修改并销毁后仍输出旧快照。
+- 本机固定 1.0.1 **resize 会结束 hold**。新增测试先证明切换备用屏幕本身仍保留 hold，再证明 resize 后提交新屏幕和尺寸；修正了旧 handoff 中「resize 后还保持 hold」的假设。
+- `cargo clippy --workspace --all-targets --offline -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check` 通过。
+
+### macOS AppKit 分项验收
+
+- `./scripts/test-native-input`：1 / 1 通过，实际 field editor 的 marked text、确认/取消、会话切换、滚动/resize/字号变化后的输入与光标坐标。报告 `artifacts/native-ime-tests.xml`。这不是用户实际系统输入法候选窗验收。
+- `./scripts/test-native-protocols`：最终完整复验 **3 / 3** 通过。实际 Kitty press/repeat/release、PNG、OSC8 文本、拖选复制、Select All、OSC52 和 SGR 鼠标报告/读取设置。报告 `artifacts/protocols-native.xml`。已查看 `native-terminal-graphics.png` 和 `native-terminal-selection.png`；三层重叠图片与动画压力仍待单独验收。
+- `./scripts/test-native-ghostty`：2 / 2 通过。默认生产 App、默认用户 shell、1200×780、Dark/Light，覆盖分步查找、less 到末尾与退出、ED2 clear。断言 clear 后可见区域包含 GRID_CLEAR_OK 且不含旧 GHOSTTY_PROD_ 行。报告 `artifacts/ghostty-production-native.xml`。已查看 `ghostty-production-dark-clear.png` 与 `ghostty-production-light-less.png`，前者没有顶部历史细条，后者显示到 200 / (END)。
+
+首次原生脚本因沙箱不能监听本地开发服务器而未进入交互；获准启动本地 NSH 服务器与 AppKit 窗口后完成验收。早期文本断言依赖逐行 Text 视图，现改为读取画布语义内容；CanvasNode 提供可见行命中元数据，但不挂载 NSH 行视图。自定义未标记 NSEvent 会被 NSH 测试宿主过滤，该临时调试方法已删除；最终拖选验收使用 NSH 自身驱动，并实际读取复制结果。测试失败没有通过直接设置模拟器选区来绕过。
+
+### 尚未证明
+
+没有测量 Codex 连续滚动的 FPS、输入延迟或原生 CoreText replay；不能从 102 项测试或 Painter 录制耗时推导性能达标。调试采样曾记录个别展示更新超过 8 ms，后来将宿主 run 合并移到锁外；没有据此声称整体帧预算已经满足。原生 capture 仍会复制 viewport。
+
+实际系统 IME 候选列表、复杂 emoji/fallback 基线/连字、三层图片重叠与动画、多 pane 长时间持续输出、真实触控板手感和辅助功能日用仍需人工验证。用户可运行 `./scripts/nsh run --window-size 1200x780` 做日用验收。Kitty file/temp/shared-memory 继续关闭，pane 工具栏仍是启动路径，不做 OSC7。截图和报告均在被忽略的 artifacts 下。
+
+## 2026-11-14 · 应用自有 AppKit renderer 嵌入 NSH
+
+在同一 `main` / `4e8c7ff` 未提交工作树上继续；保留已有 dirty changes，不提交、不推送。NSH 的源码没有修改，CLI 和所有 `nsh-*` 仍固定 **0.5.0**，libghostty-vt 仍为 **1.0.1**。
+
+### 实现边界
+
+使用 NSH 的公开 `#[native_components(macos)]` + `NativeComponent` 注册 `TermlevelTerminalSurface`，由 Termlevel Rust 自己用 CoreText / Core Graphics 绘制网格和三层图片。NSH 保留工作区布局、容器、独立光标和原有唯一 Input / field editor；不使用 Ghostty 应用的内部嵌入 ABI，不是整帧转 RGBA 后交给 NSH。两张绘图 canvas 与 NSH 图片子树已经删除；剩下的 canvas **只有 CanvasNode 语义 metadata，没有任何绘图操作**，供 NSH 测试驱动按可见行定位。
+
+引擎发布最新 `Arc<Scene>`，原生视图仅在复制该 Arc 时短暂取得场景槽锁；绘制不持有 emulator 锁。跨 NSH 的 frame 属性仅包含 Rust 场景槽 ID / revision。原生组件不成为第一响应者，hitTest 返回 nil，格子事件和原有 Ghostty 输入编码保持同一条路径。字体 / CTLine 有界缓存，图片按 owned 像素身份缓存，挂载生命周期不拥有 PTY。
+
+### 已执行的验证
+
+相同的 archive / offline 环境：
+
+```sh
+GHOSTTY_VT_ARCHIVE=/tmp/termlevel-ghostty-vt-1.0.1.xcframework.zip
+CARGO_NET_OFFLINE=true
+```
+
+- `./scripts/nsh check`、`./scripts/nsh build` 通过，日志 `artifacts/native-surface-{check,build}.log`。
+- `./scripts/nsh test --junit artifacts/native-surface-tests.xml`：最终 **106 / 106** 通过。新增缓存达到 2048 项后的淘汰与最近使用保留测试；原生位图测试覆盖图片三层顺序、源区域裁剪、显式背景；字体与 CTLine 缓存跨重绘/主题复用、字体改变失效；最新帧覆盖与槽释放；语义 adapter 不录制绘图操作。
+- `cargo clippy --workspace --all-targets -- -D warnings` 通过，日志 `artifacts/native-surface-clippy.log`。
+- `./scripts/test-native-input -v`：**1 / 1** 通过，日志 `artifacts/native-surface-ime.log`。实际 marked text 确认/取消、会话切换和输入锚点；记录 input/grid 坐标均为 `(319.5, 234)`。不是实际系统输入法候选列表的人工验收。
+- `./scripts/test-native-protocols -v`：**3 / 3** 通过，日志 `artifacts/native-surface-protocols.log`。实际 Kitty 按键、PNG、OSC8 文本、拖选 / Select All 复制、OSC52、SGR 鼠标报告。已查看新视图绘制的 `artifacts/native-terminal-graphics.png`。
+- `./scripts/test-native-ghostty -v`：**2 / 2** 通过，日志 `artifacts/native-surface-ghostty.log`。生产工作区默认 shell、Dark / Light、查找、less、ED2 clear；已查看新 renderer 的 `artifacts/ghostty-production-dark-clear.png`，未见历史细条。
+
+### 原生滚动性能对照
+
+`scripts/test-native-scroll` 使用真实 PTY 中的 `terminal/fixtures/scroll_probe.py`：1200×780，Menlo 13 pt、21 pt 行高，备用屏幕、1000/1006 鼠标报告、2026 同步输出、中英文和彩色 run。滚轮经 debug AppKit 驱动进入实际 grid 的 NSH wheel handler，再由原 Ghostty encoder 编成鼠标字节；没有用后台直接 feed 绕过滚轮和 PTY。fixture 的 JS interval 只是自动化输入发生器，生产数据与绘制不走 JS。
+
+- 旧 Canvas 路径：`artifacts/scroll-before.log` 和 `artifacts/scroll-before.sample.txt`。NSH 帧率计约 **38–44 / 60 FPS**，Canvas 原生回放均值约 **24–26 ms**、p95 约 **44 ms**；CPU 采样热点包括 `Replay::text -> make_font` 与 CoreText 字体匹配。
+- 自有 NSView 第一轮：`artifacts/scroll-native-surface.log`，原生测试 **1 / 1** 通过。稳态绘制均值约 **2.6–2.9 ms**，NSH 帧率计多数 **54–59 / 60 FPS**，也出现约 50 FPS 区间。原生组件记录从 8 次到 496 次实际 drawRect；不是仅更新测试文本而未绘制。已查看 `artifacts/native-scroll-end.png`，中英文、颜色和整行位置正常。
+- 25 秒滚动完整复验：`artifacts/scroll-native-surface-sustained-final.log`，**1 / 1** 通过。缓存达到 **2048 项** 后绘制均值约 **2.7–3.1 ms**，后段 NSH 帧率计约 **54–60 / 60 FPS**，原生组件累计 **905** 次实际绘制。fixture 明确断言实际原生视图绘制计数大于 10，不能以空组件通过。
+- 首次 25 秒压力轮次已达到 2048 项缓存上限，原生绘制仍约 2.7–2.8 ms，但测试连同启动超过默认 30 秒而被测试器终止；随后给该长负载明确设置 60 秒测试预算，保留失败日志 `artifacts/scroll-native-surface-sustained.log`。
+- 两组都是本机 macOS arm64 debug build。NSH 的 `canvas=0` 仅说明不再走 Canvas 回放；新绘制耗时使用原生 renderer 自己的统计，不能据此宣称绘制零成本。NSH FPS 与终端快照发布次数不是同一指标。第一轮性能值为受控 fixture 的观测，不是严格隔离的机器基准，也不是实际 Codex 的录制。
+
+### 尚未证明
+
+真实 Codex 的连续触控板滚动、输入延迟、实际系统 IME 候选窗、复杂 emoji / fallback / 粗斜体、动画图片压力、多 pane 持续输出及细粒度 AX 日用仍需人工验收。当前原生 renderer 只实现 macOS；其他平台需要自己的后端。没有把 CoreText 路线称作 Ghostty 应用的 Metal / atlas renderer。
+
+运行 `./scripts/nsh run --window-size 1200x780` 验证日用。Kitty file/temp/shared-memory 继续关闭；pane 标题仍为启动路径，未做 OSC7；没有 footer、wheel cancel 或框架补丁。

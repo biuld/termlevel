@@ -1,5 +1,10 @@
 import { expect, open, test } from "nsh/test";
 
+// A fixed canvas exposes the visible window as one semantic region.
+async function waitForOutput(app: Awaited<ReturnType<typeof open>>, text: string) {
+  await app.waitUntil(() => app.texts().some(value => value.includes(text)));
+}
+
 test("native tiled terminals keep geometry, IME ownership and state across pane operations", async () => {
   const app = await open("./terminal/fixtures/TilingFixture.tsx", { platform: "macos", width: 1400, height: 900, colorScheme: "dark" });
   async function sessions(): Promise<Array<{ id: string; pid: number }>> {
@@ -24,11 +29,11 @@ test("native tiled terminals keep geometry, IME ownership and state across pane 
   try {
     const left = (await sessions())[0];
     await app.type(`id:terminal-${left.id}`, "printf 'LEFT_%s\\n' ACTIVE"); await app.keyboard.press("enter");
-    await app.waitFor("text:LEFT_ACTIVE");
+    await waitForOutput(app, "LEFT_ACTIVE");
     await app.press("id:split-right");
     const right = (await sessions()).find(s => s.id !== left.id)!;
     await app.type(`id:terminal-${right.id}`, "printf 'RIGHT_%s\\n' ACTIVE"); await app.keyboard.press("enter");
-    await app.waitFor("text:RIGHT_ACTIVE");
+    await waitForOutput(app, "RIGHT_ACTIVE");
     await geometry();
     await app.screenshot("artifacts/tiling-native-two-panes.png");
     await app.keyboard.press("mod+alt+left");
@@ -46,7 +51,7 @@ test("native tiled terminals keep geometry, IME ownership and state across pane 
     await probe("convert");
     await app.screenshot("artifacts/tiling-native-ime-swap.png");
     await probe("commit"); await app.keyboard.press("enter");
-    await app.waitFor("text:IME_LEFT_");
+    await waitForOutput(app, "IME_LEFT_");
     expect(app.texts().join("")).toContain("IME_LEFT_中文");
     await app.press("id:tile-probe-output");
     const outputs: Array<{ id: string; output: string }> = JSON.parse(app.texts().find(t => t.startsWith('[{"id":') && t.includes('"output"')) ?? "[]");

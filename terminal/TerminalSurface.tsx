@@ -19,6 +19,7 @@ export function TerminalSurface(props: {
   let session: SessionTerminalRef | undefined;
   const matchCount = signal(0);
   const matchIndex = signal(0);
+  const searching = signal(false);
   const showingFind = () => props.finding() && store.activeId() === id;
   effect(() => {
     const query = props.findQuery();
@@ -28,13 +29,14 @@ export function TerminalSurface(props: {
       current?.clearSearch();
       matchCount.set(0);
       matchIndex.set(0);
+      searching.set(false);
       return;
     }
     void (async () => {
       const found = await current?.search(query) ?? 0;
       if (props.findQuery() !== query || !(props.finding() && store.activeId() === id)) return;
-      matchCount.set(found);
-      matchIndex.set(found ? 1 : 0);
+      // SearchChange also reports completion after this initial bounded step.
+      if (found) { matchCount.set(found); matchIndex.set(1); }
     })();
   });
   const moveMatch = (delta: number) => {
@@ -52,10 +54,11 @@ export function TerminalSurface(props: {
       pointerEvents: store.frameForSession(id) ? "auto" : "none",
     }}>
     <If when={showingFind()}>
-      <FindBar query={props.findQuery} count={matchCount} index={matchIndex}
+      <FindBar query={props.findQuery} count={matchCount} index={matchIndex} searching={searching}
         onQuery={props.findQuery.set} onMove={moveMatch} onClose={() => props.finding.set(false)} />
     </If>
     <SessionTerminal ref={(ref) => { session = ref; }} testID={`terminal-${id}`} sessionId={id} active={store.activeId() === id && !store.inputBlocked() && !props.finding()}
+      visible={!!store.frameForSession(id)}
       onFocusRequest={() => { if (!store.inputBlocked() && store.frameForSession(id)) store.select(id); }}
       accessibilityLabel={`Terminal ${tab()?.title ?? id}`}
       fontFamily={monoFont()} fontSize={store.fontSize()}
@@ -63,6 +66,12 @@ export function TerminalSurface(props: {
       cursorClass="bg-terminal-cursor/55"
       defaultForeground={token("terminal-foreground")} defaultBackground={token("terminal-background")}
       class="min-h-0 flex-1 bg-terminal-background text-terminal-foreground px-(--padding-terminal) pb-(--padding-terminal)"
+      onSearchChange={({ result }) => {
+        if (!showingFind() || result.query !== props.findQuery()) return;
+        matchCount.set(result.count);
+        matchIndex.set(result.index);
+        searching.set(result.searching);
+      }}
       onBell={() => { if (store.activeId() !== id) store.patchTab(id, { bell: true }); }}
       onStatusChange={({ info }) => {
         if (info.state === "exited" && info.exitCode === 0 && !info.error) {

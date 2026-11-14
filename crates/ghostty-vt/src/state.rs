@@ -9,15 +9,29 @@ impl Drop for Tracked {
         unsafe { sys::ghostty_tracked_grid_ref_free(self.0) }
     }
 }
+struct LiveSearch {
+    handle: sys::GhosttySearch,
+    needle: String,
+}
+impl Drop for LiveSearch {
+    fn drop(&mut self) {
+        // SAFETY: owned search, freed with its exclusively accessed terminal.
+        unsafe { sys::ghostty_search_free(self.handle) }
+    }
+}
 pub(super) struct Retention {
     limit: usize,
     floor: [Option<Tracked>; 2],
+    scroll_anchor: Option<Tracked>,
+    search: Option<LiveSearch>,
 }
 impl Default for Retention {
     fn default() -> Self {
         Self {
             limit: usize::MAX,
             floor: [None, None],
+            scroll_anchor: None,
+            search: None,
         }
     }
 }
@@ -60,6 +74,65 @@ impl TryFrom<sys::GhosttyStyle> for Style {
 }
 
 impl Terminal {
+    /// Whether the current parser screen is the alternate screen.
+    pub fn alternate_screen(&self) -> Result<bool> {
+        let mut screen = sys::GHOSTTY_TERMINAL_SCREEN_PRIMARY;
+        // SAFETY: ACTIVE_SCREEN writes its documented enum.
+        check(unsafe {
+            sys::ghostty_terminal_get(
+                self.handle.0,
+                sys::GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN,
+                (&mut screen as *mut sys::GhosttyTerminalScreen).cast(),
+            )
+        })?;
+        Ok(screen == sys::GHOSTTY_TERMINAL_SCREEN_ALTERNATE)
+    }
+
+    /// One host viewport anchor, owned and accessed with the terminal. Set only
+    /// on the primary screen; it survives alternate-screen use and reflow.
+    pub fn set_scroll_anchor(&mut self, row: Option<usize>) -> Result<()> {
+        let Some(row) = row else {
+            self.retention.scroll_anchor = None;
+            return Ok(());
+        };
+        if self.alternate_screen()? {
+            return Err(Error(sys::GHOSTTY_INVALID_VALUE));
+        }
+        let point = sys::GhosttyPoint {
+            tag: sys::GHOSTTY_POINT_TAG_SCREEN,
+            value: sys::GhosttyPointValue {
+                coordinate: sys::GhosttyPointCoordinate {
+                    x: 0,
+                    y: u32::try_from(row).map_err(|_| Error(sys::GHOSTTY_INVALID_VALUE))?,
+                },
+            },
+        };
+        let mut reference = ptr::null_mut();
+        // SAFETY: the new owned reference never escapes this terminal.
+        check(unsafe {
+            sys::ghostty_terminal_grid_ref_track(self.handle.0, point, &mut reference)
+        })?;
+        self.retention.scroll_anchor = Some(Tracked(reference));
+        Ok(())
+    }
+
+    /// Current full-screen row of the anchor, or None after its content was lost.
+    pub fn scroll_anchor_row(&self) -> Result<Option<usize>> {
+        let Some(anchor) = &self.retention.scroll_anchor else {
+            return Ok(None);
+        };
+        let mut point = sys::GhosttyPointCoordinate::default();
+        // SAFETY: owned reference; all access is serialized with the terminal.
+        let code = unsafe {
+            sys::ghostty_tracked_grid_ref_point(anchor.0, sys::GHOSTTY_POINT_TAG_SCREEN, &mut point)
+        };
+        if code == sys::GHOSTTY_NO_VALUE {
+            return Ok(None);
+        }
+        check(code)?;
+        Ok(Some(point.y as usize))
+    }
+
     /// Native one-shot search, ASCII case-insensitive and otherwise byte-exact.
     /// Does not change the viewport or retain references in the returned values.
     pub fn find_all(&mut self, query: &str) -> Result<Vec<Match>> {
@@ -80,8 +153,7 @@ impl Terminal {
             ptr: query.as_ptr(),
             len: query.len(),
         };
-        let mut matches = sys::GhosttySelectionBuffer::default();
-        // SAFETY: needle is copied; every key receives its documented struct.
+        // SAFETY: the needle is copied; run is the one-shot convenience.
         unsafe {
             check(sys::ghostty_search_set(
                 search.0,
@@ -89,14 +161,72 @@ impl Terminal {
                 (&needle as *const sys::GhosttyString).cast(),
             ))?;
             check(sys::ghostty_search_run(search.0))?;
-            let code = sys::ghostty_search_get(
-                search.0,
+        }
+        self.search_matches(search.0)
+    }
+
+    /// Release the incremental search and its tracked native results.
+    pub fn clear_search(&mut self) {
+        self.retention.search = None;
+    }
+
+    /// Make one bounded feed and at most 32 ticks. None means more calls are
+    /// needed. Handles and tracked results stay owned by this terminal.
+    pub fn search_step(&mut self, query: &str) -> Result<Option<Vec<Match>>> {
+        if self.retention.search.is_none() {
+            let mut handle = ptr::null_mut();
+            // SAFETY: search is owned and serialized with this terminal.
+            check(unsafe { sys::ghostty_search_new(ptr::null(), &mut handle, self.handle.0) })?;
+            self.retention.search = Some(LiveSearch {
+                handle,
+                needle: String::new(),
+            });
+        }
+        let search = self.retention.search.as_mut().unwrap();
+        if search.needle != query {
+            let needle = sys::GhosttyString {
+                ptr: query.as_ptr(),
+                len: query.len(),
+            };
+            // SAFETY: native code copies needle during the call.
+            check(unsafe {
+                sys::ghostty_search_set(
+                    search.handle,
+                    sys::GHOSTTY_SEARCH_OPT_NEEDLE,
+                    (&needle as *const sys::GhosttyString).cast(),
+                )
+            })?;
+            search.needle = query.to_owned();
+        }
+        let handle = search.handle;
+        // SAFETY: each feed copies a bounded native chunk under exclusive access.
+        check(unsafe { sys::ghostty_search_feed(handle) })?;
+        let mut status = sys::GHOSTTY_SEARCH_STATUS_RUNNING;
+        for _ in 0..32 {
+            check(unsafe { sys::ghostty_search_tick(handle, &mut status) })?;
+            if status != sys::GHOSTTY_SEARCH_STATUS_RUNNING {
+                break;
+            }
+        }
+        if status == sys::GHOSTTY_SEARCH_STATUS_COMPLETE {
+            self.search_matches(handle).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn search_matches(&self, handle: sys::GhosttySearch) -> Result<Vec<Match>> {
+        let mut matches = sys::GhosttySelectionBuffer::default();
+        // SAFETY: exact output struct; first query obtains required capacity.
+        let code = unsafe {
+            sys::ghostty_search_get(
+                handle,
                 sys::GHOSTTY_SEARCH_DATA_MATCHES,
                 (&mut matches as *mut sys::GhosttySelectionBuffer).cast(),
-            );
-            if code != sys::GHOSTTY_OUT_OF_SPACE {
-                check(code)?;
-            }
+            )
+        };
+        if code != sys::GHOSTTY_OUT_OF_SPACE {
+            check(code)?;
         }
         let mut selections = vec![sys::GhosttySelection::default(); matches.len];
         matches.ptr = selections.as_mut_ptr();
@@ -104,7 +234,7 @@ impl Terminal {
         // SAFETY: allocated exact capacity and terminal hasn't changed.
         check(unsafe {
             sys::ghostty_search_get(
-                search.0,
+                handle,
                 sys::GHOSTTY_SEARCH_DATA_MATCHES,
                 (&mut matches as *mut sys::GhosttySelectionBuffer).cast(),
             )

@@ -47,7 +47,7 @@ validated locally.
   copies the full viewport and exposes dirty state, rather than offering a
   zero-copy renderer. Use one render state per terminal; switching terminal
   identity automatically creates a fresh native snapshot. Mode 2026 holds return
-  the frame captured at the exact hold boundary. Captures invalidate other
+  the frame and screen identity captured at the exact hold boundary. The pinned 1.0.1 native resize commits a hold; callers must recheck hold state after resize. Captures invalidate other
   renderer caches because native updates consume dirty state. History image
   snapshots restore both viewport position and its bottom-follow semantics.
 - Key encoding uses the current legacy/Kitty modes; the caller supplies layout
@@ -62,7 +62,7 @@ history, owned reply/bell/title/cwd/reset events, viewport snapshots with full
 graphemes, wide spacers, palette/truecolor and style flags, key/mouse/focus
 encoding and sanitized plain-text bracketed paste, native one-shot search,
 fixed-key colors/cursor/history access and tracked logical history windows,
-tracked selection and text export, OSC8 targets, owned Kitty image placements
+tracked selection and text export, a terminal-owned scroll anchor that follows reflow/eviction, incremental search feed/tick, OSC8 targets, owned Kitty image placements
 and pixels (including bounded PNG decode), animation ticking, and synchronous
 text clipboard callbacks.
 `set_scrollback()` sets the native page-granular storage bound; `retained_range()`
