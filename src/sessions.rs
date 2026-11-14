@@ -48,6 +48,7 @@ pub(crate) struct Session {
     pub(crate) emulator: Mutex<GhosttyEmulator>,
     pub(crate) revision: AtomicU64,
     pub(crate) bells: AtomicU64,
+    pub(crate) input_epoch: AtomicU64,
     info: Mutex<SessionInfo>,
     control: Mutex<Control>,
     closed: AtomicBool,
@@ -87,6 +88,7 @@ impl Session {
             emulator: Mutex::new(emulator),
             revision: AtomicU64::new(1),
             bells: AtomicU64::new(0),
+            input_epoch: AtomicU64::new(0),
             info: Mutex::new(SessionInfo {
                 id,
                 cwd,
@@ -322,14 +324,26 @@ impl Session {
         }
     }
     pub(crate) fn text_input(&self, text: &str) {
+        self.input_epoch.fetch_add(1, Ordering::Release);
         let encoded = self.emulator.lock().unwrap().encode_text(text);
         self.encoded_input(encoded);
     }
     pub(crate) fn key_input(&self, event: &termlevel_ghostty_vt::KeyEvent<'_>) {
+        if event.action != termlevel_ghostty_vt::raw::GHOSTTY_KEY_ACTION_RELEASE {
+            self.input_epoch.fetch_add(1, Ordering::Release);
+        }
         let encoded = self.emulator.lock().unwrap().encode_key(event);
         self.encoded_input(encoded);
     }
+    pub(crate) fn mouse_input(&self, event: termlevel_ghostty_vt::MouseEvent, cw: u32, lh: u32) {
+        let encoded = self.emulator.lock().unwrap().encode_mouse(event, cw, lh);
+        self.encoded_input(encoded);
+    }
+    pub(crate) fn selection_changed(&self) {
+        self.revision.fetch_add(1, Ordering::Release);
+    }
     pub(crate) fn paste(&self, text: &str) {
+        self.input_epoch.fetch_add(1, Ordering::Release);
         let encoded = self.emulator.lock().unwrap().encode_paste(text);
         self.encoded_input(encoded);
     }

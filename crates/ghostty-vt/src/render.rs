@@ -77,6 +77,7 @@ pub struct Cell {
     pub wide: sys::GhosttyCellWide,
     pub style: Style,
     pub selected: bool,
+    pub hyperlink: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,7 +100,7 @@ pub struct Cursor {
 }
 
 /// A fully owned viewport copy; survives writes, resize and terminal destruction.
-/// Images and hyperlink targets are not yet projected by this safe layer.
+/// Includes owned image pixels, hyperlink targets and selection flags.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
     pub cols: u16,
@@ -111,6 +112,7 @@ pub struct Frame {
     pub cursor_color: Option<Color>,
     pub palette: [Color; 256],
     pub lines: Vec<Row>,
+    pub images: Vec<super::ImagePlacement>,
 }
 
 /// Persistent native render snapshot. Use one per terminal. Capturing a different
@@ -120,6 +122,7 @@ pub struct RenderState {
     state: State,
     owner: Weak<()>,
     hold_generation: u64,
+    image_cache: std::collections::HashMap<(u32, u64), Arc<super::Pixels>>,
 }
 // SAFETY: render snapshots and the default allocator have no thread affinity;
 // all mutation is exclusive. No iterator or borrowed C row escapes this owner.
@@ -130,6 +133,7 @@ impl RenderState {
             state: State::new()?,
             owner: Weak::new(),
             hold_generation: 0,
+            image_cache: Default::default(),
         })
     }
 
@@ -141,15 +145,61 @@ impl RenderState {
         let generation = terminal.render_hold_generation();
         if !self.owner.ptr_eq(&owner) || self.hold_generation != generation {
             self.state = State::new()?;
+            if !self.owner.ptr_eq(&owner) {
+                self.image_cache.clear();
+            }
             self.owner = owner;
             self.hold_generation = generation;
         }
         // SAFETY: exclusive terminal and render state access for the snapshot.
         check(unsafe { sys::ghostty_render_state_update(self.state.0, terminal.handle.0) })?;
-        self.read_frame()
+        let frame = self.read_frame(terminal.handle.0);
+        // Native updates consume terminal dirty flags. Other render-state
+        // owners must rebuild before their next capture; this one stays warm.
+        terminal.events.get_mut().hold_generation =
+            terminal.events.get_mut().hold_generation.wrapping_add(1);
+        self.hold_generation = terminal.render_hold_generation();
+        frame
     }
 
-    fn read_frame(&mut self) -> Result<Frame> {
+    /// Capture history images at an absolute native screen row, then restore
+    /// the prior parser viewport even if rendering fails. References stay local.
+    pub fn images_at(
+        &mut self,
+        terminal: &mut Terminal,
+        row: usize,
+    ) -> Result<Vec<super::ImagePlacement>> {
+        let mut scrollbar = sys::GhosttyTerminalScrollbar::default();
+        check(unsafe {
+            sys::ghostty_terminal_get(
+                terminal.handle.0,
+                sys::GHOSTTY_TERMINAL_DATA_SCROLLBAR,
+                (&mut scrollbar as *mut sys::GhosttyTerminalScrollbar).cast(),
+            )
+        })?;
+        let old = scrollbar.offset as usize;
+        let scroll = |row| sys::GhosttyTerminalScrollViewport {
+            tag: sys::GHOSTTY_TERMINAL_SCROLL_VIEWPORT_ROW,
+            value: sys::GhosttyTerminalScrollViewportValue { row },
+        };
+        check(unsafe { sys::ghostty_terminal_scroll_viewport(terminal.handle.0, scroll(row)) })?;
+        let result = self.capture(terminal).map(|f| f.images);
+        let restore = if scrollbar.offset + scrollbar.len >= scrollbar.total {
+            sys::GhosttyTerminalScrollViewport {
+                tag: sys::GHOSTTY_TERMINAL_SCROLL_VIEWPORT_BOTTOM,
+                value: Default::default(),
+            }
+        } else {
+            scroll(old)
+        };
+        let restored =
+            check(unsafe { sys::ghostty_terminal_scroll_viewport(terminal.handle.0, restore) });
+        terminal.events.get_mut().hold_generation =
+            terminal.events.get_mut().hold_generation.wrapping_add(1);
+        restored?;
+        result
+    }
+    fn read_frame(&mut self, terminal: sys::GhosttyTerminal) -> Result<Frame> {
         let (mut cols, mut rows) = (0u16, 0u16);
         let mut dirty = sys::GHOSTTY_RENDER_STATE_DIRTY_FALSE;
         let mut cursor = sys::GhosttyRenderStateCursor {
@@ -272,12 +322,35 @@ impl RenderState {
                 })?;
                 let column =
                     u16::try_from(row.len()).map_err(|_| Error(sys::GHOSTTY_INVALID_VALUE))?;
+                let mut has_link = false;
+                // SAFETY: fixed bool key and a cell from this render state.
+                check(unsafe {
+                    sys::ghostty_cell_get(
+                        raw_cell,
+                        sys::GHOSTTY_CELL_DATA_HAS_HYPERLINK,
+                        (&mut has_link as *mut bool).cast(),
+                    )
+                })?;
+                let hyperlink = if has_link {
+                    // SAFETY: terminal is exclusively borrowed for this frame.
+                    unsafe {
+                        super::selection::link_at(
+                            terminal,
+                            column,
+                            y as usize,
+                            sys::GHOSTTY_POINT_TAG_VIEWPORT,
+                        )
+                    }?
+                } else {
+                    None
+                };
                 row.push(Cell {
                     column,
                     text: String::from_utf8(bytes)
                         .map_err(|_| Error(sys::GHOSTTY_INVALID_VALUE))?,
                     wide,
                     selected,
+                    hyperlink,
                     style: Style {
                         foreground: style.fg_color.try_into()?,
                         background: style.bg_color.try_into()?,
@@ -316,6 +389,11 @@ impl RenderState {
             },
             palette: colors.palette.map(Into::into),
             lines,
+            // SAFETY: state and terminal are live, serialized, and not mutated
+            // while image pixels and placement metadata are copied.
+            images: unsafe {
+                super::graphics::read_images(self.state.0, terminal, &mut self.image_cache)
+            }?,
         };
         // SAFETY: all data has been copied successfully; no partial read is marked clean.
         check(unsafe { sys::ghostty_render_state_clean(self.state.0) })?;
@@ -328,5 +406,5 @@ pub(super) unsafe fn capture_raw(terminal: sys::GhosttyTerminal) -> Result<Frame
     let mut state = RenderState::new()?;
     // SAFETY: caller owns serialized access to the live terminal.
     check(unsafe { sys::ghostty_render_state_update(state.state.0, terminal) })?;
-    state.read_frame()
+    state.read_frame(terminal)
 }

@@ -258,7 +258,7 @@ export function WorkspaceApp(props: { shell?: string; workspace?: Workspace } = 
         });
       }} />
     <SettingsDialog open={settings()} dismiss={() => settings.set(false)} appearance={appearance}
-      fontSize={store.fontSize} version={version} preview={preview} scrollback={store.scrollback}
+      fontSize={store.fontSize} version={version} preview={preview} scrollback={store.scrollback} clipboardRead={store.clipboardRead}
       scrollbackMin={Runtime.scrollbackMin()} scrollbackMax={Runtime.scrollbackMax()} scrollbackStep={Runtime.scrollbackStep()} />
   </TerminalEngine>;
 }

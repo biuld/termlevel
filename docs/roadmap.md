@@ -65,7 +65,8 @@
 - 输入编码、鼠标报告、选择、IME、重排和绘制分别验证。
 - [x] 基于官方 libghostty-vt 1.0.1 C ABI 封装独立 Rust sys / safe crate，固定预编译库校验和，macOS 构建无需 Zig。
 - [x] 真实会话和预览接入 Ghostty，移除 Alacritty 依赖；保留 session / PTY 所有权、搜索、精确逻辑滚动上限、颜色回复和同步输出，按键及文字经 Ghostty 编码。
-- [ ] 继续接入鼠标、终端选区 / 链接 / 图片，验证完整键盘协议和真实 TUI；内核迁移不代表这些能力已完整验收。
+- [x] 接入鼠标报告、终端选区 / OSC8 链接 / Kitty 内联图片、光标颜色与闪烁、OSC52；macOS AppKit 补充 Kitty 键盘协议所需的物理键 / 布局文字 / repeat / release。
+- [ ] 扩展真实 TUI、实际键盘布局 / 输入法、图片动画 / 多图层压力与持续输出人工验收；协议接入不等于完整日用兼容性通过。
 
 完成标准：Neovim、tmux、less、top 以及常用 agent CLI 的真实使用验证；中文 / 组合字符 / emoji、ANSI / truecolor、备用屏幕、鼠标、滚动历史与重排有对应证据。测量大量输出和多会话时的响应、内存、帧耗时。图片协议按独立能力评估。
 

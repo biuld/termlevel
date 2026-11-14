@@ -19,5 +19,6 @@ portable-pty = "=0.9.0"
 # AppKit input-contract probe in debug builds; production input uses NSH.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.5"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSWindow", "NSResponder", "NSView", "NSText", "NSTextView", "NSTextInputClient"] }
+block2 = "0.6.2"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "NSApplication", "NSWindow", "NSResponder", "NSView", "NSText", "NSTextView", "NSTextInputClient", "NSTextField", "NSControl", "NSEvent", "NSAccessibilityProtocols", "NSGraphicsContext", "NSPasteboard", "NSPasteboardItem"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString", "NSRange", "NSGeometry"] }

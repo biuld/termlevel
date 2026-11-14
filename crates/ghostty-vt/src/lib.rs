@@ -20,9 +20,14 @@ use std::{
 };
 pub use termlevel_ghostty_vt_sys as raw;
 
+mod clipboard;
+mod graphics;
 mod input;
 mod render;
+mod selection;
 mod state;
+pub use clipboard::Clipboard;
+pub use graphics::{ImagePlacement, Pixels};
 pub use input::{KeyEvent, MouseEvent};
 pub use render::{Cell, Color, Cursor, Frame, RenderState, Row, Style, StyleColor};
 pub use state::{Colors, Match};
@@ -96,6 +101,7 @@ struct Events {
     failed: bool,
     held: Option<RenderHold>,
     hold_generation: u64,
+    clipboard: Option<std::sync::Arc<dyn Clipboard>>,
 }
 
 /// The active viewport at the exact point where mode 2026 was enabled.
@@ -150,6 +156,7 @@ unsafe impl Send for Terminal {}
 
 impl Terminal {
     pub fn new(cols: u16, rows: u16) -> Result<Self> {
+        graphics::initialize();
         if cols == 0 || rows == 0 {
             return Err(Error(sys::GHOSTTY_INVALID_VALUE));
         }

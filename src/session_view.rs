@@ -1,6 +1,8 @@
 //! NSH is a view onto an existing Rust session, never its lifetime owner.
 
 mod input;
+#[cfg(target_os = "macos")]
+mod keyboard;
 mod keys;
 #[cfg(all(debug_assertions, target_os = "macos"))]
 pub(crate) mod native_probe;
@@ -115,6 +117,7 @@ pub fn SessionTerminal(
             return;
         }
         revision.set(next);
+        refresh.output_changed();
         refresh.revision.set(next);
         refresh.search.refresh();
         let next_bells = session.bells.load(Ordering::Acquire);

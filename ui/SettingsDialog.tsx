@@ -41,6 +41,7 @@ export function SettingsDialog(props: {
   version: string;
   preview: boolean;
   scrollback: Signal<number>;
+  clipboardRead: Signal<boolean>;
   scrollbackMin: number;
   scrollbackMax: number;
   scrollbackStep: number;
@@ -113,6 +114,15 @@ export function SettingsDialog(props: {
                 <Step testID="scrollback-less" label="Fewer scrollback lines" onPress={() => props.scrollback.update((n) => Math.max(props.scrollbackMin, n - props.scrollbackStep))}>−</Step>
                 <Type role="mono" class="w-16 text-center">{props.scrollback().toLocaleString("en-US")}</Type>
                 <Step testID="scrollback-more" label="More scrollback lines" onPress={() => props.scrollback.update((n) => Math.min(props.scrollbackMax, n + props.scrollbackStep))}>+</Step>
+              </View>
+              <View class="flex-row items-center gap-2">
+                <View class="min-w-0 flex-1 gap-0.5">
+                  <Type role="body">Clipboard access</Type>
+                  <Type role="caption">Terminal programs can copy text. Allow reading to support remote clipboard queries. Resets on restart.</Type>
+                </View>
+                <Button testID="clipboard-read" selected={props.clipboardRead()} onPress={() => props.clipboardRead.update((v) => !v)}>
+                  <Type role="label">{props.clipboardRead() ? "Read and write" : "Copy only"}</Type>
+                </Button>
               </View>
               <FontChoices fonts={monoFonts} selected={monoFont} testID="mono-font" onSelect={(id) => { monoFont.set(id); applyFonts(); }} />
               <View class="rounded-(--radius-tab) bg-chrome px-3 py-2">

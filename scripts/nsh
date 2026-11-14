@@ -13,5 +13,10 @@ case "$("$nsh_bin" --version)" in
   'nsh 0.5.0 '*) ;;
   *) echo 'Termlevel currently requires NSH 0.5.0 (keep CLI and Rust crates aligned).' >&2; exit 1 ;;
 esac
+# The NSH test agent delivers scripted keys directly to the window, bypassing
+# AppKit local monitors. This opt-in exists only in debug Rust builds.
+if [ "${1:-}" = test ]; then
+  export TERMLEVEL_SYNTHETIC_INPUT=1
+fi
 cd "$project_dir"
 exec "$nsh_bin" "$@"

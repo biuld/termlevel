@@ -228,3 +228,117 @@ fn invalid_dimensions_keys_and_coordinates_are_errors() -> Result<()> {
     assert!(terminal.encode_mouse(mouse, 8, 16).is_err());
     Ok(())
 }
+
+#[test]
+fn hyperlinks_selection_and_owned_images() -> Result<()> {
+    let mut t = Terminal::new(12, 4)?;
+    t.resize(12, 4, 8, 16)?;
+    t.write(b"\x1b]8;;https://example.com\x1b\\hello\x1b]8;;\x1b\\ world")?;
+    assert_eq!(t.hyperlink(0, 0)?.as_deref(), Some("https://example.com"));
+    assert_eq!(t.hyperlink(8, 0)?, None);
+    t.select((0, 0), (4, 0), false)?;
+    assert_eq!(t.selection_text()?.as_deref(), Some("hello"));
+    let mut r = RenderState::new()?;
+    let frame = r.capture(&mut t)?;
+    assert!(frame.lines[0].cells[0].selected);
+    assert_eq!(
+        frame.lines[0].cells[0].hyperlink.as_deref(),
+        Some("https://example.com")
+    );
+    t.clear_selection()?;
+    t.select_word(7, 0)?;
+    assert_eq!(t.selection_text()?.as_deref(), Some("world"));
+    // A single opaque red pixel, displayed over one cell via inline Kitty APC.
+    t.write(b"\x1b_Ga=T,f=32,s=1,v=1,c=1,r=1,i=42;/wAA/w==\x1b\\")?;
+    let f = r.capture(&mut t)?;
+    assert_eq!(f.images.len(), 1, "{:?}", t.take_events());
+    assert_eq!(&*f.images[0].pixels.rgba, &[255, 0, 0, 255]);
+    t.write(b"\x1b_Ga=d,d=A\x1b\\")?;
+    assert!(r.capture(&mut t)?.images.is_empty());
+    assert_eq!(&*f.images[0].pixels.rgba, &[255, 0, 0, 255]);
+    Ok(())
+}
+
+#[test]
+fn osc52_is_synchronous_and_denied_reads_do_not_leak() -> Result<()> {
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
+    #[derive(Default)]
+    struct Host {
+        text: Mutex<String>,
+        allow: AtomicBool,
+    }
+    impl Clipboard for Host {
+        fn read(&self) -> Result<String> {
+            if self.allow.load(Ordering::Acquire) {
+                Ok(self.text.lock().unwrap().clone())
+            } else {
+                Err(Error(ffi::GHOSTTY_REJECTED))
+            }
+        }
+        fn write(&self, text: &str) -> Result<()> {
+            *self.text.lock().unwrap() = text.to_owned();
+            Ok(())
+        }
+    }
+    let host = Arc::new(Host::default());
+    let mut t = Terminal::new(20, 3)?;
+    t.set_clipboard(host.clone())?;
+    for b in b"\x1b]52;c;aGVsbG8=\x07" {
+        t.write(&[*b])?;
+    }
+    assert_eq!(*host.text.lock().unwrap(), "hello");
+    t.write(b"\x1b]52;c;?\x07")?;
+    assert!(
+        !t.take_events()
+            .iter()
+            .any(|e| matches!(e,Event::WritePty(bytes) if bytes.windows(8).any(|s|s==b"aGVsbG8=")))
+    );
+    host.allow.store(true, Ordering::Release);
+    t.write(b"\x1b]52;c;?\x07")?;
+    assert!(
+        t.take_events()
+            .iter()
+            .any(|e| matches!(e,Event::WritePty(bytes) if bytes.windows(8).any(|s|s==b"aGVsbG8=")))
+    );
+    t.write(b"\x1b]52;c;\x07")?;
+    assert_eq!(*host.text.lock().unwrap(), "");
+    Ok(())
+}
+
+#[test]
+fn png_images_and_history_placements_survive_viewport_capture() -> Result<()> {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let mut png = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut png, 2, 1);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder
+            .write_header()
+            .unwrap()
+            .write_image_data(&[255, 0, 0, 255, 0, 255, 0, 128])
+            .unwrap();
+    }
+    let mut t = Terminal::new(10, 3)?;
+    t.resize(10, 3, 8, 16)?;
+    t.write(
+        format!(
+            "\x1b_Ga=T,f=100,c=2,r=1,i=99;{}\x1b\\",
+            STANDARD.encode(png)
+        )
+        .as_bytes(),
+    )?;
+    let mut r = RenderState::new()?;
+    let f = r.capture(&mut t)?;
+    assert_eq!(&*f.images[0].pixels.rgba, &[255, 0, 0, 255, 0, 255, 0, 128]);
+    t.write(b"\r\n1\r\n2\r\n3\r\n4")?;
+    assert!(r.capture(&mut t)?.images.is_empty());
+    let history = r.images_at(&mut t, 0)?;
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].row, 0);
+    assert!(r.capture(&mut t)?.images.is_empty());
+    Ok(())
+}

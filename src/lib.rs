@@ -1,5 +1,6 @@
 //! Registration only. Session/process ownership and UI bindings live in their modules.
 
+mod clipboard;
 mod dialog_keys;
 mod runtime;
 mod session_view;

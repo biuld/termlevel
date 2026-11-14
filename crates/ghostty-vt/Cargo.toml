@@ -8,6 +8,10 @@ description = "Safe, session-independent Rust wrapper for libghostty-vt 1.0.1"
 
 [dependencies]
 termlevel-ghostty-vt-sys = { version = "=0.1.0", path = "../ghostty-vt-sys" }
+png = "0.18.1"
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
+
+[dev-dependencies]
+base64 = "0.22.1"

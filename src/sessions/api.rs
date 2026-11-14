@@ -47,6 +47,11 @@ impl Sessions {
         manager().lock().unwrap().settled()
     }
 
+    /// Allows terminal programs to read the system clipboard via OSC52.
+    pub fn set_clipboard_read(allow: bool) {
+        crate::clipboard::allow_read(allow);
+    }
+
     /// Lines kept above the screen. Applies to open sessions and the next one opened.
     pub fn set_scrollback(lines: u32) {
         manager().lock().unwrap().set_scrollback(lines as usize);

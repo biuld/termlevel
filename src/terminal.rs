@@ -35,6 +35,8 @@ pub(crate) struct GridRun {
     pub col: usize,
     pub cells: usize,
     pub run: TerminalRun,
+    pub selected: bool,
+    pub hyperlink: Option<String>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SearchHit {
@@ -52,6 +54,7 @@ pub(crate) enum BackendEvent {
 struct State {
     terminal: Terminal,
     renderer: RenderState,
+    image_renderer: RenderState,
     frame: Option<Arc<Frame>>,
     colors: Colors,
     range: Range<usize>,
@@ -173,12 +176,14 @@ impl GhosttyEmulator {
             terminal.set_default_colors(foreground, background)?;
             terminal.set_default_palette(std::array::from_fn(|n| indexed_color(n as u8)))?;
             terminal.set_scrollback(scrollback)?;
+            terminal.set_clipboard(Arc::new(crate::clipboard::SystemClipboard))?;
             let colors = terminal.colors()?;
             let range = terminal.retained_range()?;
             Ok(Self {
                 state: RefCell::new(State {
                     terminal,
                     renderer: RenderState::new()?,
+                    image_renderer: RenderState::new()?,
                     frame: None,
                     colors,
                     range,
@@ -267,6 +272,9 @@ impl GhosttyEmulator {
         }
         true
     }
+    pub(crate) fn columns(&self) -> u16 {
+        self.state.borrow().size.cols
+    }
     pub(crate) fn screen_rows(&self) -> usize {
         self.state.borrow().size.rows as usize
     }
@@ -283,12 +291,109 @@ impl GhosttyEmulator {
         cursor.row = row;
         cursor
     }
-    pub(crate) fn cursor_style(&self) -> raw::GhosttyCursorStyle {
+    pub(crate) fn cursor_appearance(&self) -> Option<(termlevel_ghostty_vt::Cursor, Option<Rgb>)> {
         self.state
             .borrow_mut()
             .frame()
-            .map(|f| f.cursor.style)
-            .unwrap_or(raw::GHOSTTY_CURSOR_STYLE_BLOCK)
+            .ok()
+            .map(|f| (f.cursor, f.cursor_color))
+    }
+    pub(crate) fn images_at(&self, first: usize) -> Vec<termlevel_ghostty_vt::ImagePlacement> {
+        let s = &mut *self.state.borrow_mut();
+        let _ = s.frame();
+        let first = first.min(s.range.len().saturating_sub(s.size.rows as usize));
+        let mut images = s
+            .image_renderer
+            .images_at(&mut s.terminal, first + s.range.start)
+            .unwrap_or_default();
+        for image in &mut images {
+            image.row += first as i32;
+        }
+        images
+    }
+    pub(crate) fn cell_size(&mut self, cw: u32, lh: u32) {
+        let s = self.state.get_mut();
+        let _ = s.terminal.resize(s.size.cols, s.size.rows, cw, lh);
+        s.frame = None;
+    }
+    pub(crate) fn tick_images(&mut self, now: u64) -> bool {
+        let s = self.state.get_mut();
+        if s.terminal.tick_images(now).unwrap_or(false) {
+            s.frame = None;
+            true
+        } else {
+            false
+        }
+    }
+    pub(crate) fn mouse_enabled(&self) -> bool {
+        let s = self.state.borrow();
+        [9, 1000, 1002, 1003]
+            .iter()
+            .any(|n| s.terminal.dec_mode(*n).unwrap_or(false))
+    }
+    pub(crate) fn encode_mouse(
+        &mut self,
+        event: termlevel_ghostty_vt::MouseEvent,
+        cw: u32,
+        lh: u32,
+    ) -> Result<Vec<u8>, String> {
+        self.state
+            .get_mut()
+            .terminal
+            .encode_mouse(event, cw, lh)
+            .map_err(|e| e.to_string())
+    }
+    pub(crate) fn select(
+        &mut self,
+        start: (u16, usize),
+        end: (u16, usize),
+        rectangle: bool,
+        word: bool,
+    ) {
+        let s = self.state.get_mut();
+        let start = (start.0, start.1 + s.range.start);
+        let end = (end.0, end.1 + s.range.start);
+        let result = if word {
+            s.terminal.select_word(start.0, start.1)
+        } else {
+            s.terminal.select(start, end, rectangle)
+        };
+        if let Err(e) = result {
+            s.errors.push(e.to_string())
+        }
+        s.frame = None;
+    }
+    pub(crate) fn extend_selection(&mut self, end: (u16, usize), rectangle: bool) {
+        let s = self.state.get_mut();
+        let _ = s
+            .terminal
+            .extend_selection((end.0, end.1 + s.range.start), rectangle);
+        s.frame = None;
+    }
+    pub(crate) fn select_all(&mut self) {
+        let s = self.state.get_mut();
+        let _ = s.terminal.select_all();
+        s.frame = None;
+    }
+    pub(crate) fn clear_selection(&mut self) {
+        let s = self.state.get_mut();
+        let _ = s.terminal.clear_selection();
+        s.frame = None;
+    }
+    pub(crate) fn selection_text(&mut self) -> Option<String> {
+        self.state
+            .get_mut()
+            .terminal
+            .selection_text()
+            .ok()
+            .flatten()
+    }
+    pub(crate) fn hyperlink(&mut self, col: u16, row: usize) -> Option<String> {
+        let s = self.state.get_mut();
+        s.terminal
+            .hyperlink(col, row + s.range.start)
+            .ok()
+            .flatten()
     }
     pub(crate) fn encode_key(
         &mut self,
@@ -484,6 +589,8 @@ impl GhosttyEmulator {
                 && let Some(last) = spans.last_mut()
                 && last.run.text.is_ascii()
                 && last.run.style == style
+                && last.selected == cell.selected
+                && last.hyperlink == cell.hyperlink
                 && last.col + last.cells == col
             {
                 last.run.text.push_str(&text);
@@ -491,6 +598,8 @@ impl GhosttyEmulator {
             } else {
                 spans.push(GridRun {
                     col,
+                    selected: cell.selected,
+                    hyperlink: cell.hyperlink,
                     cells: width,
                     run: TerminalRun::new(text, style),
                 });
@@ -498,6 +607,8 @@ impl GhosttyEmulator {
         }
         if let Some(last) = spans.last_mut()
             && last.run.style == TerminalStyle::default()
+            && !last.selected
+            && last.hyperlink.is_none()
         {
             let trimmed = last.run.text.trim_end_matches(' ').len();
             last.cells -= last.run.text.len() - trimmed;

@@ -394,12 +394,35 @@ impl Terminal {
                 .into_iter()
                 .map(|c| char::from_u32(c).unwrap_or(char::REPLACEMENT_CHARACTER))
                 .collect();
+            let hyperlink = unsafe {
+                super::selection::link_at(
+                    self.handle.0,
+                    column,
+                    row as usize,
+                    sys::GHOSTTY_POINT_TAG_SCREEN,
+                )
+            }?;
+            let selected = if let Some(selection) = self.selection()? {
+                let mut value = false;
+                check(unsafe {
+                    sys::ghostty_terminal_selection_contains(
+                        self.handle.0,
+                        &selection,
+                        point,
+                        &mut value,
+                    )
+                })?;
+                value
+            } else {
+                false
+            };
             cells.push(Cell {
                 column,
                 text,
                 wide,
                 style: style.try_into()?,
-                selected: false,
+                selected,
+                hyperlink,
             });
         }
         Ok(cells)

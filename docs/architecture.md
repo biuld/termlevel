@@ -108,9 +108,11 @@ reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I
 真实 PTY、预览 provider 和 Rust 原生网格视图均已切到 Ghostty。渲染与 IME 仍由 NSH/AppKit 承担，不等同于嵌入 Ghostty 应用的 GPU renderer。
 
 - 已接通应用光标键、F1–F24 与方向 / 编辑键的 Shift / Ctrl / Alt 组合、括号粘贴、焦点报告、标题、响铃、备用屏幕、滚动历史、重排、颜色与尺寸查询。
-- 已注册的按键和提交后的普通 / 组合文字都经 Ghostty 编码。NSH 0.5.0 的绑定接口不提供完整 key release、repeat action、物理键与布局信息，不能声称完整 Kitty 键盘协议兼容。工作区 Command 快捷键保持原有优先级。
-- 鼠标协议的安全编码器已经存在，但 UI 鼠标报告尚未接通。超链接目标与图片也尚未接入 native renderer；精细下划线仍投影成普通下划线。光标已接 block / bar / underline 几何，尚不含完整闪烁行为。
-- 剪贴板协议回调未注册，不将 OSC52 或 Kitty clipboard 请求连接到系统剪贴板。
+- macOS 以 AppKit local monitor 提供物理键、布局文字、按下 / repeat / release 与修饰键事件，再交给 Ghostty 协议编码器。监听器只接收当前 session 对应的真实 field editor；工作区 Command 快捷键、Copy / Paste / Select All、IME marked text 保持原有归属。非 ASCII 输入源上的字符键仍交给 IME，直到提交；无组合文本时 Enter、方向键和功能键继续编码。NSH 快捷键绑定在生产路径透传，避免两个监听器争抢协议按键。`scripts/nsh test` 显式开启仅 debug 构建支持的脚本输入回退；原生协议测试再显式关闭该回退，并向前台 AppKit 窗口同步投递事件。
+- 鼠标点击 / 释放 / 拖动 / 移动 / 双轴滚轮按当前 DEC 模式编码。Shift 临时绕过程序鼠标报告，允许终端选区 / 历史滚动；普通拖选、双击词、三击行、Alt 矩形选区由 Ghostty tracked selection 持有，Cmd+C / Cmd+A 面向终端选区。OSC8 目标随 cell 保留，链接有下划线与提示，Cmd+点击打开 HTTP(S) / mailto。
+- 原生视图接入 Kitty 内联 RGB / RGBA / PNG 图片，按原生 placement 的裁剪、缩放、偏移、三层 z 顺序绘制；像素留在 Rust `ImageSrc::rgba`，动画使用原生 generation 更新。历史图片快照恢复 viewport 时保留“跟随底部”语义，并使其他 renderer 的脏行缓存失效。文件 / 临时文件 / 共享内存 medium 仍关闭。
+- 光标支持 block / bar / underline、程序指定的颜色与闪烁模式；组合输入期间隐藏输出光标。
+- OSC52 / 文本剪贴板回调同步接入 macOS 系统剪贴板，单次上限 1 MiB。默认允许复制，读取需设置中的“Read and write”明确开启，重启复位。回调使用有超时的 pbcopy / pbpaste helper，不在持有 parser mutex 时等待 AppKit 主线程，避免主线程与 reader 互等；不支持非文本 MIME 和 primary / selection 剪贴板。
 - 实际系统输入法候选列表、跨行选择复制、复杂 emoji、多会话持续输出的性能仍需独立验收；不声称 Neovim/tmux 完整兼容。
 - macOS arm64 已完成自动化验证；x86_64、Windows/Linux 尚未进行应用平台验收。
 - 布局与设置尚未持久化；应用重启会结束并丢失会话，PID 不能作为恢复凭证。
@@ -120,9 +122,9 @@ reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I
 工作区新增两个 crate，均不依赖 NSH、PTY 或应用的会话管理：
 
 - `crates/ghostty-vt-sys`（包名 `termlevel-ghostty-vt-sys`）：官方 libghostty-vt **1.0.1** C ABI、原版头文件、预生成绑定，以及通过固定 SHA256 验证的官方 macOS XCFramework。构建提取目标架构静态库，不需要 Zig。支持在 macOS host 上构建 arm64 / x86_64，其他目标明确报错。
-- `crates/ghostty-vt`（包名 `termlevel-ghostty-vt`）：句柄 RAII、字节解析、resize、文本导出、拥有独立内存的 viewport 快照、协议回复和元数据事件，以及随当前终端模式编码的键盘 / 鼠标 / 焦点 / 文本粘贴。原生句柄经线程契约审查后为 `Send`、保持 `!Sync`，每次访问均由 `Session.emulator` 的 Mutex 串行化；同步 C 回调只写入自己拥有的堆内存，不调用用户逻辑，复制后的帧可发送到绘制线程。
+- `crates/ghostty-vt`（包名 `termlevel-ghostty-vt`）：句柄 RAII、字节解析、resize、文本导出、拥有独立内存的 viewport 快照、协议回复和元数据事件，以及随当前终端模式编码的键盘 / 鼠标 / 焦点 / 文本粘贴。原生句柄经线程契约审查后为 `Send`、保持 `!Sync`，每次访问均由 `Session.emulator` 的 Mutex 串行化；普通同步 C 回调复制拥有的数据；剪贴板回调调用受限的 Send + Sync host adapter，禁止重入 terminal 或等待 UI 线程。PNG decoder 在创建任何 safe terminal 前通过 Once 安装，输出使用 Ghostty 提供的 allocator。复制后的帧可发送到绘制线程。
 
-这两层只拥有终端模拟状态，Rust `SessionManager` 继续拥有 PTY 与进程。生产路径已接入这两层，旧 Alacritty 依赖已移除。安全层包含历史窗口、搜索、颜色默认值与 render hold；选区手势、超链接目标、图片和剪贴板效果仍待接入，完整 C 声明留在 raw API。默认整 viewport 复制是首版接口，不作为最终 renderer 性能结论。
+这两层只拥有终端模拟状态，Rust `SessionManager` 继续拥有 PTY 与进程。生产路径已接入这两层，旧 Alacritty 依赖已移除。安全层包含历史窗口、搜索、颜色默认值、render hold、tracked selection、超链接目标、拥有像素的图片 placement 与同步剪贴板 adapter，完整 C 声明仍保留在 raw API。默认整 viewport 复制是首版接口，不作为最终 renderer 性能结论。
 
 下载、缓存、离线构建和版本来源见 [sys crate](../crates/ghostty-vt-sys/README.md)，安全层边界见 [wrapper](../crates/ghostty-vt/README.md)。两包尚未发布到 crates.io。
 

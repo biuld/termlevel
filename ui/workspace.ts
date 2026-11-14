@@ -96,6 +96,8 @@ export function createWorkspace(transport?: SessionTransport) {
   const expanded = signal(true);
   const sidebarWidth = signal(token("width-sidebar"));
   const fontSize = signal(token("text-terminal"));
+  const clipboardRead = signal(false);
+  effect(() => { Sessions.setClipboardRead(clipboardRead()); });
   const scrollback = signal(Runtime.scrollbackLimit());
   effect(() => { Sessions.setScrollback(scrollback()); });
   const activeTab = computed(() => tabs().find((t) => t.id === activeId()));
@@ -571,7 +573,7 @@ export function createWorkspace(transport?: SessionTransport) {
   }
 
   return {
-    tabs, groups, activeId, activeTab, expanded, sidebarWidth, fontSize, scrollback, workspaceKey,
+    tabs, groups, activeId, activeTab, expanded, sidebarWidth, fontSize, scrollback, clipboardRead, workspaceKey,
     tiling, paneList, inputBlocked, cellWidth, canvasSize, setCanvasSize, paneMinimum, fullGeometry, constrained, projected,
     paneForSession, frameForSession, focusPane, canSplit, splitTerminal, hidePane, toggleZoom, focusDirection,
     layoutSessions, placeSplit, inSplit,
