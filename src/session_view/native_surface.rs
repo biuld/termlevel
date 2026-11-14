@@ -370,14 +370,18 @@ impl Renderer {
         let report = self.report.get_or_insert(start);
         if report.elapsed().as_secs_f32() >= 1.0 {
             #[cfg(debug_assertions)]
-            eprintln!(
-                "terminal native draw: {} frames, mean {:.2} ms, max {:.2} ms, {} cached lines / {} fonts",
-                self.frames,
-                self.elapsed / self.frames as f64,
-                self.maximum,
-                self.lines.len(),
-                self.fonts.len()
-            );
+            {
+                let line = format!(
+                    "terminal native draw: {} frames, mean {:.2} ms, max {:.2} ms, {} cached lines / {} fonts",
+                    self.frames,
+                    self.elapsed / self.frames as f64,
+                    self.maximum,
+                    self.lines.len(),
+                    self.fonts.len()
+                );
+                eprintln!("{line}");
+                super::diag::line(&line);
+            }
             self.frames = 0;
             self.elapsed = 0.0;
             self.maximum = 0.0;

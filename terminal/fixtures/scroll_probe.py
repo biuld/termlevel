@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """Deterministic mouse-report TUI for native scroll profiling; no network."""
-import os, re, select, termios, time, tty
+import os, re, select, sys, termios, time, tty
 
 saved = termios.tcgetattr(0)
 start = time.monotonic()
 step = 0
 pending = b""
+overlap_sync = "--overlap-sync" in sys.argv
 try:
     tty.setraw(0)
     os.write(1, b"\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[?25l")
     def draw():
         cols, rows = os.get_terminal_size(0)
-        out = ["\x1b[?2026h\x1b[H"]
+        # Finish the preceding frame and begin its successor in one write.
+        # A display poll sees hold=true even though complete frames advance.
+        out = ["\x1b[?2026l\x1b[?2026h\x1b[H" if overlap_sync else "\x1b[?2026h\x1b[H"]
         for row in range(rows):
             # Colour changes and fallback glyphs resemble an agent transcript.
             text = f"SCROLL_FRAME_{step:06d} " if row == 0 else f"{step + row:06d} │ "
@@ -20,7 +23,8 @@ try:
             out.append(text + "\x1b[0m\x1b[K")
             if row + 1 < rows:
                 out.append("\r\n")
-        out.append("\x1b[?2026l")
+        if not overlap_sync:
+            out.append("\x1b[?2026l")
         os.write(1, "".join(out).encode())
     draw()
     while time.monotonic() - start < 60:

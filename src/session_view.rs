@@ -1,5 +1,6 @@
 //! NSH is a view onto an existing Rust session, never its lifetime owner.
 
+mod diag;
 mod input;
 #[cfg(target_os = "macos")]
 mod keyboard;
@@ -9,6 +10,7 @@ pub(crate) mod native_probe;
 #[cfg(target_os = "macos")]
 pub(crate) mod native_surface;
 mod paint;
+mod surface;
 mod view;
 pub(crate) mod window;
 
@@ -140,13 +142,14 @@ pub fn SessionTerminal(
     let bells = Cell::new(session.bells.load(Ordering::Acquire));
     let refresh = display.clone();
     set_interval(Duration::from_millis(16), move || {
+        // The only frame scheduler: capture, pointer work, blink, image
+        // animation and search all advance here, at most one snapshot each.
+        refresh.frame();
         let next = session.revision.load(Ordering::Acquire);
         if next == revision.get() {
             return;
         }
         revision.set(next);
-        refresh.output_changed();
-        refresh.revision.set(next);
         let next_bells = session.bells.load(Ordering::Acquire);
         if bells.replace(next_bells) != next_bells {
             cx.emit(SessionTerminalEvent::Bell);

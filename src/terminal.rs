@@ -379,8 +379,8 @@ impl GhosttyEmulator {
         self.state.borrow().terminal.render_hold().is_some()
     }
 
-    /// Preserve the published window throughout mode 2026, including its
-    /// history, screen identity and input anchor. Native live state may change.
+    /// During mode 2026, advance active viewports only to an owned boundary
+    /// frame. History windows stay frozen; live partial state is never read.
     pub(crate) fn begin_window(
         &self,
         window: &mut crate::session_view::window::Window,
@@ -389,10 +389,48 @@ impl GhosttyEmulator {
     ) -> Result<WindowCapture, String> {
         let mut state = self.state.borrow_mut();
         let s = &mut *state;
-        if s.terminal.render_hold().is_some()
-            && let Some(previous) = previous
-        {
-            return Ok(WindowCapture::Cached(previous.clone()));
+        if let Some(held) = s.terminal.render_hold() {
+            // The boundary snapshot precedes all writes in this transaction.
+            // It can contain a completed transaction that no display tick saw
+            // before the next hold began. Never wait for a tick to land between
+            // transactions: publish this owned active viewport instead.
+            if let Some(previous) = previous
+                && (!window.pinned || Arc::ptr_eq(&held.frame, &previous.frame))
+            {
+                return Ok(WindowCapture::Cached(previous.clone()));
+            }
+            let frame = held.frame.clone();
+            let alternate = held.alternate_screen;
+            let count = s.range.len();
+            let mut next_window = window.clone();
+            next_window.follow(count, frame.rows as usize, frame.cols, alternate, None);
+            if !next_window.pinned
+                && let Some(previous) = previous
+            {
+                return Ok(WindowCapture::Cached(previous.clone()));
+            }
+            *window = next_window;
+            let origin = count.saturating_sub(frame.rows as usize);
+            let mut images = frame.images.clone();
+            for image in &mut images {
+                image.row += origin as i32;
+            }
+            images.sort_by_key(|image| image.z);
+            return Ok(WindowCapture::Fresh(Box::new(WindowData {
+                colors: Colors {
+                    foreground: frame.foreground,
+                    background: frame.background,
+                    palette: frame.palette,
+                },
+                frame,
+                origin,
+                count,
+                alternate,
+                history: Vec::new(),
+                images,
+                foreground: s.foreground,
+                background: s.background,
+            })));
         }
         let frame = s.frame()?;
         let alternate = if let Some(held) = s.terminal.render_hold() {
@@ -532,6 +570,18 @@ impl GhosttyEmulator {
         [9, 1000, 1002, 1003]
             .iter()
             .any(|n| s.terminal.dec_mode(*n).unwrap_or(false))
+    }
+    /// Debug summary: which mouse-reporting modes are active and which screen
+    /// is showing. Costs one borrow of the emulator state.
+    pub(crate) fn mode_snapshot(&self) -> (u8, bool) {
+        let s = self.state.borrow();
+        let mut modes = 0u8;
+        for (number, bit) in [(9u16, 1u8), (1000, 2), (1002, 4), (1003, 8)] {
+            if s.terminal.dec_mode(number).unwrap_or(false) {
+                modes |= bit;
+            }
+        }
+        (modes, s.terminal.alternate_screen().unwrap_or(false))
     }
     pub(crate) fn encode_mouse(
         &mut self,

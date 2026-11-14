@@ -325,6 +325,65 @@ fn grid_history_anchor_follows_reflow_and_survives_alternate_screen() {
 }
 
 #[test]
+fn consecutive_sync_transactions_publish_completed_boundary_without_an_unheld_tick() {
+    use crate::session_view::window::Window;
+    let mut term = emulator(20, 3, 20);
+    term.feed(b"\x1b[?1049hZERO");
+    let mut window = Window::default();
+    let mut shown = term.capture_window(&mut window, false, None).unwrap();
+    term.feed(b"\x1b[?2026h\x1b[HFRAME_000");
+    for n in 1..=160 {
+        // The reader completes one transaction and starts the next before the
+        // display gets its lock. A poll can never observe an unheld terminal.
+        term.feed(format!("\x1b[?2026l\x1b[?2026h\x1b[HFRAME_{n:03}").as_bytes());
+        assert!(term.render_held());
+        let next = term
+            .capture_window(&mut window, false, Some(&shown))
+            .unwrap();
+        assert_eq!(window_text(&next, 0), format!("FRAME_{:03}", n - 1));
+        assert!(!Arc::ptr_eq(&next, &shown));
+        let repeat = term
+            .capture_window(&mut window, false, Some(&next))
+            .unwrap();
+        assert!(Arc::ptr_eq(&repeat, &next), "same boundary must be cached");
+        shown = next;
+    }
+    term.feed(b"\x1b[?2026l");
+    let final_frame = term
+        .capture_window(&mut window, false, Some(&shown))
+        .unwrap();
+    assert_eq!(window_text(&final_frame, 0), "FRAME_160");
+}
+
+#[test]
+fn held_active_boundary_never_reads_partial_live_screen_or_size() {
+    use crate::session_view::window::Window;
+    let mut term = emulator(12, 3, 20);
+    term.feed(b"READY");
+    let mut window = Window::default();
+    let before = term.capture_window(&mut window, false, None).unwrap();
+    term.feed(b"\x1b[?2026h\x1b[?1049hSECRET");
+    let held = term
+        .capture_window(&mut window, false, Some(&before))
+        .unwrap();
+    assert_eq!(window_text(&held, 0), "READY");
+    assert!(!held.alternate);
+    assert_eq!((held.frame.cols, held.frame.rows), (12, 3));
+    term.feed(b" MORE PARTIAL");
+    let same = term
+        .capture_window(&mut window, false, Some(&held))
+        .unwrap();
+    assert!(Arc::ptr_eq(&same, &held));
+    term.feed(b"\x1b[?2026l\x1b[?2026h\x1b[2JINCOMPLETE");
+    let committed = term
+        .capture_window(&mut window, false, Some(&same))
+        .unwrap();
+    assert!(committed.alternate);
+    assert!(committed.text.contains("SECRET"));
+    assert!(!committed.text.contains("INCOMPLETE"));
+}
+
+#[test]
 fn held_window_freezes_screen_identity_until_native_resize_commits() {
     use crate::session_view::window::Window;
     let mut term = emulator(12, 3, 20);

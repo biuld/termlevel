@@ -24,8 +24,9 @@ src/dialog_keys.rs               对话框 Escape 与 pane 缩放模式的原生
 src/terminal.rs                  Ghostty 状态 / RenderState 到 NSH 的适配；预览 provider
 src/sessions.rs                  SessionManager、PTY、进程、reader/writer/reaper
   sessions/api.rs                TSX 可调用的显式会话操作
-src/session_view.rs              按 ID 绑定会话、低频状态通知
-  session_view/view.rs           固定格网 surface、整数窗口、原生 Input
+src/session_view.rs              按 ID 绑定会话、低频状态通知、唯一 16 ms 帧调度
+  session_view/surface.rs         每会话显示控制器：窗口、失效、轮内合并与一次采样
+  session_view/view.rs            NSH 绑定：固定格网、原生 Input、事件策略接线
   session_view/window.rs         展示窗口策略；原生内容锚点留在 Ghostty
   session_view/paint.rs          owned 绘制场景、颜色和行语义
   session_view/native_surface.rs 应用自有 NSView，CoreText / Core Graphics 绘制与缓存
@@ -63,7 +64,7 @@ reader 直接将原始字节送入同一个 Rust/C parser，保留跨 chunk 的 
 
 程序指定的 ANSI / 256 色 / truecolor 与 OSC 调色板覆盖保留语义；未指定的颜色跟随主题。NSH 的基础 256 色写入 Ghostty 的默认 palette，主题写入默认前景 / 背景，程序覆盖不会被主题变更清掉。颜色、光标和设备协议回复直接经 Rust 回到 writer。字符尺寸查询有实际 rows / cols；NSH 此处只有 point 测量，没有设备像素尺寸，像素回复仍为 0。
 
-同步输出由 mode 2026 的原生回调在确切边界捕获可见屏幕和屏幕身份。已挂载 surface 在 hold 期间冻结最后发布的整个窗口，初次绑定则展示 held 帧；正常结束、150 ms 超时和 EOF 都会提交输出。真实库测试确认 1.0.1 原生 resize 也会结束 hold，随后发布新尺寸。安全层会让独立 renderer 在回调消费 dirty state 后重新建立快照，避免把一次渲染的状态误当成另一个 renderer 已处理。PTY 与网格 resize 仍在同一个 emulator 锁内完成，防止 SIGWINCH 后的新尺寸输出落入旧尺寸网格。
+同步输出由 mode 2026 的原生回调在确切边界捕获可见屏幕和屏幕身份。已挂载的贴底 surface 可推进到 hold 开始边界保存的完整帧，同一边界复用 Arc；历史窗口保持冻结。初次绑定同样展示 held 帧，不采样事务中的实时屏幕。正常结束、150 ms 超时和 EOF 都会提交输出。真实库测试确认 1.0.1 原生 resize 也会结束 hold，随后发布新尺寸。安全层会让独立 renderer 在回调消费 dirty state 后重新建立快照，避免把一次渲染的状态误当成另一个 renderer 已处理。PTY 与网格 resize 仍在同一个 emulator 锁内完成，防止 SIGWINCH 后的新尺寸输出落入旧尺寸网格。
 
 ## 生命周期与并发
 
@@ -76,7 +77,7 @@ reader 直接将原始字节送入同一个 Rust/C parser，保留跨 chunk 的 
 - 关闭主窗口或退出应用调用 `Sessions.shutdown`。Unix 上结束前台进程组，向 shell 发送 HUP，让它清理普通后台作业；50 ms 后仍未退出则强制结束 shell。主动脱离终端会话的 daemon 不属于可恢复会话模型。
 - child 的检查、终止和回收共用控制锁，避免对已回收并可能复用的 PID 发信号。关闭后 reader/writer 取消，reaper 回收 child；应用退出在 NSH 的 200 ms 清理预算内轮询 `Sessions.settled()`。
 
-reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I/O；reader 以 8 KiB 块解析，writer 的输入队列最多 128 个请求，单次输入上限 1 MiB，拒绝会显示错误，不静默截断。原生视图最多约每 16 ms 检查一次 revision，只在有更新时更新 Rust 显示 signal，不经过 TSX。工作区传入低频 visible 属性；隐藏 pane 暂停抓帧、动画推进和查找，恢复可见时立即刷新，非活动但可见的 pane 仍继续绘制。视图刷新计时器随视图销毁，会话工作线程不会随之销毁。
+reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I/O；reader 以 8 KiB 块解析，writer 的输入队列最多 128 个请求，单次输入上限 1 MiB，拒绝会显示错误，不静默截断。每个会话只有一个 16 ms 帧调度：同一轮最多观察一次输出 revision 与输入代际，并把窗口、悬停、宿主拖选、选区、尺寸、查找 reveal 合并为至多一次采样与发布；事件处理器只登记失效，不直接捕获。亚行滚轮的整数位移与小数余量都保留，报告滚轮不再按单次 32 行截断，而是分块写入且不丢位移。工作区传入低频 visible 属性；隐藏 pane 暂停抓帧、动画推进和查找，恢复可见时立即刷新，非活动但可见的 pane 仍继续绘制。视图刷新计时器随视图销毁，会话工作线程不会随之销毁。
 
 `SessionTerminal` 通过 NSH 0.5.0 的 Native Components 公开接口嵌入应用自己的 NSView。src/lib.rs 的 #[native_components(macos)] 同时供开发与打包宿主注册；无需修改框架。测量视图是唯一 PTY resize 输入，格子宽高来自当前 Frame 行列数；剩余像素留在格子外。贴底 origin=line_count-Frame.rows，ED2 保留的历史不能切入屏幕。绘制规则与验收边界见 [终端格网设计](terminal-grid.md)。
 

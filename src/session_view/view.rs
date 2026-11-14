@@ -1,8 +1,8 @@
 //! A fixed terminal grid. Rust owns snapshots and native drawing; NSH owns layout.
-use super::{SessionTerminalProps, input::InputState, keys, paint, window::Window};
+use super::{SessionTerminalProps, input::InputState, keys, paint, surface::SurfaceController};
 use crate::{
-    sessions::Session,
-    terminal::{GridRun, SearchHit, WindowSnap},
+    sessions::{MouseReport, Session},
+    terminal::{GridRun, SearchHit},
 };
 use nsh_base::{TerminalColor, TerminalEmulator, TerminalSize, input, theme};
 use nsh_core::prelude::*;
@@ -14,90 +14,11 @@ use std::{
 };
 
 #[derive(Clone)]
-struct Grid {
-    session: Arc<Session>,
-    window: Rc<RefCell<Window>>,
-    snap: Signal<Arc<WindowSnap>>,
-    epoch: Rc<Cell<u64>>,
-    pending_pin: Rc<Cell<bool>>,
-    last_error: Rc<RefCell<Option<String>>>,
-}
-impl Grid {
-    fn capture(&self, user: bool) {
-        use std::sync::atomic::Ordering;
-        let started = Instant::now();
-        let emulator = self.session.emulator.lock().unwrap();
-        // Freeze all published geometry and history during synchronized output.
-        if emulator.render_held() {
-            return;
-        }
-        let epoch = self.session.input_epoch.load(Ordering::Acquire);
-        if self.epoch.replace(epoch) != epoch {
-            self.pending_pin.set(true);
-        }
-        let mut window = self.window.borrow_mut();
-        if self.pending_pin.replace(false) {
-            window.pin();
-        }
-        let previous = self.snap.get_untracked();
-        let next = emulator.begin_window(&mut window, user, Some(&previous));
-        drop(window);
-        drop(emulator);
-        let captured = started.elapsed();
-        let next = next.map(crate::terminal::WindowCapture::finish);
-        match next {
-            Ok(next) => {
-                self.last_error.borrow_mut().take();
-                if *next != *previous {
-                    self.snap.set(next);
-                }
-            }
-            Err(error) => {
-                if self.last_error.borrow().as_ref() != Some(&error) {
-                    *self.last_error.borrow_mut() = Some(error.clone());
-                    self.session.fail(format!("Rendering terminal: {error}"));
-                }
-            }
-        }
-        #[cfg(debug_assertions)]
-        if started.elapsed().as_millis() >= 8 {
-            eprintln!(
-                "terminal snapshot+lock wait: {:?}, unlocked merge+publish: {:?} (excludes native replay)",
-                captured,
-                started.elapsed().saturating_sub(captured)
-            );
-        }
-        let _ = (started, captured);
-    }
-    fn pin(&self) {
-        self.pending_pin.set(true);
-        self.capture(false);
-    }
-    fn reveal(&self, origin: usize) {
-        if self.session.emulator.lock().unwrap().render_held() {
-            return;
-        }
-        self.window.borrow_mut().follow_user(origin);
-        self.capture(true);
-    }
-    fn wheel(&self, dy: f32) {
-        if self.session.emulator.lock().unwrap().render_held() {
-            return;
-        }
-        let changed = self.window.borrow_mut().wheel(dy);
-        if changed {
-            self.capture(true);
-        }
-    }
-}
-
-#[derive(Clone)]
 pub(super) struct Display {
     session: Arc<Session>,
     props: SessionTerminalProps,
     pub input: ElementRef,
     cursor_ref: ElementRef,
-    pub revision: Signal<u64>,
     focused: Signal<bool>,
     composing: Signal<bool>,
     value: Signal<String>,
@@ -109,8 +30,12 @@ pub(super) struct Display {
     synthetic_keys: Signal<bool>,
     wheel_delta: Rc<Cell<(f32, f32)>>,
     hover: Signal<Option<String>>,
-    surface: Grid,
+    surface: SurfaceController,
     pub search: Search,
+    observed_revision: Cell<u64>,
+    observed_epoch: Cell<u64>,
+    reset: Cell<Instant>,
+    started: Instant,
 }
 
 struct Scan {
@@ -125,7 +50,8 @@ pub(super) struct Search {
     hits: Rc<RefCell<Vec<SearchHit>>>,
     index: Rc<Cell<usize>>,
     rev: Signal<u64>,
-    surface: Grid,
+    session: Arc<Session>,
+    surface: SurfaceController,
     deadline: Rc<Cell<Option<Instant>>>,
     scan: Rc<RefCell<Option<Scan>>>,
     reveal_pending: Rc<Cell<bool>>,
@@ -136,7 +62,7 @@ impl Search {
     }
     pub(super) fn apply(&self, query: &str) -> u32 {
         if query.is_empty() || !query.is_ascii() {
-            self.surface.session.emulator.lock().unwrap().clear_search();
+            self.session.emulator.lock().unwrap().clear_search();
         }
         *self.query.borrow_mut() = query.to_owned();
         self.deadline.set(if query.is_empty() {
@@ -203,9 +129,9 @@ impl Search {
         }
     }
     fn copy_rows(&self, first: usize, end: usize) -> Vec<Vec<GridRun>> {
-        let emulator = self.surface.session.emulator.lock().unwrap();
+        let emulator = self.session.emulator.lock().unwrap();
         if emulator.render_held() {
-            let snap = self.surface.snap.get_untracked();
+            let snap = self.surface.snap().get_untracked();
             return (first..end)
                 .map(|row| {
                     row.checked_sub(snap.origin)
@@ -222,14 +148,13 @@ impl Search {
         let Some(due) = self.deadline.get() else {
             return;
         };
-        if Instant::now() < due || self.surface.session.emulator.lock().unwrap().render_held() {
+        if Instant::now() < due || self.session.emulator.lock().unwrap().render_held() {
             return;
         }
-        let revision = self.surface.session.revision.load(Ordering::Acquire);
+        let revision = self.session.revision.load(Ordering::Acquire);
         let query = self.query.borrow().clone();
         if query.is_ascii() {
             let next = self
-                .surface
                 .session
                 .emulator
                 .lock()
@@ -240,9 +165,7 @@ impl Search {
                 Ok(None) => {}
                 Err(error) => {
                     self.publish(Vec::new());
-                    self.surface
-                        .session
-                        .fail(format!("Searching terminal: {error}"));
+                    self.session.fail(format!("Searching terminal: {error}"));
                 }
             }
             return;
@@ -251,7 +174,7 @@ impl Search {
         let scan = pending.get_or_insert_with(|| Scan {
             revision,
             next: 0,
-            count: self.surface.session.emulator.lock().unwrap().line_count(),
+            count: self.session.emulator.lock().unwrap().line_count(),
             hits: Vec::new(),
         });
         if scan.revision != revision {
@@ -265,7 +188,7 @@ impl Search {
         scan.hits
             .extend(match_rows(&self.query.borrow(), scan.next, &rows));
         scan.next = end;
-        if end == scan.count && self.surface.session.revision.load(Ordering::Acquire) == revision {
+        if end == scan.count && self.session.revision.load(Ordering::Acquire) == revision {
             let hits = std::mem::take(&mut scan.hits);
             pending.take();
             drop(pending);
@@ -274,7 +197,7 @@ impl Search {
     }
     fn reveal(&self, index: usize) {
         if let Some(hit) = self.hits.borrow().get(index).copied() {
-            let rows = self.surface.snap.get_untracked().frame.rows as usize;
+            let rows = self.surface.snap().get_untracked().frame.rows as usize;
             self.surface
                 .reveal(hit.line.saturating_sub((rows as f32 * 0.3) as usize));
         }
@@ -328,27 +251,12 @@ impl Display {
                 props.font_size.get().0,
             ))
         });
-        let mut window = Window::default();
-        let capture = session
-            .emulator
-            .lock()
-            .unwrap()
-            .begin_window(&mut window, false, None)?;
-        let snap = capture.finish();
-        let surface = Grid {
-            session: session.clone(),
-            window: Rc::new(RefCell::new(window)),
-            snap: signal(snap),
-            epoch: Rc::new(Cell::new(0)),
-            pending_pin: Rc::new(Cell::new(false)),
-            last_error: Rc::default(),
-        };
+        let surface = SurfaceController::new(session.clone())?;
         let display = Self {
             session: session.clone(),
             props,
             input: element_ref(),
             cursor_ref: element_ref(),
-            revision: signal(0),
             focused: signal(false),
             composing: signal(false),
             value: signal(String::new()),
@@ -366,77 +274,74 @@ impl Display {
                 hits: Rc::default(),
                 index: Rc::default(),
                 rev: signal(0),
+                session: session.clone(),
                 surface,
                 deadline: Rc::default(),
                 scan: Rc::default(),
                 reveal_pending: Rc::default(),
             },
+            observed_revision: Cell::new(0),
+            observed_epoch: Cell::new(0),
+            reset: Cell::new(Instant::now()),
+            started: Instant::now(),
         };
         #[cfg(all(debug_assertions, target_os = "macos"))]
         super::native_probe::track(display.session.info().id, display.input, display.cursor_ref);
-        let clock = display.clone();
-        let epoch = Cell::new(0);
-        let started = Instant::now();
-        let reset = Cell::new(started);
-        let rev = Cell::new(0);
-        set_interval(Duration::from_millis(16), move || {
-            use std::sync::atomic::Ordering;
-            clock.synthetic_keys.set(synthetic_keys());
-            if !clock.props.visible.get_untracked() {
-                return;
-            }
-            let next = clock.session.input_epoch.load(Ordering::Acquire);
-            if epoch.replace(next) != next {
-                clock.pin();
-                reset.set(Instant::now());
-            }
-            let next = clock.revision.get_untracked();
-            if rev.replace(next) != next {
-                reset.set(Instant::now());
-            }
-            let phase = reset.get().elapsed().as_millis() % 1000 < 500;
-            if clock.blink.get_untracked() != phase {
-                clock.blink.set(phase);
-            }
-            if clock
-                .session
-                .emulator
-                .lock()
-                .unwrap()
-                .tick_images(started.elapsed().as_millis() as u64)
-            {
-                clock.session.selection_changed();
-            }
-            clock.search.step();
-        });
         Ok(display)
     }
-    pub(super) fn output_changed(&self) {
+
+    /// The single per-session frame. Output, input follow, pointer work, the
+    /// cursor overlay, image animation and search all advance here; the
+    /// terminal is sampled at most once.
+    pub(super) fn frame(&self) {
+        use std::sync::atomic::Ordering;
+        self.synthetic_keys.set(synthetic_keys());
         if !self.props.visible.get_untracked() {
             return;
         }
-        let before = self.surface.snap.get_untracked();
-        self.surface.capture(false);
-        let after = self.surface.snap.get_untracked();
-        if !Arc::ptr_eq(&before.frame, &after.frame) || before.count != after.count {
+        let now = Instant::now();
+        let revision = self.session.revision.load(Ordering::Acquire);
+        if self.observed_revision.replace(revision) != revision {
+            self.surface.request_capture();
+            self.reset.set(now);
+        }
+        let epoch = self.session.input_epoch.load(Ordering::Acquire);
+        if self.observed_epoch.replace(epoch) != epoch {
+            self.surface.request_follow();
+            self.reset.set(now);
+        }
+        let tick = self.surface.tick();
+        if let Some(hover) = tick.hover {
+            self.hover.set(hover);
+        }
+        if tick.changed {
             self.search.invalidate();
             self.hover.set(None);
         }
+        let phase = self.reset.get().elapsed().as_millis() % 1000 < 500;
+        if self.blink.get_untracked() != phase {
+            self.blink.set(phase);
+        }
+        if self
+            .session
+            .emulator
+            .lock()
+            .unwrap()
+            .tick_images(self.started.elapsed().as_millis() as u64)
+        {
+            self.surface.request_capture();
+        }
+        self.search.step();
     }
-    fn at_end(&self) -> bool {
-        self.surface.window.borrow().pinned
-    }
-    fn pin(&self) {
-        self.surface.pin();
-    }
+
     fn send(&self, text: &str) {
         if !text.is_empty() {
-            self.pin();
+            self.surface.request_follow();
             self.session.text_input(text);
         }
     }
     fn grid_point(&self, p: Point<Points>) -> (u16, usize) {
-        self.surface.window.borrow().hit(
+        self.surface.hit(
             p.x.0,
             p.y.0,
             self.cell_width.get_untracked().0,
@@ -465,7 +370,7 @@ impl Display {
 
     fn composition(&self, event: &Composition) {
         if event.composing && !self.composing.get_untracked() {
-            self.pin();
+            self.surface.request_follow();
         }
         let committed = self
             .state
@@ -480,56 +385,53 @@ impl Display {
         }
     }
 
-    fn reporting(&self, mods: nsh_core::keymap::Modifiers) -> bool {
-        !mods.shift && self.session.emulator.lock().unwrap().mouse_enabled()
+    fn metrics(&self) -> (f32, f32) {
+        (
+            self.cell_width.get_untracked().0.max(1.0),
+            self.props.line_height.get_untracked().0.max(1.0),
+        )
     }
-    fn report(
+    fn mouse_event(
         &self,
-        p: Point<Points>,
-        mods: nsh_core::keymap::Modifiers,
         action: u32,
         button: Option<u32>,
-        pressed: bool,
-    ) {
-        self.report_n(p, mods, action, button, pressed, 1);
-    }
-    fn report_n(
-        &self,
-        p: Point<Points>,
         mods: nsh_core::keymap::Modifiers,
-        action: u32,
-        button: Option<u32>,
+        p: Point<Points>,
         pressed: bool,
-        count: usize,
-    ) {
-        let cw = self.cell_width.get_untracked().0.max(1.0);
-        let lh = self.props.line_height.get_untracked().0.max(1.0);
-        // Protocol coordinates describe the active screen, independent of scrollback.
-        if !self.at_end() {
-            self.pin();
+    ) -> termlevel_ghostty_vt::MouseEvent {
+        let (cw, lh) = self.metrics();
+        termlevel_ghostty_vt::MouseEvent {
+            action,
+            button,
+            modifiers: modifiers(mods),
+            x: p.x.0.max(0.0) / cw * cw.round(),
+            y: p.y.0.max(0.0) / lh * lh.round(),
+            any_button_pressed: pressed,
         }
-        self.session.mouse_repeat(
-            termlevel_ghostty_vt::MouseEvent {
-                action,
-                button,
-                modifiers: modifiers(mods),
-                x: p.x.0.max(0.0) / cw * cw.round(),
-                y: p.y.0.max(0.0) / lh * lh.round(),
-                any_button_pressed: pressed,
-            },
-            count,
-            cw.round() as u32,
-            lh.round() as u32,
-        );
+    }
+    /// One lock decides whether this event is a program report and, if so,
+    /// encodes it. The mode seen is the mode used, and every mouse entrance
+    /// shares one ordered input path.
+    fn report_mouse(
+        &self,
+        shift: bool,
+        events: &[(termlevel_ghostty_vt::MouseEvent, usize)],
+    ) -> MouseReport {
+        let (cw, lh) = self.metrics();
+        self.session.mouse_reports(
+            shift,
+            events,
+            cw.round().max(1.0) as u32,
+            lh.round().max(1.0) as u32,
+        )
     }
     fn press(&self, e: &PressEvent) {
         use termlevel_ghostty_vt::raw::*;
-        let held = self.session.emulator.lock().unwrap().render_held();
-        if held && (e.modifiers.cmd || !self.reporting(e.modifiers)) {
-            return;
-        }
-        let at = self.grid_point(e.position);
         if e.modifiers.cmd {
+            if self.session.emulator.lock().unwrap().render_held() {
+                return;
+            }
+            let at = self.grid_point(e.position);
             if let Some(uri) = self.session.emulator.lock().unwrap().hyperlink(at.0, at.1)
                 && (uri.starts_with("https://")
                     || uri.starts_with("http://")
@@ -541,16 +443,20 @@ impl Display {
             }
             return;
         }
-        if self.reporting(e.modifiers) {
-            self.report(
-                e.position,
-                e.modifiers,
-                GHOSTTY_MOUSE_ACTION_PRESS,
-                Some(GHOSTTY_MOUSE_BUTTON_LEFT),
-                true,
-            );
+        let event = self.mouse_event(
+            GHOSTTY_MOUSE_ACTION_PRESS,
+            Some(GHOSTTY_MOUSE_BUTTON_LEFT),
+            e.modifiers,
+            e.position,
+            true,
+        );
+        if let MouseReport::Encoded = self.report_mouse(e.modifiers.shift, &[(event, 1)]) {
             return;
         }
+        let at = self.grid_point(e.position);
+        // A new host selection owns the pointer; a queued endpoint from an
+        // earlier gesture must not extend it on the next frame.
+        self.surface.queue_drag(None);
         let mut emu = self.session.emulator.lock().unwrap();
         if emu.render_held() {
             return;
@@ -568,70 +474,58 @@ impl Display {
             self.drag.set(Some(at))
         }
         drop(emu);
-        self.session.selection_changed();
+        self.surface.request_capture();
     }
     fn motion(&self, e: &MouseEvent) {
         use termlevel_ghostty_vt::raw::*;
-        if self.reporting(e.modifiers) {
-            self.report(
-                e.position,
-                e.modifiers,
-                GHOSTTY_MOUSE_ACTION_MOTION,
-                e.pressed_button.map(button),
-                e.pressed_button.is_some(),
-            );
+        let event = self.mouse_event(
+            GHOSTTY_MOUSE_ACTION_MOTION,
+            e.pressed_button.map(button),
+            e.modifiers,
+            e.position,
+            e.pressed_button.is_some(),
+        );
+        if let MouseReport::Encoded = self.report_mouse(e.modifiers.shift, &[(event, 1)]) {
             return;
         }
         let at = self.grid_point(e.position);
-        let mut emu = self.session.emulator.lock().unwrap();
-        let uri = if emu.render_held() {
-            None
+        self.surface.queue_hover(Some(at));
+        if e.pressed_button == Some(MouseButton::Left) && self.drag.get().is_some() {
+            self.surface.queue_drag(Some((at.0, at.1, e.modifiers.alt)));
         } else {
-            emu.hyperlink(at.0, at.1)
-        };
-        drop(emu);
-        if self.hover.get_untracked() != uri {
-            self.hover.set(uri);
-        }
-        if e.pressed_button != Some(MouseButton::Left) {
-            self.drag.set(None);
-            return;
-        }
-        if self.session.emulator.lock().unwrap().render_held() {
-            return;
-        }
-        if self.drag.get().is_some() {
-            let at = self.grid_point(e.position);
-            self.session
-                .emulator
-                .lock()
-                .unwrap()
-                .extend_selection(at, e.modifiers.alt);
-            self.session.selection_changed();
+            self.surface.queue_drag(None);
         }
     }
     fn release(&self, e: &MouseEvent) {
         use termlevel_ghostty_vt::raw::*;
-        if self.reporting(e.modifiers) {
-            self.report(
-                e.position,
-                e.modifiers,
-                GHOSTTY_MOUSE_ACTION_RELEASE,
-                e.button.map(button),
-                false,
-            )
-        }
-        if self.session.emulator.lock().unwrap().render_held() {
+        let event = self.mouse_event(
+            GHOSTTY_MOUSE_ACTION_RELEASE,
+            e.button.map(button),
+            e.modifiers,
+            e.position,
+            false,
+        );
+        let _ = self.report_mouse(e.modifiers.shift, &[(event, 1)]);
+        let at = self.grid_point(e.position);
+        let started = self.drag.get();
+        // Release is a barrier: the pointer's final cell is authoritative, and
+        // a queued intermediate endpoint must not resurrect the selection after
+        // a click clears it.
+        self.surface.queue_drag(None);
+        let action = release_action(started, at);
+        let mut emu = self.session.emulator.lock().unwrap();
+        if emu.render_held() {
             self.drag.set(None);
             return;
         }
-        if self
-            .drag
-            .get()
-            .is_some_and(|start| start == self.grid_point(e.position))
-        {
-            self.session.emulator.lock().unwrap().clear_selection();
-            self.session.selection_changed();
+        match action {
+            Some(false) => emu.clear_selection(),
+            Some(true) => emu.extend_selection(at, e.modifiers.alt),
+            None => {}
+        }
+        if action.is_some() {
+            drop(emu);
+            self.surface.request_capture();
         }
         self.drag.set(None);
     }
@@ -673,7 +567,7 @@ impl Display {
                     }
                     emu.select_all();
                     drop(emu);
-                    all.session.selection_changed();
+                    all.surface.request_capture();
                 },
             );
             let synthetic = display.synthetic_keys.get();
@@ -696,7 +590,7 @@ impl Display {
                         {
                             return;
                         }
-                        display.pin();
+                        display.surface.request_follow();
                         display.session.key_input(&spec.event());
                     },
                 );
@@ -725,7 +619,10 @@ impl Display {
         let resumed = self.clone();
         effect(move || {
             if props.visible.get() {
-                resumed.output_changed();
+                // Showing a pane must not wait for the next tick to see the
+                // current window. This is the one capture outside the frame.
+                resumed.surface.request_capture();
+                resumed.surface.tick();
             }
         });
         let layout = self.clone();
@@ -743,6 +640,7 @@ impl Display {
             let key = (size, cw.round().max(1.0) as u32, lh.round().max(1.0) as u32);
             if previous.replace(Some(key)) != Some(key) {
                 layout.session.resize_grid(size, key.1, key.2);
+                layout.surface.request_capture();
             }
         });
         let (down, movement, up, right, wheel) = (
@@ -754,13 +652,13 @@ impl Display {
         );
         let viewport = self.viewport;
         let cw = self.cell_width;
-        let snap = self.surface.snap;
+        let snap = self.surface.snap();
         let cursor_display = self.clone();
         let cursor = computed(move || {
             if cursor_display.composing.get() {
                 return None;
             }
-            let snap = cursor_display.surface.snap.get();
+            let snap = cursor_display.surface.snap().get();
             let c = snap.frame.cursor;
             if !c.visible {
                 return None;
@@ -805,11 +703,15 @@ impl Display {
                     .on_mouse_move(move |e: &MouseEvent| movement.motion(e))
                     .on_mouse_up(move |e: &MouseEvent| up.release(e))
                     .on_context_menu(move |e: &ContextMenuEvent| {
-                        if right.reporting(e.modifiers) {
-                            right.report(e.position, e.modifiers,
-                                termlevel_ghostty_vt::raw::GHOSTTY_MOUSE_ACTION_PRESS,
-                                Some(termlevel_ghostty_vt::raw::GHOSTTY_MOUSE_BUTTON_RIGHT), true);
-                        }
+                        use termlevel_ghostty_vt::raw::*;
+                        let event = right.mouse_event(
+                            GHOSTTY_MOUSE_ACTION_PRESS,
+                            Some(GHOSTTY_MOUSE_BUTTON_RIGHT),
+                            e.modifiers,
+                            e.position,
+                            true,
+                        );
+                        let _ = right.report_mouse(e.modifiers.shift, &[(event, 1)]);
                     })
                     .on_wheel(move |e: &WheelEvent| wheel.wheel(e))
                     .child(self.native_paint())
@@ -856,45 +758,54 @@ impl Display {
     }
 
     fn wheel(&self, e: &WheelEvent) {
+        use termlevel_ghostty_vt::raw::*;
         let (dx, dy) = e.delta.xy();
+        let (cw, lh) = self.metrics();
         let (dx, dy) = if e.delta.precise() {
-            (
-                dx / self.cell_width.get_untracked().0.max(1.0),
-                dy / self.props.line_height.get_untracked().0.max(1.0),
-            )
+            (dx / cw, dy / lh)
         } else {
             (dx, dy)
         };
-        if !self.reporting(e.modifiers) {
-            self.wheel_delta.set((0.0, 0.0));
-            self.surface.wheel(dy);
-            return;
-        }
+        // Report-mode wheel keeps its fractional remainder separately from the
+        // history accumulator. Integer displacement is never truncated: every
+        // whole row becomes a report, split across messages only by size.
         let (oldx, oldy) = self.wheel_delta.get();
         let (x, y) = (oldx + dx, oldy + dy);
-        self.wheel_delta.set((x - x.trunc(), y - y.trunc()));
-        use termlevel_ghostty_vt::raw::*;
+        let mut events = Vec::new();
         for (amount, positive, negative) in [
             (y, GHOSTTY_MOUSE_BUTTON_FIVE, GHOSTTY_MOUSE_BUTTON_FOUR),
             (x, GHOSTTY_MOUSE_BUTTON_SEVEN, GHOSTTY_MOUSE_BUTTON_SIX),
         ] {
-            let count = amount.abs().floor().min(32.0) as usize;
+            let count = whole_rows(amount);
             if count > 0 {
-                self.report_n(
-                    e.position,
-                    e.modifiers,
-                    GHOSTTY_MOUSE_ACTION_PRESS,
-                    Some(if amount > 0.0 { positive } else { negative }),
-                    false,
+                let button = Some(if amount > 0.0 { positive } else { negative });
+                events.push((
+                    self.mouse_event(
+                        GHOSTTY_MOUSE_ACTION_PRESS,
+                        button,
+                        e.modifiers,
+                        e.position,
+                        false,
+                    ),
                     count,
-                );
+                ));
+            }
+        }
+        let report = self.report_mouse(e.modifiers.shift, &events);
+        self.surface
+            .note_wheel(matches!(report, MouseReport::Encoded));
+        match report {
+            MouseReport::Encoded => self.wheel_delta.set((x - x.trunc(), y - y.trunc())),
+            MouseReport::NotReporting { held } => {
+                self.wheel_delta.set((0.0, 0.0));
+                self.surface.wheel_history(dy, held);
             }
         }
     }
 
     fn native_paint(&self) -> impl IntoElement + use<> {
         let display = self.clone();
-        let snap = self.surface.snap;
+        let snap = self.surface.snap();
         #[cfg(target_os = "macos")]
         {
             let publisher = super::native_surface::Publisher::new();
@@ -902,7 +813,7 @@ impl Display {
                 .prop("frame", move || {
                     display.search.rev.get();
                     publisher.publish(paint::Scene {
-                        snap: display.surface.snap.get(),
+                        snap: display.surface.snap().get(),
                         config: display.paint_config(),
                         hits: display.search.hits.borrow().clone(),
                         current: display.search.index.get(),
@@ -927,7 +838,7 @@ impl Display {
     fn sink(&self, cx: Scope<super::SessionTerminalEvent>) -> impl IntoElement + use<> {
         let display = self.clone();
         let anchor = computed(move || {
-            let snap = display.surface.snap.get();
+            let snap = display.surface.snap().get();
             let (col, row) = snap.frame.cursor.position.unwrap_or_default();
             let lh = display.props.line_height.get().0;
             let x = col as f32 * display.cell_width.get().0;
@@ -941,7 +852,7 @@ impl Display {
         let props = self.props;
         let composing = self.composing;
         let value = self.value;
-        let snap = self.surface.snap;
+        let snap = self.surface.snap();
         let cw = self.cell_width;
         let (change, composition, paste) = (self.clone(), self.clone(), self.clone());
         let focused = self.focused;
@@ -983,7 +894,7 @@ impl Display {
             .on_change(move |text: &str| change.changed(text))
             .on_composition_change(move |event: &Composition| composition.composition(event))
             .on_paste(move |event: &PasteEvent| {
-                paste.pin();
+                paste.surface.request_follow();
                 paste.session.paste(&event.text);
             })
             .on_focus(move || {
@@ -1048,5 +959,42 @@ fn synthetic_keys() -> bool {
     #[cfg(not(target_os = "macos"))]
     {
         true
+    }
+}
+
+/// Whole rows in one report-mode delta. There is deliberately no upper bound:
+/// truncating a large flick loses displacement instead of deferring it.
+fn whole_rows(amount: f32) -> usize {
+    amount.abs().trunc() as usize
+}
+
+/// What releasing the left button must do to a host selection: `Some(false)`
+/// clears a click, `Some(true)` extends to the release cell, `None` means the
+/// press never started a host drag (program reports or a word/line selection).
+fn release_action(start: Option<(u16, usize)>, at: (u16, usize)) -> Option<bool> {
+    match start {
+        Some(start) if start == at => Some(false),
+        Some(_) => Some(true),
+        None => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{release_action, whole_rows};
+
+    #[test]
+    fn large_wheel_deltas_are_not_truncated() {
+        assert_eq!(whole_rows(65.0), 65);
+        assert_eq!(whole_rows(-33.0), 33);
+        assert_eq!(whole_rows(0.99), 0);
+        assert_eq!(whole_rows(-1.99), 1);
+    }
+
+    #[test]
+    fn release_uses_the_final_cell_not_a_queued_intermediate_one() {
+        assert_eq!(release_action(Some((3, 4)), (3, 4)), Some(false));
+        assert_eq!(release_action(Some((3, 4)), (9, 4)), Some(true));
+        assert_eq!(release_action(None, (3, 4)), None);
     }
 }

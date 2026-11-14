@@ -38,6 +38,15 @@ pub struct SessionInfo {
     pub pid: Option<u32>,
 }
 
+/// Outcome of the one ordered mouse input path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MouseReport {
+    /// The terminal is in a mouse mode and the event was encoded.
+    Encoded,
+    /// Not a program report (Shift or no mouse mode); the caller owns it.
+    NotReporting { held: bool },
+}
+
 struct Control {
     master: Option<Box<dyn MasterPty + Send>>,
     child: Box<dyn Child + Send + Sync>,
@@ -49,6 +58,9 @@ pub(crate) struct Session {
     pub(crate) revision: AtomicU64,
     pub(crate) bells: AtomicU64,
     pub(crate) input_epoch: AtomicU64,
+    input_wait_ns: AtomicU64,
+    input_total_ns: AtomicU64,
+    input_count: AtomicU64,
     info: Mutex<SessionInfo>,
     control: Mutex<Control>,
     closed: AtomicBool,
@@ -89,6 +101,9 @@ impl Session {
             revision: AtomicU64::new(1),
             bells: AtomicU64::new(0),
             input_epoch: AtomicU64::new(0),
+            input_wait_ns: AtomicU64::new(0),
+            input_total_ns: AtomicU64::new(0),
+            input_count: AtomicU64::new(0),
             info: Mutex::new(SessionInfo {
                 id,
                 cwd,
@@ -323,62 +338,107 @@ impl Session {
             Err(error) => self.fail(format!("Encoding terminal input: {error}")),
         }
     }
+    /// Max lock wait and total encode+send time for input since the last call.
+    /// Diagnostic only: the counters are reset by the display summary.
+    pub(crate) fn input_probe(&self) -> (u64, u64, u64) {
+        (
+            self.input_count.swap(0, Ordering::Relaxed),
+            self.input_wait_ns.swap(0, Ordering::Relaxed),
+            self.input_total_ns.swap(0, Ordering::Relaxed),
+        )
+    }
+    fn observe_input(&self, started: Instant, waited: Duration) {
+        self.input_count.fetch_add(1, Ordering::Relaxed);
+        self.input_wait_ns
+            .fetch_max(waited.as_nanos() as u64, Ordering::Relaxed);
+        self.input_total_ns
+            .fetch_max(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+    }
     pub(crate) fn text_input(&self, text: &str) {
+        let started = Instant::now();
         self.input_epoch.fetch_add(1, Ordering::Release);
+        let lock_at = Instant::now();
         let encoded = self.emulator.lock().unwrap().encode_text(text);
+        let waited = lock_at.elapsed();
         self.encoded_input(encoded);
+        self.observe_input(started, waited);
     }
     pub(crate) fn key_input(&self, event: &termlevel_ghostty_vt::KeyEvent<'_>) {
+        let started = Instant::now();
         if event.action != termlevel_ghostty_vt::raw::GHOSTTY_KEY_ACTION_RELEASE {
             self.input_epoch.fetch_add(1, Ordering::Release);
         }
+        let lock_at = Instant::now();
         let encoded = self.emulator.lock().unwrap().encode_key(event);
+        let waited = lock_at.elapsed();
         self.encoded_input(encoded);
-    }
-    pub(crate) fn mouse_input(&self, event: termlevel_ghostty_vt::MouseEvent, cw: u32, lh: u32) {
-        self.mouse_repeat(event, 1, cw, lh);
+        self.observe_input(started, waited);
     }
 
-    /// Encodes `count` copies of one mouse report under a single emulator lock.
-    /// A trackpad flick otherwise locks once per wheel row while the reader is parsing.
-    pub(crate) fn mouse_repeat(
+    /// Encodes mouse reports only when the terminal's current mode accepts
+    /// them. The mode check and the encoding share one lock, so an event can
+    /// never be classified under one mode and encoded under another. Every
+    /// mouse entrance goes through this single ordered path.
+    ///
+    /// Returns `NotReporting` with the hold state observed under the same lock,
+    /// which lets a history scroll avoid a second lock.
+    pub(crate) fn mouse_reports(
         &self,
-        event: termlevel_ghostty_vt::MouseEvent,
-        count: usize,
+        shift: bool,
+        events: &[(termlevel_ghostty_vt::MouseEvent, usize)],
         cw: u32,
         lh: u32,
-    ) {
-        if count == 0 {
-            return;
-        }
+    ) -> MouseReport {
+        let started = Instant::now();
         let mut bytes = Vec::new();
+        let waited;
         {
+            let lock_at = Instant::now();
             let mut emulator = self.emulator.lock().unwrap();
-            for _ in 0..count {
-                match emulator.encode_mouse(event, cw, lh) {
-                    Ok(part) => bytes.extend(part),
-                    Err(error) => {
-                        drop(emulator);
-                        self.fail(format!("Encoding terminal input: {error}"));
-                        return;
+            waited = lock_at.elapsed();
+            if shift || !emulator.mouse_enabled() {
+                return MouseReport::NotReporting {
+                    held: emulator.render_held(),
+                };
+            }
+            for (event, count) in events {
+                for _ in 0..*count {
+                    match emulator.encode_mouse(*event, cw, lh) {
+                        Ok(part) => bytes.extend(part),
+                        Err(error) => {
+                            drop(emulator);
+                            self.fail(format!("Encoding terminal input: {error}"));
+                            return MouseReport::Encoded;
+                        }
                     }
                 }
             }
         }
         if !bytes.is_empty() {
-            // All mouse entrances, including AppKit middle/side buttons, ask
-            // the display to follow before publishing its next window.
+            // All mouse entrances ask the display to follow before its next
+            // published window. A rejected send stays visible; it is not a
+            // delivery guarantee. A realistic event fits one message, so the
+            // sequence is never split; only an absurd burst is chunked.
             self.input_epoch.fetch_add(1, Ordering::Release);
-            self.input(&bytes);
+            if bytes.len() <= 1024 * 1024 {
+                self.input(&bytes);
+            } else {
+                for chunk in bytes.chunks(1024 * 1024) {
+                    self.input(chunk);
+                }
+            }
         }
-    }
-    pub(crate) fn selection_changed(&self) {
-        self.revision.fetch_add(1, Ordering::Release);
+        self.observe_input(started, waited);
+        MouseReport::Encoded
     }
     pub(crate) fn paste(&self, text: &str) {
+        let started = Instant::now();
         self.input_epoch.fetch_add(1, Ordering::Release);
+        let lock_at = Instant::now();
         let encoded = self.emulator.lock().unwrap().encode_paste(text);
+        let waited = lock_at.elapsed();
         self.encoded_input(encoded);
+        self.observe_input(started, waited);
     }
     pub(crate) fn focus_input(&self, focused: bool) {
         let encoded = self.emulator.lock().unwrap().encode_focus(focused);

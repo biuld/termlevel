@@ -1,6 +1,6 @@
 //! AppKit events provide physical key identity, repeats and releases which the
 //! NSH shortcut API does not carry. Only our exact field editor is intercepted.
-use crate::sessions::Session;
+use crate::sessions::{MouseReport, Session};
 use nsh_core::prelude::*;
 use objc2::{MainThreadMarker, rc::Retained};
 use objc2_app_kit::{
@@ -176,9 +176,6 @@ fn process_mouse(e: &NSEvent, weak: &Weak<Session>, id: &str, metrics: &Mutex<(f
     let Some(session) = weak.upgrade() else {
         return false;
     };
-    if !session.emulator.lock().unwrap().mouse_enabled() {
-        return false;
-    }
     let button = match e.buttonNumber() {
         2 => GHOSTTY_MOUSE_BUTTON_MIDDLE,
         3 => GHOSTTY_MOUSE_BUTTON_EIGHT,
@@ -189,23 +186,22 @@ fn process_mouse(e: &NSEvent, weak: &Weak<Session>, id: &str, metrics: &Mutex<(f
     let w = cw.round().max(1.0);
     let h = lh.round().max(1.0);
     let pressed = e.r#type() == NSEventType::OtherMouseDown;
-    session.mouse_input(
-        termlevel_ghostty_vt::MouseEvent {
-            action: if pressed {
-                GHOSTTY_MOUSE_ACTION_PRESS
-            } else {
-                GHOSTTY_MOUSE_ACTION_RELEASE
-            },
-            button: Some(button),
-            modifiers: mods(flags),
-            x: x / cw.max(1.0) * w,
-            y: y / lh.max(1.0) * h,
-            any_button_pressed: pressed,
+    let event = termlevel_ghostty_vt::MouseEvent {
+        action: if pressed {
+            GHOSTTY_MOUSE_ACTION_PRESS
+        } else {
+            GHOSTTY_MOUSE_ACTION_RELEASE
         },
-        w as u32,
-        h as u32,
-    );
-    true
+        button: Some(button),
+        modifiers: mods(flags),
+        x: x / cw.max(1.0) * w,
+        y: y / lh.max(1.0) * h,
+        any_button_pressed: pressed,
+    };
+    matches!(
+        session.mouse_reports(false, &[(event, 1)], w as u32, h as u32),
+        MouseReport::Encoded
+    )
 }
 fn editor_matches(view: &NSView, id: &str, editor: &NSTextView) -> bool {
     if view

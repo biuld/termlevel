@@ -407,3 +407,45 @@ CARGO_NET_OFFLINE=true
 真实 Codex 的连续触控板滚动、输入延迟、实际系统 IME 候选窗、复杂 emoji / fallback / 粗斜体、动画图片压力、多 pane 持续输出及细粒度 AX 日用仍需人工验收。当前原生 renderer 只实现 macOS；其他平台需要自己的后端。没有把 CoreText 路线称作 Ghostty 应用的 Metal / atlas renderer。
 
 运行 `./scripts/nsh run --window-size 1200x780` 验证日用。Kitty file/temp/shared-memory 继续关闭；pane 标题仍为启动路径，未做 OSC7；没有 footer、wheel cancel 或框架补丁。
+
+## 2026-11-14 · 每会话 SurfaceController
+
+在 `main` / `57a846e` 之后的未提交工作树上实现 [终端 Surface 控制器](terminal-surface.md)：每会话一个 `SurfaceController`，唯一 16 ms 帧调度、单一采样入口，删除 `view.rs` 的第二个时钟与 `Grid` 的逐事件捕获。输入路径不排队：键、IME、粘贴、按下 / 释放、报告滚轮都在到达时同步编码；悬停与宿主拖选取最新值、每轮最多应用一次；历史滚轮只更新整数窗口。报告滚轮取消 32 行截断，整数位移全部编码、小数余量保留。所有鼠标入口（含 AppKit 中键 / 侧键）统一走 `Session::mouse_reports`，在同一把锁内判定模式并编码。release 作为屏障同步应用最终格，避免点击清空后被挂起终点重新选区。
+
+### 自动化
+
+- `./scripts/nsh test --junit artifacts/surface-controller-tests.xml`：**112 / 112** 通过。新增 surface 状态机测试覆盖：已贴底时跟随不触发采样、未贴底跟随只采样一次、亚行滚轮累计、一轮最多一次捕获、用户 origin 标记、悬停 / 拖选保留最新值。
+- `view.rs` 纯函数测试：65 / 33 行滚轮位移不被截断；release 使用最终格而不是中间终点。
+- `cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check` 通过。
+- `./scripts/nsh check`、`./scripts/nsh build` 通过。
+
+### macOS AppKit 分项验收
+
+- `./scripts/test-native-input -v`：**1 / 1** 通过。marked text 确认 / 取消、网格光标坐标与输入锚点仍一致。
+- `./scripts/test-native-protocols -v`：**3 / 3** 通过。Kitty 键、PNG、OSC8、拖选复制 / Select All、OSC52、SGR 鼠标报告与读取设置。
+- `./scripts/test-native-ghostty -v`：**2 / 2** 通过。生产工作区默认 shell、Dark / Light、查找、less、ED2 clear。
+- `./scripts/test-native-tiling -v`：**1 / 1** 通过。多 pane 几何、IME 归属与状态在拆分 / 移动后保持。
+- `./scripts/test-native-scroll -v`：**1 / 1** 通过。受控鼠标报告 TUI 滚动 34 s；本次运行原生绘制约 3.4–3.7 ms、NSH 帧率计 55–57 / 60，缓存 2048 行。该数值来自单次运行，不是隔离基准，也不与 25 秒轮次的变化作因果结论。
+
+### 尚未证明
+
+真实 Codex 手感、实际系统输入法候选窗、跨行选区、三层图片动画与多 pane 持续输出仍需用户人工验收。`TERMLEVEL_SURFACE_STATS` 的计数只用于确认采样收敛，不代替输入延迟或端到端帧预算测量。writer 队列满仍沿用原有可见错误语义，未改成独立的瞬时状态。
+
+## 2026-11-15：连续同步输出的展示饥饿
+
+用户实际运行 Codex 和 Claude 后的日志保存于 `artifacts/codex-claude-stutter-before.log`（原 `/tmp/termlevel-codex-stutter.log`）。第 44 行：约 2 秒内 111 次报告滚轮、115 次 revision 变化、126 个 tick，但 125 次 hold 跳过且仅发布一次；连续等待发布达到 2100.8 ms。日志没有程序标签，不能据此分别归因到 Codex / Claude；该时长也不代表单次 2026 事务的持续时间。
+
+修复使贴底窗口能够推进到当前 hold 开始前的完整 owned 边界帧，同一 Arc 复用；历史窗口冻结，不读取未完成的 live cells / 图片 / 屏幕身份。继续保留脏位直到事务结束或超时，以提交最后一帧。详见 [terminal-surface.md](terminal-surface.md)。
+
+本轮验证（macOS arm64 debug）：
+
+- `./scripts/nsh check`、`./scripts/nsh build` 通过。
+- `./scripts/nsh test --junit artifacts/sync-boundary-tests.xml`：**114 / 114**。新增真实 Ghostty 测试连续 160 次“结束上一事务 + 开始下一事务”，每次采样仍处于 hold，要求逐次发布完成帧；另验证同边界复用、未完成文字和切屏隔离。既有历史窗口冻结与 resize 提交用例保留通过。
+- `cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check` 通过。
+- `./scripts/test-native-scroll -v`：**2 / 2**。保留 25 秒常规滚动，并新增真实 PTY / AppKit 滚轮的连续事务场景，要求持续输入时连续六次、每隔 500 ms 的可见帧号都推进。日志：`artifacts/sync-boundary-native-scroll.log`，截图：`artifacts/native-scroll-consecutive-sync.png`。
+- 连续事务场景的三个约 2 秒窗口分别发布 **121 / 116 / 115** 次，最长等待推进约 **22 ms**；原生绘制均值约 **2.6–2.8 ms**。这是受控复现验证，不是实际 Codex / Claude 修复前后的等负载基准，也不是端到端输入延迟测量。
+- 原生回归串行通过：`./scripts/test-native-input -v` **1 / 1**（组合确认 / 取消、切换会话和输入锚点）；`./scripts/test-native-protocols -v` **3 / 3**（键盘、图片、鼠标报告和剪贴板）；`./scripts/test-native-ghostty -v` **2 / 2**（生产 Dark / Light、shell、查找、less 和 clear）。日志均为 `artifacts/sync-boundary-native-{input,protocols,ghostty}.log`。
+
+首次原生测试因沙箱禁止 dev server 监听失败；授予原生测试所需权限后重跑通过。测试宿主链接仍有既有 `__eh_frame` 过大警告。用户实际 Codex / Claude 修复后的手感、持续多 pane 负载尚未复验。
+
+用户随后重新试用并确认“可以了”，本轮 Codex / Claude 滚动卡顿修复获得人工确认。该确认不扩展到持续多 pane、复杂输入法或全部终端兼容性验收。

@@ -4,6 +4,8 @@
 
 状态：原生 NSView renderer 已接入；受控滚动性能有对照，真实 Codex 与日用验收待完成
 
+事件归口、交互策略与唯一帧调度的设计与落地记录见 [终端 Surface 控制器](terminal-surface.md)（已实现）。
+
 ## 问题与边界
 
 Termlevel 使用官方 libghostty-vt 1.0.1 解析终端输出、维护网格和历史、编码输入。它不包含 Ghostty 应用的 renderer、滚动手势或输入法。接通协议不代表已经得到完整终端 surface。
@@ -61,9 +63,9 @@ WindowSnap 是拥有内存的展示窗口，包含 Arc<Frame>、origin、count�
 4. 活动窗口直接克隆 frame.images，行号加活动屏幕起点；只有历史窗口才用独立 image_renderer。活动路径不调用按 State.size.rows 判断的旧 images_at 快路径。
 5. 保留光标和输入锚点所需信息，然后放锁。WindowCapture::finish 在锁外用同一个纯 grid_runs_from 合并活动/历史行并整理可访问文本；原生 renderer 再消费 WindowSnap。safe wrapper 的 native capture 当前仍在锁内复制 viewport，不声称已经实现库级的 begin/end 分离。
 
-同步输出期间，已发布的整个 WindowSnap 保持不动，包括所看的历史、origin、屏幕身份、光标和行列数。用户历史滚轮、搜索 reveal、选择、选区复制和链接打开暂不作用于后台实时屏幕。输入仍编码发送，但请求贴底留待 hold 结束后应用；PTY resize 仍立刻执行。真实库测试确认本项目的 1.0.1 在 resize 时会结束 hold，不能沿用旧 handoff 中「resize 后仍保留 hold」的前提。hold 内切屏本身不结束 hold，也不能提前消费主屏幕 stash。
+同步输出期间不得采样尚未完成的实时屏幕。贴底窗口可发布当前 hold 开始边界已有的 owned Frame（它包含此前已完成的输出），同一边界按 Arc 身份复用。历史窗口仍冻结整个 WindowSnap，包括历史、origin、屏幕身份、光标和行列数。用户历史滚轮、搜索 reveal、选择、选区复制和链接打开暂不作用于后台实时屏幕。输入仍编码发送；PTY resize 仍立刻执行。真实库测试确认本项目的 1.0.1 在 resize 时会结束 hold。hold 内切屏本身不结束 hold，也不能提前消费主屏幕 stash。
 
-如果 surface 初次绑定时已经处于 hold，则用回调在 hold 边界保存的 frame、total_rows 和 screen identity 初始化，贴底展示；不从后台实时屏幕拼接历史。已有 surface 保留最后发布的画面，不要求它与 hold 边界恰好同一帧。
+如果 surface 初次绑定时已经处于 hold，则用回调在 hold 边界保存的 frame、total_rows 和 screen identity 初始化，贴底展示；不从后台实时屏幕拼接历史。已有贴底 surface 同样可以推进到更新的 hold 边界帧；历史 surface 保留最后发布的画面。不能要求轮询恰好落在两次同步事务之间，否则持续滚轮可能导致数秒不发布。
 
 结束、150 ms 超时、EOF 或原生 resize 释放 hold 后，下一次采样一次性发布新窗口。绘制代码仍以 Frame 尺寸为准，不以 State.size 推测帧高；测试分别验证切屏期间冻结与 resize 提交新尺寸。
 
