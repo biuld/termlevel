@@ -29,7 +29,13 @@ src/session_view.rs              按 ID 绑定会话、低频状态通知、唯�
   session_view/view.rs            NSH 绑定：固定格网、原生 Input、事件策略接线
   session_view/window.rs         展示窗口策略；原生内容锚点留在 Ghostty
   session_view/paint.rs          owned 绘制场景、颜色和行语义
-  session_view/native_surface.rs 应用自有 NSView，CoreText / Core Graphics 绘制与缓存
+  session_view/presentation.rs   平台无关的最新场景槽、弱注册表与原生属性绑定
+  session_view/platform/mod.rs   编译期平台选择与终端挂载 / 输入 / 注册入口
+    platform/macos/view.rs       NSView 容器、失效和主线程场景读取
+    platform/macos/renderer.rs   CoreText / Core Graphics 绘制与原生缓存
+    platform/macos/keyboard.rs   AppKit local monitor 与 IME 按键仲裁
+    platform/macos/probe.rs      debug-only 原生输入与绘制验收驱动
+    platform/unsupported.rs      后续平台入口；明确显示 renderer 尚未实现
   session_view/input.rs          组合输入和提交状态
   session_view/keys.rs           NSH 按键到 Ghostty 输入事件的映射
 ```
@@ -90,6 +96,19 @@ reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I
 `InputState` 缓存组合过程，只有结束后提交最终差量；取消删除 marked text 不发送残留拼音。原生值先确认，再通过 NSH `after_answer` 清空，避免 Rust host 属性比较跳过相同的空值；若已进入下一次组合，暂不清空。普通输入处理清空尚未到达平台时的累积值，避免快速输入重复。组合期间暂停终端按键绑定，Enter/方向键/Escape 交给输入法；NSH 脚本回退绑定只在该会话 active 且 Input focused 时生效；生产 local monitor 以 active 授权，避免布局导致 field editor 失焦时丢键。Command 编辑快捷键不占用工作区新建/关闭标签快捷键。
 
 离开 macOS field editor 时，AppKit 可以确认当前 marked text；回调仍绑定旧 `Arc<Session>`，不向新活动会话转发。挂载、隐藏与焦点不拥有 PTY 生命周期。
+
+## 终端平台接入边界
+
+`SessionTerminal` / `view.rs` 只通过 `platform` 挂载 surface、安装物理输入适配与查询 NSH 脚本输入回退。`SurfaceController`、`Window`、`WindowSnap`、`paint::Scene` 和搜索仍属于通用 Rust 路径。发布通道独立在 `presentation.rs`，仅持有 owned `Arc<Scene>`；宿主通过 token 解析槽，每次绘制调用 `Slot::latest()` 克隆最新场景后立即释放锁。原生对象和 PTY 都不属于这个通道。
+
+当前后端在编译期选择，不使用动态插件或通用 renderer trait。新增平台需要：
+
+1. 在 `platform/mod.rs` 选择新的后端，实现 `surface(scene, label)`、`install_input(session, active, cell_width, line_height)` 和 `synthetic_keys()`；debug 驱动可实现对应的 `track`。
+2. 经目标平台的 NSH Native Components 入口注册同名组件 `termlevel.terminal-surface`。`src/lib.rs` 是宿主注册的唯一外部接线点；macOS 使用 `#[native_components(macos)]` → `platform::register_components`。
+3. 使用 `presentation::element` 绑定场景生产闭包与无障碍文本闭包；组件收到 `frame` 属性后通过 `presentation::resolve` 取得槽并请求重绘。复用现有 latest-only 传输及释放语义，不向 JS 传 cell grid。
+4. 平台宿主与 renderer 负责自己的 UI 线程亲和性、字体 / 图片缓存和资源销毁；surface 不截获指针或拥有 PTY。公共 NSH 输入仍负责 IME 提交、粘贴、布局与普通指针，平台输入钩子只补足原生事件能力。
+
+`platform/macos` 是目前唯一实际实现，内部再区分 NSView 宿主、CoreText 绘制、键盘监听和 debug 探针。其他平台有明确的未实现占位入口，尚不能运行真实 renderer。本次只整理终端 surface 边界；Ghostty 预编译库仍仅支持 macOS，系统剪贴板 helper、工作区原生快捷键和其他平台构建 / 打包也需后续接入。不能从这些钩子推导 Windows / Linux 已可编译或通过验收。
 
 ## 原生交互与工作区 UI
 

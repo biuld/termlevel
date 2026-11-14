@@ -123,7 +123,7 @@ impl NativeInputProbe {
                 .find_map(|i| {
                     let root = windows.objectAtIndex(i).contentView()?;
                     let grid = view_with_prefix(&root, &id)?;
-                    super::native_surface::frames(&grid)
+                    super::view::frames(&grid)
                 })
                 .ok_or_else(|| "no Termlevel native surface".to_owned())
         })

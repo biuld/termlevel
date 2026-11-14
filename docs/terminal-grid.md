@@ -77,7 +77,7 @@ WindowSnap 是拥有内存的展示窗口，包含 Arc<Frame>、origin、count�
 
 ### 原生嵌入与线程边界
 
-src/session_view/native_surface.rs 的 TermlevelTerminalSurface 是实际 NSView 子类。src/lib.rs 在 app crate 根通过 #[native_components(macos)] 注册；NSH 的 development host 与打包宿主负责调用。NSH 只创建容器、设置几何并发送失效属性，绘制不调用 NSH fill_text。
+src/session_view/platform/macos/view.rs 的 TermlevelTerminalSurface 是实际 NSView 子类。src/lib.rs 在 app crate 根通过 #[native_components(macos)] 注册；NSH 的 development host 与打包宿主负责调用。NSH 只创建容器、设置几何并发送失效属性，绘制不调用 NSH fill_text。
 
 引擎线程持有 Publisher，以 Arc<Scene> 发布完整的 owned snapshot、PaintConfig、搜索命中与当前索引。主线程通过受互斥保护的槽取得最新场景；读取锁只用于克隆 Arc，绘制期间不持有槽锁或 Session.emulator 锁。积压场景覆盖而不排队。跨 NSH 的 frame 属性只有槽 ID 和 revision 两个标量，没有 cells、文字数组或图片像素；这条 Rust 属性不经过 TSX。
 

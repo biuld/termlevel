@@ -58,6 +58,8 @@
 - [x] 真实会话使用 Rust 固定单元格网格，原生 Input 随展示窗口的光标定位；组合文字显示、确认/取消与会话切换归属有 AppKit 自动化证据。
 - [x] 每会话 `SurfaceController`：唯一 16 ms 帧调度与单一采样入口，报告滚轮不再丢弃整数位移，悬停 / 宿主拖选在轮内合并，中键 / 侧键与普通鼠标走同一条输入路径。设计和计数见 [终端 Surface 控制器](terminal-surface.md)。
 - [x] 按终端网格列号锚定宽字符与组合字符；共享显示与查询调色板。
+- [x] 终端平台边界：通用场景发布与 controller 独立于 `platform/macos` 的 NSView、CoreText renderer、键盘监听和探针；为后续平台保留挂载、输入与宿主注册入口。
+- [ ] 接入其他平台的原生 renderer、输入适配、Ghostty 构建产物与系统服务；当前入口占位不代表跨平台已可运行。
 - [x] 连续同步输出事务的贴底展示复用 owned 边界帧，不依赖轮询命中事务间隙；实际 Codex / Claude 修复后手感仍需复验。
 - [ ] 实际系统输入法候选列表、复杂组合序列、emoji、跨行选区和复制人工验收。
 - 在 Ghostty 内核之上继续验证样式、输入模式、选区和 renderer 的表达范围。固定格网已替换生产虚拟列表，见 [终端格网设计](terminal-grid.md)：自有 AppKit NSView renderer、字体/CTLine 缓存、稳定历史锚点、完整 hold 窗口与分步查找；受控鼠标报告 TUI 有性能对照，真实 Codex 手感仍待验收。

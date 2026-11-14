@@ -1,11 +1,7 @@
-//! Termlevel's renderer: an actual NSView embedded through NSH's public hook.
-//! The engine publishes owned snapshots; only the main thread owns CoreText/CG
-//! objects. The scalar prop is an invalidation token, never serialized cells.
-use super::paint::{PaintConfig, Scene, image_rect};
-use nsh_core::JsonValue;
-use nsh_platform_macos::{Components, NativeComponent};
-use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, rc::Retained};
-use objc2_app_kit::{NSFont, NSFontWeightRegular, NSGraphicsContext, NSView};
+//! macOS CoreText/CoreGraphics drawing and bounded main-thread caches.
+use crate::session_view::paint::{PaintConfig, Scene, image_rect};
+use objc2::rc::Retained;
+use objc2_app_kit::{NSFont, NSFontWeightRegular};
 use objc2_core_foundation::{
     CFAttributedString, CFBoolean, CFData, CFDictionary, CFMutableAttributedString, CFNumber,
     CFRange, CFRetained, CFString, CFType, CGAffineTransform, CGPoint, CGRect, CGSize,
@@ -19,120 +15,7 @@ use objc2_core_text::{
     kCTFontFamilyNameAttribute, kCTForegroundColorFromContextAttributeName,
     kCTLigatureAttributeName,
 };
-use objc2_foundation::{NSObjectProtocol, NSPoint, NSRect};
-use std::{
-    cell::{Cell, RefCell},
-    collections::HashMap,
-    ptr::NonNull,
-    rc::Rc,
-    sync::{
-        Arc, Mutex, OnceLock, Weak,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::Instant,
-};
-
-const NAME: &str = "termlevel.terminal-surface";
-type Slots = HashMap<u64, Weak<Slot>>;
-fn slots() -> &'static Mutex<Slots> {
-    static SLOTS: OnceLock<Mutex<Slots>> = OnceLock::new();
-    SLOTS.get_or_init(Mutex::default)
-}
-struct Slot {
-    id: u64,
-    scene: Mutex<Option<Arc<Scene>>>,
-    revision: AtomicU64,
-}
-impl Drop for Slot {
-    fn drop(&mut self) {
-        slots().lock().unwrap().remove(&self.id);
-    }
-}
-#[derive(Clone)]
-pub(super) struct Publisher(Arc<Slot>);
-impl Publisher {
-    pub fn new() -> Self {
-        static NEXT: AtomicU64 = AtomicU64::new(1);
-        let slot = Arc::new(Slot {
-            id: NEXT.fetch_add(1, Ordering::Relaxed),
-            scene: Mutex::new(None),
-            revision: AtomicU64::new(0),
-        });
-        slots()
-            .lock()
-            .unwrap()
-            .insert(slot.id, Arc::downgrade(&slot));
-        Self(slot)
-    }
-    pub fn publish(&self, scene: Scene) -> JsonValue {
-        *self.0.scene.lock().unwrap() = Some(Arc::new(scene));
-        let rev = self.0.revision.fetch_add(1, Ordering::Relaxed) + 1;
-        JsonValue::Array(vec![self.0.id.into(), rev.into()])
-    }
-}
-
-pub(crate) fn register(components: &Components) {
-    components.register(
-        NAME,
-        Rc::new(|_| {
-            let mtm = MainThreadMarker::new().expect("native components mount on main thread");
-            let view = Surface::alloc(mtm).set_ivars(Ivars::default());
-            // SAFETY: initialize the allocated NSView subclass once.
-            let view: Retained<Surface> =
-                unsafe { msg_send![super(view), initWithFrame: NSRect::ZERO] };
-            view.setWantsLayer(true);
-            Box::new(Component(view))
-        }),
-    );
-}
-pub(super) fn element() -> nsh_core::element::NativeView {
-    nsh_core::element::native(NAME)
-}
-struct Component(Retained<Surface>);
-impl NativeComponent for Component {
-    fn view(&self) -> Retained<NSView> {
-        self.0.clone().into_super()
-    }
-    fn set_prop(&mut self, name: &str, value: Option<&JsonValue>) {
-        if name != "frame" {
-            return;
-        }
-        let id = value.and_then(|v| v.get(0)).and_then(JsonValue::as_u64);
-        let slot = id.and_then(|id| slots().lock().unwrap().get(&id).and_then(Weak::upgrade));
-        *self.0.ivars().slot.borrow_mut() = slot;
-        self.0.setNeedsDisplay(true);
-    }
-}
-#[derive(Default)]
-struct Ivars {
-    frames: Cell<u32>,
-    slot: RefCell<Option<Arc<Slot>>>,
-    renderer: RefCell<Renderer>,
-}
-define_class!(
-    #[unsafe(super(NSView))]
-    #[thread_kind = MainThreadOnly]
-    #[name = "TermlevelTerminalSurface"]
-    #[ivars = Ivars]
-    struct Surface;
-    unsafe impl NSObjectProtocol for Surface {}
-    impl Surface {
-        #[unsafe(method(isFlipped))]
-        fn flipped(&self) -> bool { true }
-        // The NSH grid parent owns all pointer handling. This drawing view must
-        // not become a second mouse responder or steal the field editor.
-        #[unsafe(method_id(hitTest:))]
-        fn hit_test(&self, _point: NSPoint) -> Option<Retained<NSView>> { None }
-        #[unsafe(method(drawRect:))]
-        fn draw(&self, _rect: NSRect) {
-            let scene = self.ivars().slot.borrow().as_ref()
-                .and_then(|s| s.scene.lock().unwrap().clone());
-            let (Some(scene), Some(context)) = (scene, NSGraphicsContext::currentContext()) else { return; };
-            self.ivars().renderer.borrow_mut().draw(&context.CGContext(), &scene);
-            self.ivars().frames.set(self.ivars().frames.get().saturating_add(1));
-        }
-    }
-);
+use std::{collections::HashMap, ptr::NonNull, rc::Rc, sync::Arc, time::Instant};
 
 /// Only immutable layout is cached: selection, color and search are painted
 /// from the current scene. Bounded by both entry count and source bytes.
@@ -150,7 +33,7 @@ struct CachedText {
     used: u64,
 }
 #[derive(Default)]
-struct Renderer {
+pub(super) struct Renderer {
     font_key: Option<(String, u32)>,
     fonts: HashMap<u8, CFRetained<CTFont>>,
     lines: HashMap<TextKey, CachedText>,
@@ -239,7 +122,7 @@ impl Renderer {
         );
         shaped
     }
-    fn draw(&mut self, context: &CGContext, scene: &Scene) {
+    pub(super) fn draw(&mut self, context: &CGContext, scene: &Scene) {
         let start = Instant::now();
         let cfg = &scene.config;
         let snap = &scene.snap;
@@ -391,7 +274,7 @@ impl Renderer {
                     self.fonts.len()
                 );
                 eprintln!("{line}");
-                super::diag::line(&line);
+                crate::session_view::diag::line(&line);
             }
             self.frames = 0;
             self.elapsed = 0.0;
@@ -536,15 +419,6 @@ fn rgba_image(pixels: &termlevel_ghostty_vt::Pixels) -> Option<CFRetained<CGImag
             CGColorRenderingIntent::RenderingIntentDefault,
         )
     }
-}
-
-#[cfg(debug_assertions)]
-pub(super) fn frames(view: &NSView) -> Option<u32> {
-    if let Some(surface) = view.downcast_ref::<Surface>() {
-        return Some(surface.ivars().frames.get());
-    }
-    let children = view.subviews();
-    (0..children.count()).find_map(|i| frames(&children.objectAtIndex(i)))
 }
 
 #[cfg(test)]
@@ -802,34 +676,5 @@ mod tests {
             face: 0
         }));
         assert_eq!(renderer.fonts.len(), 1);
-    }
-
-    #[test]
-    fn publisher_is_latest_frame_only_and_lifetime_does_not_own_a_session() {
-        let publisher = Publisher::new();
-        let id = publisher.0.id;
-        let first = publisher.publish(scene());
-        let old = publisher
-            .0
-            .scene
-            .lock()
-            .unwrap()
-            .as_ref()
-            .map(Arc::downgrade)
-            .unwrap();
-        let next = publisher.publish(scene());
-        assert_eq!(first[0], next[0]);
-        assert_ne!(first[1], next[1]);
-        assert!(old.upgrade().is_none(), "pending frames must coalesce");
-        drop(publisher);
-        assert!(!slots().lock().unwrap().contains_key(&id));
-    }
-
-    #[test]
-    fn semantic_adapter_records_no_drawing_operations() {
-        let scene = scene();
-        let drawing = super::super::paint::semantics(&scene.snap, 10.0, 20.0).finish();
-        assert!(drawing.ops.is_empty());
-        assert!(!drawing.nodes.is_empty());
     }
 }

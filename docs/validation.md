@@ -462,3 +462,19 @@ CARGO_NET_OFFLINE=true
 - `cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check` 通过。
 
 原生测试使用所需的沙箱外本地测试服务权限；宿主链接仍有既有 `__eh_frame` 警告。以上为受控位图和真实原生窗口验证，用户截图中实际 Codex resume 界面尚未由用户复验。
+
+## 2026-11-15：终端 renderer 的平台边界整理
+
+旧 `native_surface.rs` 分为平台无关的 `presentation.rs`（最新场景槽 / 弱注册表 / 属性绑定）、`platform/macos/view.rs`（NSView 宿主）和 `platform/macos/renderer.rs`（CoreText / Core Graphics 绘制及缓存）。原 `keyboard.rs`、`native_probe.rs` 同步移入 macOS 后端。通用 `view.rs` 经 `platform` 接入 surface 与输入，不再包含 macOS 条件编译或引用具体后端；只有 crate 根的宿主注册入口需要平台类型。新增后端的具体契约见 [architecture.md](architecture.md)。
+
+源码对照确认 renderer 主体、键盘与原生探针保持原有逻辑，仅调整模块可见性和引用路径。共享发布测试迁出 macOS renderer，并增加 token 解析、宿主持槽和最后释放后 token 失效的验证。会话生命周期、同步输出修复、背景像素边界、NSH 0.5.0 与目标平台依赖版本均未改变。
+
+本轮验证（macOS arm64）：
+
+- `./scripts/nsh check`、`./scripts/nsh build` 通过。
+- `./scripts/nsh test --junit artifacts/platform-boundary-tests.xml`：**116 / 116**，日志 `artifacts/platform-boundary-tests.log`。
+- 原生脚本串行通过：Input **1 / 1**、Protocols **4 / 4**、生产 Ghostty Dark / Light **2 / 2**、Scroll **2 / 2**（包括连续同步事务）。日志为 `artifacts/platform-boundary-native-{input,protocols,ghostty,scroll}.log`。已查看更新后的 `artifacts/native-continuous-backgrounds.png`，高亮色带连续。
+- `cargo clippy --workspace --all-targets -- -D warnings`、fmt 和 diff check 通过。
+- `cargo check --release -p termlevel-native` 通过；当前诊断代码仍产生 unused imports / dead code 警告，release 未声称 warning-free。
+
+本次只有 macOS 后端通过构建与原生验收。非 macOS 的 `unsupported.rs` 为明确占位，尚未进行目标平台编译；Ghostty 预编译提取仍只支持 macOS。系统剪贴板、工作区原生快捷键和其他平台的构建 / 打包仍是后续任务。

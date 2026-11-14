@@ -1,5 +1,7 @@
 //! A fixed terminal grid. Rust owns snapshots and native drawing; NSH owns layout.
-use super::{SessionTerminalProps, input::InputState, keys, paint, surface::SurfaceController};
+use super::{
+    SessionTerminalProps, input::InputState, keys, paint, platform, surface::SurfaceController,
+};
 use crate::{
     sessions::{MouseReport, Session},
     terminal::{GridRun, SearchHit},
@@ -285,8 +287,8 @@ impl Display {
             reset: Cell::new(Instant::now()),
             started: Instant::now(),
         };
-        #[cfg(all(debug_assertions, target_os = "macos"))]
-        super::native_probe::track(display.session.info().id, display.input, display.cursor_ref);
+        #[cfg(debug_assertions)]
+        platform::track(display.session.info().id, display.input, display.cursor_ref);
         Ok(display)
     }
 
@@ -600,8 +602,7 @@ impl Display {
 
     pub fn element(&self, cx: Scope<super::SessionTerminalEvent>) -> impl IntoElement + use<> {
         self.bind_keys();
-        #[cfg(target_os = "macos")]
-        super::keyboard::install(
+        platform::install_input(
             self.session.clone(),
             self.props.active,
             self.cell_width,
@@ -806,33 +807,18 @@ impl Display {
     fn native_paint(&self) -> impl IntoElement + use<> {
         let display = self.clone();
         let snap = self.surface.snap();
-        #[cfg(target_os = "macos")]
-        {
-            let publisher = super::native_surface::Publisher::new();
-            super::native_surface::element()
-                .prop("frame", move || {
-                    display.search.rev.get();
-                    publisher.publish(paint::Scene {
-                        snap: display.surface.snap().get(),
-                        config: display.paint_config(),
-                        hits: display.search.hits.borrow().clone(),
-                        current: display.search.index.get(),
-                    })
-                })
-                .absolute()
-                .inset_0()
-                .role(AccessibilityRole::Text)
-                .label(move || SharedString::from(snap.get().text.clone()))
-                .pointer_events(PointerEvents::None)
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = display;
-            view()
-                .absolute()
-                .inset_0()
-                .label(move || SharedString::from(snap.get().text.clone()))
-        }
+        platform::surface(
+            move || {
+                display.search.rev.get();
+                paint::Scene {
+                    snap: display.surface.snap().get(),
+                    config: display.paint_config(),
+                    hits: display.search.hits.borrow().clone(),
+                    current: display.search.index.get(),
+                }
+            },
+            move || SharedString::from(snap.get().text.clone()),
+        )
     }
 
     fn sink(&self, cx: Scope<super::SessionTerminalEvent>) -> impl IntoElement + use<> {
@@ -952,14 +938,7 @@ fn button(b: MouseButton) -> u32 {
 }
 
 fn synthetic_keys() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        super::keyboard::synthetic_keys()
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        true
-    }
+    platform::synthetic_keys()
 }
 
 /// Whole rows in one report-mode delta. There is deliberately no upper bound:

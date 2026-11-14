@@ -13,7 +13,7 @@ use nsh_core::prelude::*;
 #[native_module("termlevel/native")]
 fn native(registry: &mut Registry) {
     #[cfg(all(debug_assertions, target_os = "macos"))]
-    registry.module::<session_view::native_probe::NativeInputProbe>();
+    registry.module::<session_view::platform::NativeInputProbe>();
     registry
         .module::<runtime::Runtime>()
         .module::<sessions::Sessions>()
@@ -28,5 +28,5 @@ fn native(registry: &mut Registry) {
 #[cfg(target_os = "macos")]
 #[native_components(macos)]
 fn native_components(components: &nsh_platform_macos::Components) {
-    session_view::native_surface::register(components);
+    session_view::platform::register_components(components);
 }

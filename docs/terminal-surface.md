@@ -4,11 +4,13 @@
 
 状态：**已实现并接入**（`src/session_view/surface.rs`）。上文保留设计时对【现状】的核对；落地差异见文末「落地记录」。原生 GUI 手感仍待用户人工验收。
 
+模块路径更新（2026-11-15）：通用发布通道已抽到 `presentation.rs`；自定义 NSView 与绘制分别位于 `platform/macos/view.rs`、`platform/macos/renderer.rs`，物理输入位于 `platform/macos/keyboard.rs`。通用视图通过 `platform` 接入；新增后端契约见 [architecture.md](architecture.md) 的“终端平台接入边界”。下方带旧行号的缺口表保留为设计前快照。
+
 ## 范围
 
 这一层是 NSH / AppKit 与 Rust `Session` 之间的一个 controller，每个 session 一个。它归一化事件、决定交互策略、登记失效，并调度唯一一次必要的快照与发布。
 
-它**不**是通用事件总线，不重写终端协议，不替换 Ghostty 解析器，不改 NSH，不新增编码器。协议字节仍由 `crates/ghostty-vt` 的 `encode_*` 产生；PTY、进程、Ghostty 状态仍由 `SessionManager` / `Session` 拥有；绘制仍是 `native_surface.rs` 的自有 NSView；TSX 仍只挂载组件和接收低频事件。
+它**不**是通用事件总线，不重写终端协议，不替换 Ghostty 解析器，不改 NSH，不新增编码器。协议字节仍由 `crates/ghostty-vt` 的 `encode_*` 产生；PTY、进程、Ghostty 状态仍由 `SessionManager` / `Session` 拥有；绘制仍是 `platform/macos/view.rs` 的自有 NSView；TSX 仍只挂载组件和接收低频事件。
 
 目标不是"把所有事件都异步化"，而是让每一类事件找到正确所有权：
 
@@ -45,7 +47,7 @@ AppKit 主线程                        引擎线程                            
 ```
 
 - **引擎线程**：NSH 组件函数、`effect`、`set_interval` 回调、键位绑定和指针处理器都在这里，不在 AppKit 主线程（NSH 0.5.0 用 `run_on_main_thread` 才把任务交给 UI 线程）。`SurfaceController`、`Window`、`Signal`、`Search` 全部只属于这条线程。
-- **AppKit 主线程**：`keyboard.rs` 的 local monitor 直接编码物理键与中键 / 侧键，再交给 writer；`native_surface.rs` 的 `drawRect` 只从场景槽克隆 `Arc<Scene>`。两处都不等待引擎线程。
+- **AppKit 主线程**：`platform/macos/keyboard.rs` 的 local monitor 直接编码物理键与中键 / 侧键，再交给 writer；`platform/macos/view.rs` 的 `drawRect` 只从场景槽克隆 `Arc<Scene>`。两处都不等待引擎线程。
 - **reader 线程**：持有 `Session.emulator` 解析字节，释放后 `revision += 1`。它不接触 controller 状态。
 - **reaper / writer**：只碰 `control` 与 `info`。
 
@@ -213,7 +215,7 @@ SurfaceController
 - 报告滚轮的 `min(32)` 丢弃。
 - `session_view.rs` 与 `view.rs` 各自持有的 revision / epoch 观察副本。
 
-`Window`、`paint.rs`、`native_surface.rs`、`keyboard.rs` 的职责不变；`Search` 从 `view.rs` 原样移到独立模块即可，不改语义。
+`Window`、`paint.rs`、`platform/macos/view.rs`、`platform/macos/keyboard.rs` 的职责不变；`Search` 从 `view.rs` 原样移到独立模块即可，不改语义。
 
 ## 测试计划
 
@@ -244,7 +246,7 @@ SurfaceController
 
 1. 本设计。
 2. 纯状态机与可控时钟测试。
-3. 引入 `SurfaceController`，收拢两个时钟与全部 capture 入口；`keyboard.rs` 的中键 / 侧键继续走同一条输入路径。
+3. 引入 `SurfaceController`，收拢两个时钟与全部 capture 入口；`platform/macos/keyboard.rs` 的中键 / 侧键继续走同一条输入路径。
 4. 加 debug 计数并做同负载对照。
 5. 删除旧入口，更新 `architecture.md`、`terminal-grid.md`、`roadmap.md` 与 `validation.md`。
 

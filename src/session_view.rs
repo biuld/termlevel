@@ -2,14 +2,10 @@
 
 mod diag;
 mod input;
-#[cfg(target_os = "macos")]
-mod keyboard;
 mod keys;
-#[cfg(all(debug_assertions, target_os = "macos"))]
-pub(crate) mod native_probe;
-#[cfg(target_os = "macos")]
-pub(crate) mod native_surface;
 mod paint;
+pub(crate) mod platform;
+mod presentation;
 mod surface;
 mod view;
 pub(crate) mod window;

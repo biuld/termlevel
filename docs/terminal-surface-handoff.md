@@ -4,6 +4,8 @@
 
 > 历史交接快照：下文“尚未实现”和工作区状态描述对应当时的交接。当前 controller 已接入，2026-11-15 又修复连续同步事务的发布饥饿。接手请以 [terminal-surface.md](terminal-surface.md)、[validation.md](validation.md) 和实际 git status 为准。
 
+> 后续模块整理：旧 `native_surface.rs` 已拆为通用 `presentation.rs`、`platform/macos/view.rs` 与 `platform/macos/renderer.rs`；`keyboard.rs`、`native_probe.rs` 分别迁至 `platform/macos/keyboard.rs`、`platform/macos/probe.rs`。下文路径保留作历史记录，当前接入契约见 [architecture.md](architecture.md) 的“终端平台接入边界”。
+
 ## 当前任务与工作区
 
 仓库：`/Users/biu/Projects/termlevel`，分支 `main`。
