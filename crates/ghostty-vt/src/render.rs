@@ -58,6 +58,7 @@ impl TryFrom<sys::GhosttyStyleColor> for StyleColor {
 }
 
 /// Original colors and every style bit are preserved, including underline kind.
+/// Cell snapshots fold background-only content tags into `background` as well.
 /// Flags use the `GHOSTTY_STYLE_FLAG_*` masks in [`crate::raw`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Style {
@@ -65,6 +66,50 @@ pub struct Style {
     pub background: StyleColor,
     pub underline_color: StyleColor,
     pub flags: u16,
+}
+
+impl Style {
+    /// Empty cells can store their background in the packed content instead
+    /// of the style table (notably BCE/erase operations). Preserve palette
+    /// indices so later palette changes still apply to historical cells.
+    pub(super) fn with_cell_background(mut self, cell: sys::GhosttyCell) -> Result<Self> {
+        let mut tag = sys::GHOSTTY_CELL_CONTENT_CODEPOINT;
+        // SAFETY: the packed cell is copied from a serialized native snapshot;
+        // every key below writes its documented fixed type.
+        check(unsafe {
+            sys::ghostty_cell_get(
+                cell,
+                sys::GHOSTTY_CELL_DATA_CONTENT_TAG,
+                (&mut tag as *mut sys::GhosttyCellContentTag).cast(),
+            )
+        })?;
+        match tag {
+            sys::GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE => {
+                let mut index: sys::GhosttyColorPaletteIndex = 0;
+                check(unsafe {
+                    sys::ghostty_cell_get(
+                        cell,
+                        sys::GHOSTTY_CELL_DATA_COLOR_PALETTE,
+                        (&mut index as *mut sys::GhosttyColorPaletteIndex).cast(),
+                    )
+                })?;
+                self.background = StyleColor::Palette(index);
+            }
+            sys::GHOSTTY_CELL_CONTENT_BG_COLOR_RGB => {
+                let mut rgb = sys::GhosttyColorRgb::default();
+                check(unsafe {
+                    sys::ghostty_cell_get(
+                        cell,
+                        sys::GHOSTTY_CELL_DATA_COLOR_RGB,
+                        (&mut rgb as *mut sys::GhosttyColorRgb).cast(),
+                    )
+                })?;
+                self.background = StyleColor::Rgb(rgb.into());
+            }
+            _ => {}
+        }
+        Ok(self)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -351,12 +396,7 @@ impl RenderState {
                     wide,
                     selected,
                     hyperlink,
-                    style: Style {
-                        foreground: style.fg_color.try_into()?,
-                        background: style.bg_color.try_into()?,
-                        underline_color: style.underline_color.try_into()?,
-                        flags: style.flags,
-                    },
+                    style: Style::try_from(style)?.with_cell_background(raw_cell)?,
                 });
             }
             lines.push(Row {

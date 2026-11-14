@@ -99,6 +99,8 @@ reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I
 
 ## 终端平台接入边界
 
+空白格的背景来源属于 Ghostty 安全封装：活动帧与历史行均将 packed cell 的背景 content tag 合入 owned `Cell.style.background`。字形的格子适配属于平台 renderer：macOS 对画线 / 块字符复用系统等宽字体的矢量轮廓及共享参考平面，普通文字继续使用 CoreText 文本路径；不在 Session 或 TSX 中维护字形表。
+
 `SessionTerminal` / `view.rs` 只通过 `platform` 挂载 surface、安装物理输入适配与查询 NSH 脚本输入回退。`SurfaceController`、`Window`、`WindowSnap`、`paint::Scene` 和搜索仍属于通用 Rust 路径。发布通道独立在 `presentation.rs`，仅持有 owned `Arc<Scene>`；宿主通过 token 解析槽，每次绘制调用 `Slot::latest()` 克隆最新场景后立即释放锁。原生对象和 PTY 都不属于这个通道。
 
 当前后端在编译期选择，不使用动态插件或通用 renderer trait。新增平台需要：

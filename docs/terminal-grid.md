@@ -103,6 +103,12 @@ NSView 是透明、flipped 的绘制子视图，hitTest 返回 nil，NSH 容器�
 
 背景不跟随文字 shaping 分段：每行相邻且有效背景色相同的 run（含 inverse 与宿主选区）合并为连续色带。背景矩形的共享边界经当前 CGContext 转到 device space 后统一取整，再转回 point；只在背景阶段关闭几何抗锯齿，之后恢复 CGContext 状态。这样小数 cell 宽高、Retina scale 与视图原点偏移不会在文字分段或相邻行之间产生透明缝，文字仍保留原有抗锯齿和格子定位。不同背景色共用同一像素边界，不用矩形重叠掩盖缝隙。
 
+Ghostty 的空白格不一定通过 style 保存背景，擦除和填充可使用 packed cell 的 `BG_COLOR_RGB` / `BG_COLOR_PALETTE` content tag。安全封装统一将这些来源合入 `Cell.style.background`，活动 RenderState、hold 边界和历史 `screen_row` 共用同一规则；调色板索引保留，不提前固定成 RGB。宿主不得只读原始 style 而丢掉空白格背景。
+
+U+2500–U+259F 的单标量画线 / 块字符使用系统等宽字体提供的矢量轮廓，不维护手写字符形状表。它们按统一参考平面映射到完整、像素对齐的格子：块字符以 `█` 的轮廓为参考，画线以 `─` / `│` 的连接坐标为参考。每族共用变换，保留半块、象限及线条连接的比例；不按每个字符自身包围盒拉满。轮廓和参考平面缓存由 macOS renderer 持有，字体尺寸变化时失效。图形字形不随用户普通字体的粗斜体变体改变，颜色、dim、inverse 和背景仍沿用场景策略；普通文字继续走原来的 CoreText 字体 / 基线 / 抗锯齿路径。无可用轮廓时回退到文字绘制。
+
+这是应用 renderer 的字形适配，不是调用 Ghostty 应用的 sprite renderer。固定 libghostty-vt 1.0.1 的 C ABI 未导出后者；后续若接入另一套字形渲染后端，应在平台 renderer 内替换，保持终端数据与 scene 契约。
+
 renderer 缓存所选字体的普通/粗体/斜体/粗斜体，缓存 CTLine 的键为文字与字面样式。family 或 size 改变时清掉字体和文字缓存；颜色、选区、搜索不参与 shaping 键。文字缓存最多 2048 项和 256 KiB 源文字，按最近使用淘汰。缓存上限不是 CoreText 对象的绝对内存上限，CoreText 自身内存需要持续输出压力测试。
 
 图片继续消费已复制 RGBA；原生 CGImage 按 Arc<Pixels> 身份缓存，仅保留当前快照引用的像素。源裁剪、偏移、缩放和三层顺序保留，动画 generation 换像素时重建。没有每帧整屏 raster、图片编码或 ImageSrc 上传。Kitty file/temp/shared-memory medium 继续关闭。

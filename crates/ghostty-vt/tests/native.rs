@@ -1,6 +1,80 @@
 use termlevel_ghostty_vt::{raw as ffi, *};
 
 #[test]
+fn erased_cell_backgrounds_survive_active_hold_and_history_snapshots() -> Result<()> {
+    for (sgr, expected) in [
+        (
+            "48;2;55;65;75",
+            StyleColor::Rgb(Color {
+                r: 55,
+                g: 65,
+                b: 75,
+            }),
+        ),
+        ("48;5;4", StyleColor::Palette(4)),
+    ] {
+        let mut terminal = Terminal::new(8, 3)?;
+        terminal.write(
+            format!("\x1b[{sgr}m\x1b[2J\x1b[HA\x1b[K\x1b[2;1H\x1b[2K\x1b[3;1HB\x1b[K\x1b[0m")
+                .as_bytes(),
+        )?;
+        let mut renderer = RenderState::new()?;
+        let frame = renderer.capture(&mut terminal)?;
+        for (row, line) in frame.lines.iter().enumerate() {
+            assert_eq!(line.cells.len(), 8);
+            for cell in &line.cells {
+                assert_eq!(
+                    cell.style.background, expected,
+                    "active row {row} col {}",
+                    cell.column
+                );
+            }
+            assert!(
+                terminal
+                    .screen_row(row)?
+                    .iter()
+                    .all(|c| c.style.background == expected)
+            );
+        }
+        terminal.write(b"\x1b[?2026h\x1b[2JSECRET")?;
+        let held = renderer.capture(&mut terminal)?;
+        assert!(
+            held.lines
+                .iter()
+                .flat_map(|r| &r.cells)
+                .all(|c| c.style.background == expected)
+        );
+        terminal.write(b"\x1b[?2026l")?;
+        // Independently paint and scroll a background-only row into history.
+        terminal.write(format!("\x1b[H\x1b[{sgr}m\x1b[2K\x1b[0m\x1b[3;1H\r\n").as_bytes())?;
+        assert!(
+            terminal
+                .screen_row(0)?
+                .iter()
+                .all(|c| c.style.background == expected)
+        );
+        if expected == StyleColor::Palette(4) {
+            terminal.write(b"\x1b]4;4;#123456\x1b\\")?;
+            assert!(
+                terminal
+                    .screen_row(0)?
+                    .iter()
+                    .all(|c| c.style.background == expected)
+            );
+            assert_eq!(
+                renderer.capture(&mut terminal)?.palette[4],
+                Color {
+                    r: 0x12,
+                    g: 0x34,
+                    b: 0x56
+                }
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn terminal_and_renderer_can_move_between_serialized_threads() -> Result<()> {
     use std::sync::{Arc, Mutex};
     let terminal = Arc::new(Mutex::new(Terminal::new(80, 24)?));

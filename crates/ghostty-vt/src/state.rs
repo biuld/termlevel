@@ -550,7 +550,7 @@ impl Terminal {
                 column,
                 text,
                 wide,
-                style: style.try_into()?,
+                style: Style::try_from(style)?.with_cell_background(raw_cell)?,
                 selected,
                 hyperlink,
             });

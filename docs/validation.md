@@ -478,3 +478,21 @@ CARGO_NET_OFFLINE=true
 - `cargo check --release -p termlevel-native` 通过；当前诊断代码仍产生 unused imports / dead code 警告，release 未声称 warning-free。
 
 本次只有 macOS 后端通过构建与原生验收。非 macOS 的 `unsupported.rs` 为明确占位，尚未进行目标平台编译；Ghostty 预编译提取仍只支持 macOS。系统剪贴板、工作区原生快捷键和其他平台的构建 / 打包仍是后续任务。
+
+## 2026-11-15：图形字形断裂与空白格背景丢失
+
+用户提供 Termlevel 和正常终端的 Codex / Claude 对照截图：块字符图标上下断开、画线出现接缝，提示区域背景只跟随文字长度而形成阶梯。诊断用真实 PTY 输出相同 Unicode 字符及带背景色的 `EL` / `ED` 指令，截图 `artifacts/glyph-audit-before.png` 已确认复现。
+
+背景根因在安全封装：只读取原始 style，漏读空白格 packed cell 的 RGB / palette 背景 content tag。新增真实库测试在修复前失败于活动帧第 0 行第 1 列（实际 Default，预期 RGB），日志 `artifacts/erased-background-red.log`。现在活动帧、hold 回调帧与历史行共用 `Style::with_cell_background`，并保留 palette 索引以跟随 OSC4 更新；renderer 无需猜测空白区域的颜色。
+
+图形字符不再按普通文字基线和行距绘制。macOS renderer 复用系统等宽字体选出的矢量轮廓（含 CoreText fallback），按块 / 画线族的共享参考平面映射到完整像素格，避免 raster hinting 缩边；半块与象限保持相对比例。普通文字继续使用用户选择的字体和原文字路径。未引入手写字符形状表，也未接入 Ghostty 应用内部 sprite ABI；现有 libghostty-vt 1.0.1 没有导出该 renderer。参考平面与轮廓在原有有界 renderer 缓存中复用。
+
+本轮验证（macOS arm64 debug）：
+
+- `./scripts/nsh check`、`./scripts/nsh build` 通过。
+- `./scripts/nsh test --junit artifacts/graphics-background-tests.xml`：**120 / 120**，日志 `artifacts/graphics-background-tests.log`。新增覆盖 RGB / palette 空白背景、EL / ED、活动 / held / 历史快照和 OSC4；原生位图逐像素验证完整背景、实心块覆盖、半块比例，以及细线 / 粗线 / 双线边框跨格、跨行连接。普通字体选择切换为 Menlo / Monaco / monospace 时图形比例仍保持。
+- 原生回归串行通过：Protocols **5 / 5**、生产 Ghostty Dark / Light **2 / 2**、Input **1 / 1**、Scroll **2 / 2**（保留连续同步事务回归）。日志为 `artifacts/graphics-background-native-{protocols,ghostty,input,scroll}.log`。
+- 新增 `terminal/fixtures/glyph_probe.py`，原生截图 `artifacts/native-terminal-glyphs.png` 已查看：图标连接、块色带与横线连续，提示背景包括空白行和擦除到行末部分，呈完整矩形。该 fixture 不启动模型或发送 API 请求。
+- `cargo clippy --workspace --all-targets -- -D warnings`、fmt 与 diff check 通过。
+
+实际 Codex / Claude 修复后的用户复验尚未进行。字体回退中的其他 Unicode 图形族、emoji、任意字体及平台的完整终端兼容性仍不在本轮验收范围内；没有据受控截图宣称完整 Ghostty 应用 renderer 等价性。

@@ -4,6 +4,15 @@ import { expect,open,test } from "nsh/test";
 async function waitForOutput(app: Awaited<ReturnType<typeof open>>, text: string) {
   await app.waitUntil(() => app.texts().some(value => value.includes(text)));
 }
+test("native block glyphs, connected box drawing and erased backgrounds",async()=>{
+  const app=await open("./terminal/fixtures/ProtocolsFixture.tsx",{platform:"macos",width:900,height:600});
+  try {
+    await app.type("id:protocol-terminal","python3 terminal/fixtures/glyph_probe.py");
+    await app.keyboard.press("enter");
+    await waitForOutput(app,"BG_AUDIT_DONE");
+    await app.screenshot("artifacts/native-terminal-glyphs.png");
+  }finally {app.dispose();}
+});
 test("native continuous backgrounds across Chinese and styled ASCII runs",async()=>{
   const app=await open("./terminal/fixtures/ProtocolsFixture.tsx",{platform:"macos",width:900,height:600});
   try {

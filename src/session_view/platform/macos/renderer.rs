@@ -8,10 +8,10 @@ use objc2_core_foundation::{
 };
 use objc2_core_graphics::{
     CGBitmapInfo, CGColorRenderingIntent, CGColorSpace, CGContext, CGDataProvider, CGImage,
-    CGImageAlphaInfo, CGImageByteOrderInfo,
+    CGImageAlphaInfo, CGImageByteOrderInfo, CGMutablePath, CGPath,
 };
 use objc2_core_text::{
-    CTFont, CTFontDescriptor, CTFontSymbolicTraits, CTLine, kCTFontAttributeName,
+    CTFont, CTFontDescriptor, CTFontSymbolicTraits, CTLine, CTRun, kCTFontAttributeName,
     kCTFontFamilyNameAttribute, kCTForegroundColorFromContextAttributeName,
     kCTLigatureAttributeName,
 };
@@ -21,6 +21,7 @@ use std::{collections::HashMap, ptr::NonNull, rc::Rc, sync::Arc, time::Instant};
 /// from the current scene. Bounded by both entry count and source bytes.
 struct Shaped {
     line: CFRetained<CTLine>,
+    graphics_path: Option<CFRetained<CGPath>>,
     baseline: f64,
 }
 #[derive(Hash, PartialEq, Eq, Clone)]
@@ -32,11 +33,17 @@ struct CachedText {
     shaped: Rc<Shaped>,
     used: u64,
 }
+#[derive(Clone, Copy)]
+struct GraphicsPlanes {
+    blocks: CGRect,
+    boxes: CGRect,
+}
 #[derive(Default)]
 pub(super) struct Renderer {
     font_key: Option<(String, u32)>,
     fonts: HashMap<u8, CFRetained<CTFont>>,
     lines: HashMap<TextKey, CachedText>,
+    graphics_planes: Option<GraphicsPlanes>,
     text_bytes: usize,
     clock: u64,
     images: Vec<(Arc<termlevel_ghostty_vt::Pixels>, CFRetained<CGImage>)>,
@@ -46,8 +53,53 @@ pub(super) struct Renderer {
     report: Option<Instant>,
 }
 impl Renderer {
+    /// Keep the font's shapes, but map its graphics design plane to the full
+    /// terminal cell instead of using text baseline/line spacing. Reference
+    /// glyphs are shared by a Unicode family: never stretch each glyph's ink
+    /// bounds, which would turn a half block into a full block.
+    fn graphics_plane(&mut self, cfg: &PaintConfig, text: &str) -> Option<CGRect> {
+        let ch = graphics_char(text)?;
+        if self.graphics_planes.is_none() {
+            let bounds = |shaped: Rc<Shaped>| {
+                shaped
+                    .graphics_path
+                    .as_ref()
+                    .map(|path| CGPath::path_bounding_box(Some(path)))
+            };
+            let blocks = bounds(self.shape(cfg, "█", false, false))?;
+            let horizontal = bounds(self.shape(cfg, "─", false, false))?;
+            let vertical = bounds(self.shape(cfg, "│", false, false))?;
+            let center = horizontal.origin.y + horizontal.size.height / 2.0;
+            let half_height =
+                (center - vertical.origin.y).min(vertical.origin.y + vertical.size.height - center);
+            let boxes = rect(
+                horizontal.origin.x,
+                center - half_height,
+                horizontal.size.width,
+                2.0 * half_height,
+            );
+            self.graphics_planes = Some(GraphicsPlanes { blocks, boxes });
+        }
+        let planes = self.graphics_planes?;
+        let plane = if ch >= '\u{2580}' {
+            planes.blocks
+        } else {
+            planes.boxes
+        };
+        (plane.size.width.is_finite()
+            && plane.size.height.is_finite()
+            && plane.size.width > 0.0
+            && plane.size.height > 0.0)
+            .then_some(plane)
+    }
+
     fn shape(&mut self, cfg: &PaintConfig, text: &str, bold: bool, italic: bool) -> Rc<Shaped> {
-        let face = u8::from(bold) | (u8::from(italic) << 1);
+        let graphics = graphics_char(text).is_some();
+        let face = if graphics {
+            4
+        } else {
+            u8::from(bold) | (u8::from(italic) << 1)
+        };
         self.clock += 1;
         let key = TextKey {
             text: text.into(),
@@ -57,10 +109,15 @@ impl Renderer {
             cached.used = self.clock;
             return cached.shaped.clone();
         }
-        let font = self
-            .fonts
-            .entry(face)
-            .or_insert_with(|| make_font(cfg, bold, italic));
+        let font = self.fonts.entry(face).or_insert_with(|| {
+            if graphics {
+                // Graphics have a stable design plane independent of the
+                // chosen text font and its bold/italic glyph variations.
+                system_mono(cfg.size as f64)
+            } else {
+                make_font(cfg, bold, italic)
+            }
+        });
         let string = CFMutableAttributedString::new(None, 0).expect("attributed string");
         // SAFETY: all attributes have CoreText's documented value types and
         // range covers the UTF-16 attributed string. CoreText handles fallback.
@@ -94,7 +151,12 @@ impl Renderer {
         };
         // A single primary-font baseline keeps fallback glyphs on the same row.
         let baseline = unsafe { (font.ascent() - font.descent()) / 2.0 };
-        let shaped = Rc::new(Shaped { line, baseline });
+        let graphics_path = graphics_char(text).and_then(|_| graphics_path(&line));
+        let shaped = Rc::new(Shaped {
+            line,
+            baseline,
+            graphics_path,
+        });
         // A pathological single grapheme can exceed the whole cache budget.
         // Draw it once without retaining it or evicting otherwise useful lines.
         if text.len() > 256 * 1024 {
@@ -131,6 +193,7 @@ impl Renderer {
             self.font_key = Some(key);
             self.fonts.clear();
             self.lines.clear();
+            self.graphics_planes = None;
             self.text_bytes = 0;
         }
         let c = Some(context);
@@ -214,21 +277,41 @@ impl Renderer {
                     continue;
                 }
                 let shaped = self.shape(cfg, &span.run.text, style.bold, style.italic);
+                let plane = shaped
+                    .graphics_path
+                    .as_ref()
+                    .and_then(|_| self.graphics_plane(cfg, &span.run.text));
                 let (x, y, w) = (
                     span.col as f64 * cfg.cw as f64,
                     row as f64 * cfg.lh as f64,
                     span.cells as f64 * cfg.cw as f64,
                 );
+                let cell = if plane.is_some() {
+                    pixel_rect(context, rect(x, y, w, cfg.lh as f64))
+                } else {
+                    rect(x, y, w, cfg.lh as f64)
+                };
                 CGContext::save_g_state(c);
-                CGContext::clip_to_rect(c, rect(x, y, w, cfg.lh as f64));
+                CGContext::clip_to_rect(c, cell);
                 set_color(
                     context,
                     cfg.colors(style).0,
                     if style.dim { 0.6 } else { 1.0 },
                 );
                 CGContext::save_g_state(c);
-                CGContext::translate_ctm(c, x, y + cfg.lh as f64 / 2.0 + shaped.baseline);
-                CGContext::scale_ctm(c, 1.0, -1.0);
+                if let Some(plane) = plane {
+                    CGContext::set_should_antialias(c, false);
+                    CGContext::translate_ctm(c, cell.origin.x, cell.origin.y + cell.size.height);
+                    CGContext::scale_ctm(
+                        c,
+                        cell.size.width / plane.size.width,
+                        -cell.size.height / plane.size.height,
+                    );
+                    CGContext::translate_ctm(c, -plane.origin.x, -plane.origin.y);
+                } else {
+                    CGContext::translate_ctm(c, x, y + cfg.lh as f64 / 2.0 + shaped.baseline);
+                    CGContext::scale_ctm(c, 1.0, -1.0);
+                }
                 CGContext::set_text_matrix(
                     c,
                     CGAffineTransform {
@@ -241,9 +324,19 @@ impl Renderer {
                     },
                 );
                 CGContext::set_text_position(c, 0.0, 0.0);
-                // SAFETY: immutable CTLine and live AppKit drawing context.
-                unsafe {
-                    shaped.line.draw(context);
+                if plane.is_some()
+                    && let Some(path) = &shaped.graphics_path
+                {
+                    // Draw outlines without the text rasterizer's hinting,
+                    // which can shrink ink away from an exact cell edge.
+                    CGContext::begin_path(c);
+                    CGContext::add_path(c, Some(path));
+                    CGContext::fill_path(c);
+                } else {
+                    // SAFETY: immutable CTLine and live AppKit drawing context.
+                    unsafe {
+                        shaped.line.draw(context);
+                    }
                 }
                 CGContext::restore_g_state(c);
                 if style.underline || span.hyperlink.is_some() {
@@ -321,6 +414,55 @@ impl Renderer {
         }
     }
 }
+fn graphics_char(text: &str) -> Option<char> {
+    let mut chars = text.chars();
+    let ch = chars.next()?;
+    (chars.next().is_none() && matches!(ch, '\u{2500}'..='\u{259f}')).then_some(ch)
+}
+
+/// Extract the actual shaped font outlines, including CoreText fallback and
+/// glyph positions. This reuses font-provided geometry instead of maintaining
+/// a second table of block, corner, dash and line character shapes.
+fn graphics_path(line: &CTLine) -> Option<CFRetained<CGPath>> {
+    let combined = CGMutablePath::new();
+    // SAFETY: CTLine supplies retained run storage. Each run's attributes own
+    // the CTFont used to shape it; buffers have exactly the queried glyph count.
+    unsafe {
+        let runs = line.glyph_runs();
+        for i in 0..runs.count() {
+            let run = &*runs.value_at_index(i).cast::<CTRun>();
+            let attributes = run.attributes();
+            let font = attributes.value((kCTFontAttributeName as *const CFString).cast());
+            if font.is_null() {
+                return None;
+            }
+            let font = &*font.cast::<CTFont>();
+            let count = usize::try_from(run.glyph_count()).ok()?;
+            if count == 0 {
+                continue;
+            }
+            let mut glyphs = vec![0u16; count];
+            let mut positions = vec![CGPoint::new(0.0, 0.0); count];
+            let range = CFRange::new(0, count as _);
+            run.glyphs(range, NonNull::new(glyphs.as_mut_ptr())?);
+            run.positions(range, NonNull::new(positions.as_mut_ptr())?);
+            for (glyph, position) in glyphs.into_iter().zip(positions) {
+                let path = font.path_for_glyph(glyph, std::ptr::null())?;
+                let transform = CGAffineTransform {
+                    a: 1.0,
+                    b: 0.0,
+                    c: 0.0,
+                    d: 1.0,
+                    tx: position.x,
+                    ty: position.y,
+                };
+                CGMutablePath::add_path(Some(&combined), &transform, Some(&path));
+            }
+        }
+    }
+    CGPath::new_copy(Some(&combined))
+}
+
 fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
     CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
 }
@@ -507,6 +649,115 @@ mod tests {
                 height: 1,
                 rgba: Arc::from([0, 0, 255, 255]),
             }),
+        }
+    }
+
+    #[test]
+    fn erased_background_only_cells_fill_the_native_window() {
+        let mut emulator = GhosttyEmulator::new(TerminalSize::new(4, 1), 0);
+        emulator.feed(b"\x1b[48;2;55;65;75m\x1b[2K\x1b[0m");
+        let snap = emulator
+            .begin_window(&mut Window::default(), false, None)
+            .unwrap()
+            .finish();
+        let scene = Scene {
+            snap,
+            config: config(),
+            hits: Vec::new(),
+            current: 0,
+        };
+        let context = bitmap();
+        Renderer::default().draw(&context, &scene);
+        for y in 0..20 {
+            for x in 0..40 {
+                assert_eq!(pixel(&context, x, y), [55, 65, 75, 255]);
+            }
+        }
+    }
+
+    #[test]
+    fn graphic_blocks_fill_cells_and_keep_half_block_geometry() {
+        for family in ["Menlo", "Monaco", "monospace"] {
+            for (text, halves) in [("████", false), ("▀▄▌▐", true)] {
+                let mut emulator = GhosttyEmulator::new(TerminalSize::new(4, 1), 0);
+                emulator.feed(text.as_bytes());
+                let snap = emulator
+                    .begin_window(&mut Window::default(), false, None)
+                    .unwrap()
+                    .finish();
+                let mut cfg = config();
+                cfg.family = family.into();
+                let scene = Scene {
+                    snap,
+                    config: cfg,
+                    hits: Vec::new(),
+                    current: 0,
+                };
+                let context = bitmap();
+                let mut renderer = Renderer::default();
+                renderer.draw(&context, &scene);
+                for y in 0..20 {
+                    for x in 0..40 {
+                        let filled = !halves
+                            || match x / 10 {
+                                0 => y < 10,
+                                1 => y >= 10,
+                                2 => x % 10 < 5,
+                                _ => x % 10 >= 5,
+                            };
+                        assert_eq!(
+                            pixel(&context, x, y)[3],
+                            if filled { 255 } else { 0 },
+                            "{family} {text} at {x},{y}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn graphic_box_edges_connect_across_cells_and_rows() {
+        for text in ["┌──┐\r\n└──┘", "┏━━┓\r\n┗━━┛", "╔══╗\r\n╚══╝"]
+        {
+            let mut emulator = GhosttyEmulator::new(TerminalSize::new(4, 2), 0);
+            emulator.feed(text.as_bytes());
+            let snap = emulator
+                .begin_window(&mut Window::default(), false, None)
+                .unwrap()
+                .finish();
+            let mut cfg = config();
+            cfg.lh = 10.0;
+            let scene = Scene {
+                snap,
+                config: cfg,
+                hits: Vec::new(),
+                current: 0,
+            };
+            let context = bitmap();
+            Renderer::default().draw(&context, &scene);
+            // Every column of the horizontal edge and every row of the
+            // vertical edges must contain ink, including all cell joins.
+            for x in 5..35 {
+                assert!(
+                    (2..8).any(|y| pixel(&context, x, y)[3] == 255),
+                    "top {text} x={x}"
+                );
+                assert!(
+                    (12..18).any(|y| pixel(&context, x, y)[3] == 255),
+                    "bottom {text} x={x}"
+                );
+            }
+            for y in 5..15 {
+                assert!(
+                    (2..8).any(|x| pixel(&context, x, y)[3] == 255),
+                    "left {text} y={y}"
+                );
+                assert!(
+                    (32..38).any(|x| pixel(&context, x, y)[3] == 255),
+                    "right {text} y={y}"
+                );
+            }
         }
     }
 
