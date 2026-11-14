@@ -449,3 +449,16 @@ CARGO_NET_OFFLINE=true
 首次原生测试因沙箱禁止 dev server 监听失败；授予原生测试所需权限后重跑通过。测试宿主链接仍有既有 `__eh_frame` 过大警告。用户实际 Codex / Claude 修复后的手感、持续多 pane 负载尚未复验。
 
 用户随后重新试用并确认“可以了”，本轮 Codex / Claude 滚动卡顿修复获得人工确认。该确认不扩展到持续多 pane、复杂输入法或全部终端兼容性验收。
+
+## 2026-11-15：中文高亮背景的 run 接缝
+
+用户截图中的蓝色高亮在中文及样式分段处出现细竖缝。旧 renderer 跟随文字 run 分别填充背景，小数格宽与几何抗锯齿会使相接矩形的覆盖率不足。现在每行连续同色背景独立合并（含 inverse 与宿主选区），共享边界在 CGContext device space 统一取整，仅背景阶段关闭几何抗锯齿，随后恢复绘制状态。文字布局与图片层次保持原有职责。
+
+本轮验证（macOS arm64 debug）：
+
+- `./scripts/nsh check`、`./scripts/nsh build` 通过。
+- `./scripts/nsh test --junit artifacts/background-seams-tests.xml`：**116 / 116**，日志 `artifacts/background-seams-tests.log`。新增原生 RGBA 位图用例在 1× / 2× backing scale、小数格宽高和原点偏移下逐像素检查中文 / ASCII 分段、相邻行、显式背景 / inverse / 选区和相邻不同色矩形的实心覆盖；既有三层图片与源裁剪用例通过。
+- `./scripts/test-native-protocols -v`：**4 / 4**。新增真实 PTY 中的中文 / ASCII / 粗体混合高亮列表，截图 `artifacts/native-continuous-backgrounds.png` 已查看：蓝色色带连续，未见原截图的分段竖缝。既有 Kitty 键盘、图片、选区复制、鼠标和 OSC52 回归通过；日志 `artifacts/background-seams-native.log`。
+- `cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check` 通过。
+
+原生测试使用所需的沙箱外本地测试服务权限；宿主链接仍有既有 `__eh_frame` 警告。以上为受控位图和真实原生窗口验证，用户截图中实际 Codex resume 界面尚未由用户复验。

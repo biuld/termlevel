@@ -275,28 +275,39 @@ impl Renderer {
         self.images
             .retain(|(pixels, _)| snap.images.iter().any(|p| Arc::ptr_eq(pixels, &p.pixels)));
         self.draw_images(context, scene, 0);
+        // Background geometry is independent of text shaping. Fractional cell
+        // widths and separately antialiased run edges otherwise expose seams,
+        // especially where each wide grapheme owns a separate text run.
+        CGContext::save_g_state(c);
+        CGContext::set_should_antialias(c, false);
         for (row, spans) in snap.rows.iter().enumerate() {
-            for span in spans {
-                let bg = if span.selected {
-                    Some(cfg.selection)
-                } else {
-                    cfg.colors(span.run.style).1
-                };
+            let mut spans = spans.iter().peekable();
+            while let Some(span) = spans.next() {
+                let bg = background(span, cfg);
                 if let Some(bg) = bg {
+                    let mut end = span.col + span.cells;
+                    while let Some(next) = spans.peek()
+                        && next.col == end
+                        && background(next, cfg) == Some(bg)
+                    {
+                        end += next.cells;
+                        spans.next();
+                    }
+                    let x = span.col as f64 * cfg.cw as f64;
+                    let right = end as f64 * cfg.cw as f64;
                     fill(
                         context,
                         bg,
                         1.0,
-                        rect(
-                            span.col as f64 * cfg.cw as f64,
-                            row as f64 * cfg.lh as f64,
-                            span.cells as f64 * cfg.cw as f64,
-                            cfg.lh as f64,
+                        pixel_rect(
+                            context,
+                            rect(x, row as f64 * cfg.lh as f64, right - x, cfg.lh as f64),
                         ),
                     );
                 }
             }
         }
+        CGContext::restore_g_state(c);
         self.draw_images(context, scene, 1);
         for (index, hit) in scene.hits.iter().enumerate() {
             if hit.line >= snap.origin && hit.line < snap.origin + snap.rows.len() {
@@ -429,6 +440,23 @@ impl Renderer {
 }
 fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
     CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+}
+fn background(span: &crate::terminal::GridRun, cfg: &PaintConfig) -> Option<nsh_core::Hsla> {
+    if span.selected {
+        Some(cfg.selection)
+    } else {
+        cfg.colors(span.run.style).1
+    }
+}
+/// Round shared edges, not widths, in backing pixels (including the view's
+/// fractional device origin). Adjacent colors then cover each pixel once.
+fn pixel_rect(context: &CGContext, r: CGRect) -> CGRect {
+    let device = CGContext::convert_rect_to_device_space(Some(context), r);
+    let x = device.origin.x.round();
+    let y = device.origin.y.round();
+    let right = (device.origin.x + device.size.width).round();
+    let bottom = (device.origin.y + device.size.height).round();
+    CGContext::convert_rect_to_user_space(Some(context), rect(x, y, right - x, bottom - y))
 }
 fn set_color(c: &CGContext, color: nsh_core::Hsla, alpha: f64) {
     let color = nsh_core::Rgba::from(color);
@@ -605,6 +633,92 @@ mod tests {
                 height: 1,
                 rgba: Arc::from([0, 0, 255, 255]),
             }),
+        }
+    }
+
+    #[test]
+    fn fractional_backgrounds_are_solid_across_wide_runs_rows_and_backing_scales() {
+        for scale in [1.0, 2.0] {
+            for mode in ["48;2;25;100;200", "7;38;2;25;100;200", "0"] {
+                let mut emulator = GhosttyEmulator::new(TerminalSize::new(4, 2), 10);
+                emulator.feed(format!("\x1b[{mode};8m中ab\r\n\x1b[1m中ab").as_bytes());
+                let mut snap = emulator
+                    .begin_window(&mut Window::default(), false, None)
+                    .unwrap()
+                    .finish();
+                if mode == "0" {
+                    for row in &mut Arc::make_mut(&mut snap).rows {
+                        for span in row {
+                            span.selected = true;
+                        }
+                    }
+                }
+                assert!(snap.rows.iter().all(|row| row.len() >= 2));
+                let mut cfg = config();
+                cfg.cw = 7.7 / scale as f32;
+                cfg.lh = 9.3 / scale as f32;
+                cfg.selection = nsh_core::color::rgb(0x1964c8).into();
+                let scene = Scene {
+                    snap,
+                    config: cfg,
+                    hits: Vec::new(),
+                    current: 0,
+                };
+                let context = bitmap();
+                CGContext::translate_ctm(Some(&context), 0.27, 0.27);
+                CGContext::scale_ctm(Some(&context), scale, scale);
+                Renderer::default().draw(&context, &scene);
+                // Hidden glyphs isolate the backgrounds. Check every interior
+                // pixel, including run boundaries and the shared row edge.
+                for y in 2..18 {
+                    for x in 1..31 {
+                        assert_eq!(
+                            pixel(&context, x, y),
+                            [25, 100, 200, 255],
+                            "gap at {x},{y}, scale={scale}, mode={mode}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn adjacent_background_colors_share_one_device_pixel_edge() {
+        for scale in [1.0, 2.0] {
+            let mut emulator = GhosttyEmulator::new(TerminalSize::new(4, 2), 10);
+            emulator.feed(b"\x1b[8;48;2;255;0;0mab\x1b[48;2;0;0;255mcd\r\n\x1b[48;2;255;0;0mab\x1b[48;2;0;0;255mcd");
+            let snap = emulator
+                .begin_window(&mut Window::default(), false, None)
+                .unwrap()
+                .finish();
+            let mut cfg = config();
+            cfg.cw = 7.7 / scale as f32;
+            cfg.lh = 9.3 / scale as f32;
+            let scene = Scene {
+                snap,
+                config: cfg,
+                hits: Vec::new(),
+                current: 0,
+            };
+            let context = bitmap();
+            CGContext::translate_ctm(Some(&context), 0.27, 0.27);
+            CGContext::scale_ctm(Some(&context), scale, scale);
+            Renderer::default().draw(&context, &scene);
+            for y in 2..18 {
+                for x in 1..31 {
+                    let expected = if x < 16 {
+                        [255, 0, 0, 255]
+                    } else {
+                        [0, 0, 255, 255]
+                    };
+                    assert_eq!(
+                        pixel(&context, x, y),
+                        expected,
+                        "edge at {x},{y}, scale={scale}"
+                    );
+                }
+            }
         }
     }
 
