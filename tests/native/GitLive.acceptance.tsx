@@ -24,6 +24,9 @@ test("the overview reads the real repository through the system git CLI", async 
     await app.setViewport(1600, 900);
     await app.wait(500);
     await app.screenshot("artifacts/dashboard-history-wide.png");
+    await app.press("id:history-commit-45aba59");
+    await app.wait(600);
+    await app.screenshot("artifacts/dashboard-history-45aba59.png");
   } finally {
     app.dispose();
   }

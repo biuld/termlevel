@@ -25,12 +25,14 @@ test("the history view renders branches, worktrees, commits and a patch", async 
   await app.waitUntil(() => app.texts().some((text) => text.includes("No text diff for this file")));
   await app.press("id:history-file-ui-dashboard-HistoryPanel-tsx");
   await app.waitUntil(() => app.texts().some((text) => text.includes("import { DataTable }")));
-  await app.setViewport(880, 700);
+  await app.setViewport(700, 700);
   await app.waitFor("id:history-detail-narrow");
   expect(app.shows("id:history-detail-wide")).toBe(false);
+  expect(app.texts().some((text) => text === "Tyler Chan")).toBe(false);
   expect(app.texts().some((text) => text === "Hash")).toBe(false);
   await app.setViewport(1600, 900);
   await app.waitFor("id:history-detail-wide");
+  expect(app.texts().some((text) => text === "Tyler Chan")).toBe(true);
   expect(app.texts().some((text) => text === "Hash")).toBe(true);
 
   await app.press("id:history-tab-worktrees");

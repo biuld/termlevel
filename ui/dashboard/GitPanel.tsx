@@ -421,7 +421,7 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; previ
                 </If>
                 <If when={!patchError() && !!patch()}>
                   <Each of={[`${selected() ?? ""}:${scope()}`]} key={(value) => value}>{() =>
-                    <DiffView patch={patch().trimEnd()} layout="unified"
+                    <DiffView patch={patch()} layout="unified"
                       softWrap contextLines={3}
                       fontFamily={monoFont()} fontSize={token("text-body")} lineHeight={token("leading-body") + 4}
                       class="min-h-0 flex-1" />

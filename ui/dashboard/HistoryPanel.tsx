@@ -1,4 +1,4 @@
-import { batch, Canvas, Clipboard, cleanup, computed, effect, lifecycle, List, signal, Text, token, untracked, View, type CanvasRenderingContext2D as CanvasContext } from "nsh";
+import { batch, Canvas, Clipboard, cleanup, computed, effect, lifecycle, Scroll, signal, Text, token, untracked, View, type CanvasRenderingContext2D as CanvasContext } from "nsh";
 import {
   Button,
   Checkbox,
@@ -21,6 +21,7 @@ import type {
   GitBranch,
   GitCommit,
   GitCommitDetail,
+  GitCommitFile,
   GitLog,
   GitRepoStatus,
   GitTransport,
@@ -37,6 +38,11 @@ interface CommitRow extends GraphRow {
   date: string;
   short: string;
   subject: string;
+  active: boolean;
+}
+
+interface FileRow extends GitCommitFile {
+  active: boolean;
 }
 
 function errorMessage(error: unknown) {
@@ -211,8 +217,6 @@ export function HistoryPanel(props: { workspace: Workspace; git: GitTransport; p
   const selectedOid = signal<string | null>(null);
   const detail = signal<GitCommitDetail | null>(null);
   const selectedFile = signal<string | null>(null);
-  const hoveredCommit = signal<string | null>(null);
-  const hoveredFile = signal<string | null>(null);
   const commitWidth = signal(0);
   const scope = signal("");
   const query = signal("");
@@ -259,13 +263,18 @@ export function HistoryPanel(props: { workspace: Workspace; git: GitTransport; p
     );
   });
   const visibleGraph = computed(() => layoutCommits(filtered()));
-  const visibleRows = computed<CommitRow[]>(() => visibleGraph().rows.map((row) => ({
-    ...row,
-    author: row.commit.author,
-    date: formatDate(row.commit.timestamp),
-    short: row.commit.short,
-    subject: row.commit.subject,
-  })));
+  const visibleRows = computed<CommitRow[]>(() => {
+    const activeOid = selectedOid();
+    return visibleGraph().rows.map((row) => ({
+      ...row,
+      author: row.commit.author,
+      date: formatDate(row.commit.timestamp),
+      short: row.commit.short,
+      subject: row.commit.subject,
+      active: row.commit.oid === activeOid,
+    }));
+  });
+  const selectedIndex = computed(() => visibleRows().findIndex((row) => row.active));
   const selectedPatch = computed(() => {
     const item = detail();
     const path = selectedFile();
@@ -274,6 +283,12 @@ export function HistoryPanel(props: { workspace: Workspace; git: GitTransport; p
     return patchForFile(item.patch, path);
   });
   const selectedFileInfo = computed(() => detail()?.files.find((file) => file.path === selectedFile()));
+  const fileRows = computed<FileRow[]>(() => {
+    const selected = selectedFile();
+    return (detail()?.files ?? []).map((file) => ({ ...file, active: file.path === selected }));
+  });
+  const selectedFileIndex = computed(() => fileRows().findIndex((file) => file.active));
+  const selectedWorktreeIndex = computed(() => worktrees().findIndex((worktree) => worktree.path === selectedWorktree()));
   const currentCommits = computed(() => {
     const reachable = new Set<string>();
     const byOid = new Map(commits().map((commit) => [commit.oid, commit]));
@@ -689,12 +704,13 @@ export function HistoryPanel(props: { workspace: Workspace; git: GitTransport; p
     </View>;
   };
 
-  const renderWorktreeRow = (worktree: GitWorktree) =>
-    <Button testID={`worktree-${pathName(worktree.path)}`} accessibilityLabel={worktree.path}
-      selected={selectedWorktree() === worktree.path}
+  function WorktreeRowView(props: { worktree: GitWorktree }) {
+    const worktree = props.worktree;
+    const active = selectedWorktree() === worktree.path;
+    return <Button testID={`worktree-${pathName(worktree.path)}`} accessibilityLabel={worktree.path}
+      selected={active}
       onPress={() => selectedWorktree.set(worktree.path)}
-      class="h-[46px] flex-col justify-center rounded-(--radius-tab) px-2 hover:bg-tab-hover focus-visible:ring-2 ring-sidebar-ring"
-      classList={{ "bg-tab-selected": selectedWorktree() === worktree.path }}>
+      class="h-[46px] flex-col justify-center rounded-(--radius-tab) px-2 hover:bg-tab-selected focus-visible:ring-2 ring-sidebar-ring">
       <View class="w-full flex-row items-center gap-1.5">
         <Icon name="gitWorktree" size={12} color={token("icon")} />
         <Type role="body" class="min-w-0 flex-1" lines={1}>{pathName(worktree.path)}</Type>
@@ -709,6 +725,7 @@ export function HistoryPanel(props: { workspace: Workspace; git: GitTransport; p
         <If when={worktree.main}><Type role="caption" tone="subtle-foreground">main</Type></If>
       </View>
     </Button>;
+  }
 
   const columnWidths = computed(() => {
     const width = commitWidth() || store.canvasSize().width || 1200;
@@ -718,6 +735,11 @@ export function HistoryPanel(props: { workspace: Workspace; git: GitTransport; p
       date: width >= 680 ? 100 : 0,
       hash: width >= 800 ? 74 : 0,
     };
+  });
+
+  const commitLayoutKey = computed(() => {
+    const widths = columnWidths();
+    return `${widths.graph}:${widths.author}:${widths.date}:${widths.hash}`;
   });
 
   const wide = computed(() => (store.canvasSize().width || 1200) >= 1000);
@@ -772,23 +794,17 @@ export function HistoryPanel(props: { workspace: Workspace; git: GitTransport; p
     ], event.pagePosition);
   }
 
-  const renderCommitRow = (row: CommitRow) => {
-    const active = selectedOid() === row.commit.oid;
+  function CommitRowView(props: { row: CommitRow }) {
+    const row = props.row;
+    const active = row.active;
     const widths = columnWidths();
     return <View class="w-full" onContextMenu={(event) => commitMenu(row, event)}>
-      <View testID={`history-commit-row-${row.commit.short}`} class="w-full"
-        onMouseEnter={() => hoveredCommit.set(row.commit.oid)}
-        onMouseLeave={() => { if (hoveredCommit() === row.commit.oid) hoveredCommit.set(null); }}>
+      <View testID={`history-commit-row-${row.commit.short}`} class="w-full">
         <Button testID={`history-commit-${row.commit.short}`}
         accessibilityLabel={`${row.commit.short} ${row.commit.subject}`}
         selected={active}
         onPress={() => selectedOid.set(row.commit.oid)}
-        class="h-[30px] w-full shrink-0 flex-row items-center border-b border-border active:bg-control-pressed focus-visible:ring-1 ring-ring"
-        classList={{
-          "bg-primary/15": active,
-          "bg-tab-selected": !active && hoveredCommit() === row.commit.oid,
-          "bg-tab-hover": !active && hoveredCommit() !== row.commit.oid && currentCommits().has(row.commit.oid),
-        }}>
+        class="h-[30px] w-full shrink-0 flex-row items-center border-b border-border hover:bg-tab-selected active:bg-control-pressed focus-visible:ring-1 ring-ring">
         <Canvas style={{ width: widths.graph, height: ROW_HEIGHT }}
           draw={(cx, size) => drawGraph(cx, size, row)} />
         <View class="min-w-0 flex-1 flex-row items-center gap-1.5 px-2">
@@ -843,12 +859,38 @@ export function HistoryPanel(props: { workspace: Workspace; git: GitTransport; p
         </If>
       </View>
       <If when={visibleRows().length > 0}>
-        <List testID="history-commits" accessibilityLabel="Commit history"
-          each={visibleRows()} keyExtractor={(row) => row.commit.oid}
-          estimatedItemSize={ROW_HEIGHT} class="min-h-0 flex-1"
-          onLoadMore={() => { void loadMore(); }}>
-          {(item) => renderCommitRow(item())}
-        </List>
+        <Each of={[commitLayoutKey()]} key={(value) => value}>
+          {() =>
+            <Scroll testID="history-commits" accessibilityLabel="Commit history"
+              class="min-h-0 flex-1" contentClass="flex-col">
+              <View class="relative flex-col">
+                <Each of={visibleRows()} key={(row) => row.commit.oid}>
+                  {(row) => <CommitRowView row={row()} />}
+                </Each>
+                <If when={selectedIndex() >= 0}>
+                  <View class="absolute left-0 right-0 bg-primary/20"
+                    style={{
+                      top: selectedIndex() * ROW_HEIGHT,
+                      height: ROW_HEIGHT,
+                      pointerEvents: "none",
+                      zIndex: 1,
+                    }} />
+                </If>
+                <If when={hasMore()}>
+                  <Button testID="history-load-more" onPress={() => { void loadMore(); }}
+                    class="h-8 w-full shrink-0 items-center justify-center border-t border-border hover:bg-tab-hover">
+                    <Type role="caption" tone="muted-foreground">Load more commits</Type>
+                  </Button>
+                </If>
+                <If when={loadingMore()}>
+                  <View class="shrink-0 items-center justify-center py-1">
+                    <Type role="caption" tone="subtle-foreground">Loading more commits…</Type>
+                  </View>
+                </If>
+              </View>
+            </Scroll>
+          }
+        </Each>
       </If>
       <If when={visibleRows().length === 0}>
         <View class="flex-1 items-center justify-center gap-2 py-8">
@@ -856,11 +898,6 @@ export function HistoryPanel(props: { workspace: Workspace; git: GitTransport; p
           <Type role="body" tone="muted-foreground">
             {commits().length ? "Clear the search to see the history." : "Commit something in a terminal first."}
           </Type>
-        </View>
-      </If>
-      <If when={loadingMore()}>
-        <View class="shrink-0 items-center justify-center py-1">
-          <Type role="caption" tone="subtle-foreground">Loading more commits…</Type>
         </View>
       </If>
       <If when={logTruncated()}>
@@ -905,6 +942,27 @@ export function HistoryPanel(props: { workspace: Workspace; git: GitTransport; p
     </View>;
   };
 
+  function FileRowView(props: { file: FileRow }) {
+    const file = props.file;
+    const active = file.active;
+    return <View class="w-full">
+      <Button
+        testID={`history-file-${file.path.replace(/[^a-zA-Z0-9]+/g, "-")}`}
+        accessibilityLabel={file.path}
+        selected={active}
+        onPress={() => selectedFile.set(file.path)}
+        class="h-6 w-full flex-row items-center gap-1.5 px-3 hover:bg-tab-selected active:bg-control-pressed focus-visible:ring-1 ring-ring">
+        <Text style={{
+          width: 12, textAlign: "center", fontFamily: monoFont(),
+          fontSize: token("text-caption"), color: statusColor(file.status),
+        }}>{file.status}</Text>
+        <Type role="caption" family="mono" tone={active ? "foreground" : "muted-foreground"} class="min-w-0 flex-1" lines={1}>
+          {file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}
+        </Type>
+      </Button>
+    </View>;
+  }
+
   const changedFiles = () => {
     const item = detail();
     if (!item) return <View />;
@@ -914,35 +972,22 @@ export function HistoryPanel(props: { workspace: Workspace; git: GitTransport; p
         <Type role="mono">{`${item.files.length}`}</Type>
       </View>
       <If when={item.files.length > 0}>
-        <List each={item.files} keyExtractor={(file) => file.path}
-          class="min-h-0 flex-1" contentClass="py-1">
-          {(entry) => {
-            const file = entry();
-            const active = selectedFile() === file.path;
-            return <View class="w-full"
-              onMouseEnter={() => hoveredFile.set(file.path)}
-              onMouseLeave={() => { if (hoveredFile() === file.path) hoveredFile.set(null); }}>
-              <Button
-                testID={`history-file-${file.path.replace(/[^a-zA-Z0-9]+/g, "-")}`}
-                accessibilityLabel={file.path}
-                selected={active}
-                onPress={() => selectedFile.set(file.path)}
-                class="h-6 w-full flex-row items-center gap-1.5 px-3 active:bg-control-pressed focus-visible:ring-1 ring-ring"
-                classList={{
-                  "bg-primary/15": active,
-                  "bg-tab-selected": !active && hoveredFile() === file.path,
-                }}>
-                <Text style={{
-                  width: 12, textAlign: "center", fontFamily: monoFont(),
-                  fontSize: token("text-caption"), color: statusColor(file.status),
-                }}>{file.status}</Text>
-                <Type role="caption" family="mono" tone={active ? "foreground" : "muted-foreground"} class="min-w-0 flex-1" lines={1}>
-                  {file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}
-                </Type>
-              </Button>
-            </View>;
-          }}
-        </List>
+        <Scroll class="min-h-0 flex-1" contentClass="flex-col py-1">
+          <View class="relative flex-col">
+            <Each of={fileRows()} key={(file) => file.path}>
+              {(file) => <FileRowView file={file()} />}
+            </Each>
+            <If when={selectedFileIndex() >= 0}>
+              <View class="absolute left-0 right-0 bg-primary/20"
+                style={{
+                  top: selectedFileIndex() * 24,
+                  height: 24,
+                  pointerEvents: "none",
+                  zIndex: 1,
+                }} />
+            </If>
+          </View>
+        </Scroll>
       </If>
       <If when={item.files.length === 0}>
         <View class="flex-1 items-center justify-center">
@@ -969,7 +1014,7 @@ export function HistoryPanel(props: { workspace: Workspace; git: GitTransport; p
         </If>
       </View>
       <If when={!!selectedPatch()}>
-        <DiffView patch={selectedPatch().trimEnd()} layout="unified" softWrap contextLines={3}
+        <DiffView patch={selectedPatch()} layout="unified" softWrap contextLines={3}
           fontFamily={monoFont()} fontSize={token("text-body")} lineHeight={token("leading-body") + 4}
           class="min-h-0 flex-1" />
       </If>
@@ -1184,10 +1229,22 @@ export function HistoryPanel(props: { workspace: Workspace; git: GitTransport; p
 
             <If when={railTab() === "worktrees"}>
               <If when={worktrees().length > 0}>
-                <List each={worktrees()} keyExtractor={(worktree: GitWorktree) => worktree.path}
-                  testID="history-worktree-list" class="min-h-0 flex-1" contentClass="py-1">
-                  {(item) => renderWorktreeRow(item())}
-                </List>
+                <Scroll testID="history-worktree-list" class="min-h-0 flex-1" contentClass="flex-col py-1">
+                  <View class="relative flex-col">
+                    <Each of={worktrees()} key={(worktree) => worktree.path}>
+                      {(worktree) => <WorktreeRowView worktree={worktree()} />}
+                    </Each>
+                    <If when={selectedWorktreeIndex() >= 0}>
+                      <View class="absolute left-0 right-0 bg-primary/20"
+                        style={{
+                          top: selectedWorktreeIndex() * 46,
+                          height: 46,
+                          pointerEvents: "none",
+                          zIndex: 1,
+                        }} />
+                    </If>
+                  </View>
+                </Scroll>
               </If>
               <If when={worktrees().length === 0}>
                 <View class="flex-1 items-center justify-center gap-2 px-4">
