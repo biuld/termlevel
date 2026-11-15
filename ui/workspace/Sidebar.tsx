@@ -306,14 +306,6 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
           </View>
         </If>
       </Button>
-      <If when={!!store.paneForSession(id) && !active()}>
-        <View class="absolute top-0 bottom-0 w-1.5 items-center justify-center opacity-100 group-hover:opacity-0 group-focus-within:opacity-0"
-          style={{ right: 10, pointerEvents: "none" }}>
-          <View accessibilityLabel={store.workspaceKey() ? "Shown in this group's layout" : "Shown in the layout"}
-            tooltip={<Hint>{store.workspaceKey() ? "Shown in this group's layout" : "Shown in the layout"}</Hint>}
-            class="h-1.5 w-1.5 rounded-full bg-icon" />
-        </View>
-      </If>
       <If when={tab()?.bell}>
         <View accessibilityLabel="Terminal bell" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary" style={{ pointerEvents: "none" }} />
       </If>
@@ -347,7 +339,7 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
         <View ref={(ref) => register(`header:${id}`, ref ? { ref, kind: "header", id } : null)}
           testID={store.workspaceKey() === id ? `group-workspace-${id}` : undefined}
           class="group relative flex-row items-center rounded-(--radius-control)"
-          classList={{ "mx-1": !props.expanded(), "bg-sidebar-accent": drop()?.headerId === id || store.workspaceKey() === id }}
+          classList={{ "mx-2": !props.expanded(), "bg-sidebar-accent": drop()?.headerId === id || store.workspaceKey() === id }}
           style={{ marginVertical: props.expanded() ? 0 : 2 }}
           onContextMenu={() => { void Menu.popup([
             { label: "Group settings…", onSelect: () => store.openDashboard(id) },
@@ -385,10 +377,10 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
           </Button>
         </View>
         <If when={shownSplit().length > 0 || visibleMembers().length > 0 || visibleGit().length > 0}>
-          <View style={{ marginLeft: props.expanded() ? 10 : 0, paddingLeft: props.expanded() ? token("gap-group-guide") : 0, borderLeftWidth: props.expanded() ? 1 : 0, borderColor: groupLine(store.group(id)?.color) }}>
+          <View style={{ marginLeft: props.expanded() ? 10 : 0, paddingLeft: props.expanded() ? token("gap-group-guide") : 4, paddingRight: props.expanded() ? 0 : 4, borderLeftWidth: props.expanded() ? 1 : 0, borderColor: groupLine(store.group(id)?.color) }}>
             <Each of={visibleGit()}>{kind =>
               <View class="group relative my-0.5 h-(--height-tab) flex-row items-center rounded-(--radius-tab) hover:bg-tab-hover"
-                classList={{ "bg-tab-selected hover:bg-tab-selected": store.workspaceKey() === id && store.activeGitView() === kind() && !store.dashboardOpen() }}>
+                classList={{ "mx-1": !props.expanded(), "bg-tab-selected hover:bg-tab-selected": store.workspaceKey() === id && store.activeGitView() === kind() && !store.dashboardOpen() }}>
                 <Button testID={`git-tab-${id}-${kind()}`} role="tab" selected={store.workspaceKey() === id && store.activeGitView() === kind() && !store.dashboardOpen()} accessibilityLabel={`${kind() === "changes" ? "Changes" : "History"} in ${store.groupTitle(id)}`}
                   onPress={() => store.openGitView(kind(), id)}
                   tooltip={<Hint>{`${kind() === "changes" ? "Changes" : "History"} · ${store.groupTitle(id)}`}</Hint>}
@@ -410,7 +402,7 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
         <If when={!props.expanded() && hiddenCount() > 0}>
           <Button testID={`group-hidden-${id}`} accessibilityLabel={`Show ${hiddenCount()} hidden tabs in ${store.groupTitle(id)}`}
             onPress={() => store.patchGroup(id, { collapsed: false })}
-            class="mx-1 my-0.5 h-(--height-tab) items-center justify-center rounded-(--radius-tab) focus-visible:ring-2 ring-sidebar-ring">
+            class="mx-2 my-0.5 h-(--height-tab) items-center justify-center rounded-(--radius-tab) focus-visible:ring-2 ring-sidebar-ring">
             <View class="h-(--height-tab) w-(--height-tab) items-center justify-center rounded-full"
               style={{ backgroundColor: groupTint(store.group(id)?.color) }}>
               <Text class="text-(length:--text-label)" style={{ color: groupColor(store.group(id)?.color) }}>+{hiddenCount()}</Text>
@@ -437,7 +429,7 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
     <Scroll class="min-h-0 flex-1" classList={{ "pt-1.5": props.expanded() }} scrollbar={false}>
       <View testID="ungrouped-section" class="mb-2 pb-2" classList={{ "border-b border-sidebar-border": props.expanded() }}>
       <View class="relative justify-center" classList={{ "h-(--height-toolbar) border-b border-sidebar-border": !props.expanded() }}>
-      <If when={store.workspaceKey() === ""}><View testID="ungrouped-active" class="absolute bottom-1 left-1 top-1 w-0.5 rounded-full bg-primary" style={{ pointerEvents: "none" }} /></If>
+      <If when={store.workspaceKey() === ""}><View testID="ungrouped-active" class="absolute left-1 w-0.5 rounded-full bg-primary" classList={{ "bottom-1 top-1": props.expanded(), "bottom-2.5 top-2.5": !props.expanded() }} style={{ pointerEvents: "none" }} /></If>
       <Button testID="workspace-ungrouped" accessibilityLabel="Open Ungrouped workspace" onPress={store.selectUngrouped}
         tooltip={<Hint>Ungrouped</Hint>}
         class="mx-1 h-(--height-tab) flex-row items-center gap-2 rounded-(--radius-control) hover:bg-sidebar-accent focus-visible:ring-2 ring-sidebar-ring"

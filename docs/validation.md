@@ -884,3 +884,31 @@ Ungrouped 工作区入口（基于 `7dd7c8c` 的未提交改动）：`./scripts/
 - Rust 剪贴板 helper 定向测试 2/2，通过替身进程验证 UTF-8 字节、子进程编码环境、大小限制和无效 UTF-8 拒绝；不访问系统剪贴板。
 - 原生自动化：`./scripts/test-native protocols --filter 'OSC52 preserves Chinese'` 1/1；以 `LC_ALL=C LANG=C LC_CTYPE=C` 重跑 1/1，通过 AppKit 核对真实剪贴板 Unicode，保存并恢复剪贴板。人工 GUI 验收未执行。
 - `./scripts/nsh check`、`./scripts/nsh build` 通过。完整 headless 回归按用户要求中止，未取得最终结果。
+
+### Changes 并排 diff（2026-11-16，未提交工作区）
+
+- `./scripts/nsh check`、`./scripts/nsh build` 和 `./scripts/nsh test tests/workspace/Git.test.tsx`（2/2）通过，覆盖模式切换、文件及 staged 状态、窄窗口切回统一视图。
+- 原生自动化 `./scripts/test-native gitlive` 2/2 通过；检查真实仓库并排 diff 的宽、窄窗口截图，窄窗口长行会自动换行。人工 GUI 操作验收未执行；未运行完整 headless 套件。
+
+### 收起侧栏 Ungrouped 选中提示（2026-11-16，未提交工作区）
+
+- `./scripts/nsh check`、`./scripts/nsh build` 通过；原生自动化 `./scripts/test-native gitlive` 2/2 通过，已检查 `artifacts/ungrouped-compact.png` 中提示条与面板圆角的间距。人工 GUI 操作验收及完整 headless 套件未执行。
+
+### Changes diff 布局按钮位置（2026-11-16，未提交工作区）
+
+- 切换按钮移至 Changes 顶部工具栏，避免超出文件标题栏。`./scripts/nsh check`、`./scripts/nsh build` 和 Git 定向测试 2/2 通过。
+- 原生自动化 `./scripts/test-native gitlive` 2/2 通过；已检查窄窗口截图。人工 GUI 操作验收及完整 headless 套件未执行。
+
+### 合并 Appearance 与 Interface 设置（2026-11-16，未提交工作区）
+
+- `./scripts/nsh check`、`./scripts/nsh build` 通过；持久化定向测试 11/11、外观切换测试 1/1，覆盖主题、工作指示器和界面字体。
+- 原生自动化 `./scripts/test-native settings` 1/1；检查合并页面及滚动后切换设置页的截图。人工 GUI 操作验收和完整 headless 套件未执行。
+
+### 设置窗口测试夹具（2026-11-16，未提交工作区）
+
+- 设置原生测试改用无探针的真实终端夹具；`./scripts/nsh check` 和 `./scripts/test-native settings`（1/1）通过，检查截图确认底部不再显示分屏探针区域。分屏原生测试仍使用其专用探针；人工 GUI 验收及完整 headless 套件未执行。
+
+### 收起侧栏选中背景间距（2026-11-16，未提交工作区）
+
+- `./scripts/nsh check`、`./scripts/nsh build`、收起侧栏 Git 导航定向测试 1/1 通过。
+- 原生自动化 `./scripts/test-native gitlive` 2/2 通过，已检查收起侧栏选中状态截图；人工 GUI 操作验收及完整 headless 套件未执行。

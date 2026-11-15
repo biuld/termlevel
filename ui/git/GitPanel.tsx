@@ -1,5 +1,5 @@
 import { batch, cleanup, computed, effect, lifecycle, signal, Text, token, untracked, View } from "nsh";
-import { Button, DiffView, ResizablePanel, ResizablePanelGroup, Tree, type TreeEntry, type TreeItem } from "nsh/base";
+import { Button, DiffView, ResizablePanel, ResizablePanelGroup, Tree, type DiffLayout, type TreeEntry, type TreeItem } from "nsh/base";
 import { Hint, IconButton } from "../shared/controls";
 import { interfaceFont, monoFont } from "../shared/fonts";
 import { Icon } from "../shared/icons";
@@ -108,6 +108,7 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; previ
   const selected = signal<string | null>(null);
   const expanded = signal<string[]>([]);
   const scope = signal<GitDiffMode>("unstaged");
+  const diffLayout = signal<DiffLayout>("unified");
   const patch = signal("");
   const patchError = signal("");
   const patchLoading = signal(false);
@@ -312,7 +313,13 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; previ
       <If when={props.preview}>
         <Type role="caption" tone="subtle-foreground" class="ml-2" tooltip={<Hint>Git is not connected in preview mode.</Hint>}>Preview</Type>
       </If>
-      <View class="ml-auto flex-row items-center gap-2">
+      <View class="ml-auto shrink-0 flex-row items-center gap-2">
+        <If when={!!change()}>
+          <View class="flex-row items-center gap-0.5">
+            <IconButton icon="diffUnified" label="Unified diff" testID="diff-layout-unified" selected={diffLayout() === "unified"} onPress={() => diffLayout.set("unified")} />
+            <IconButton icon="diffSplit" label="Side-by-side diff" testID="diff-layout-split" selected={diffLayout() === "split"} onPress={() => diffLayout.set("split")} />
+          </View>
+        </If>
         <If when={refreshing()}>
           <Type role="caption" tone="subtle-foreground">Refreshing…</Type>
         </If>
@@ -420,8 +427,8 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; previ
                   </View>
                 </If>
                 <If when={!patchError() && !!patch()}>
-                  <Each of={[`${selected() ?? ""}:${scope()}`]} key={(value) => value}>{() =>
-                    <DiffView patch={patch()} layout="unified"
+                  <Each of={[`${selected() ?? ""}:${scope()}:${diffLayout()}`]} key={(value) => value}>{() =>
+                    <DiffView testID={`changes-diff-${diffLayout()}`} patch={patch()} layout={diffLayout()}
                       softWrap contextLines={3}
                       fontFamily={monoFont()} fontSize={token("text-body")} lineHeight={token("leading-body") + 4}
                       class="min-h-0 flex-1" />

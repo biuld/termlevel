@@ -76,6 +76,7 @@ git diff --check
 ./scripts/test-native osc
 ./scripts/test-native gitlive
 ./scripts/test-native history
+./scripts/test-native settings
 ```
 
 这些入口保持兼容，也可用 `./scripts/test-native <类别>`。完整 headless 发现不得与 scripts/test-native 并行：后者在仓库根目录生成临时 *.test.tsx，会被前者误发现。原生测试需要前台窗口，不能由类型检查或 headless 成功替代。剪贴板 helper 的编码与管道由 Rust 单元测试验证；系统剪贴板 Unicode 和 OSC 52 使用 `./scripts/test-native protocols --filter 'OSC52 preserves Chinese'` 验证，该原生用例保存并恢复剪贴板。系统输入法候选窗、拖动手感、选区和长期负载的人工验收另记。

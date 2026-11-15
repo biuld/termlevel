@@ -1,4 +1,4 @@
-import { keymap, Scroll, setColorScheme, signal, Text, token, View, type Signal } from "nsh";
+import { keymap, Scroll, setColorScheme, signal, Text, token, View, type ScrollRef, type Signal } from "nsh";
 import { Button } from "nsh/base";
 import { AppDialog } from "../shared/controls";
 import { applyFonts, interfaceFont, interfaceFonts, monoFont, monoFonts } from "../shared/fonts";
@@ -10,7 +10,6 @@ import type { TerminalIdentity } from "../workspace/workspace-snapshot";
 const pages = [
   { id: "appearance", label: "Appearance" },
   { id: "terminal", label: "Terminal" },
-  { id: "interface", label: "Interface" },
   { id: "shortcuts", label: "Shortcuts" },
   { id: "about", label: "About" },
 ] as const;
@@ -59,6 +58,7 @@ export function SettingsDialog(props: {
   scrollbackStep: number;
 }) {
   const page = signal<SettingsPage>("appearance");
+  const content = signal<ScrollRef | null>(null);
   const lineHeight = () => props.fontSize() + token("line-gap-terminal");
   return <AppDialog testID="settings-dialog" open={props.open} label="Settings" title="Settings"
     frame="w-[760px]" dismiss={props.dismiss} closeLabel="Close settings" padded={false}>
@@ -70,7 +70,7 @@ export function SettingsDialog(props: {
             role="tab"
             selected={page() === item().id}
             accessibilityLabel={`${item().label} settings`}
-            onPress={() => page.set(item().id)}
+            onPress={() => { if (page() !== item().id) { page.set(item().id); content()?.scrollTo({ y: 0, animated: false }); } }}
             class="mx-1 h-(--height-tab) items-start justify-center rounded-(--radius-tab) px-2 hover:bg-tab-hover focus-visible:ring-2 ring-sidebar-ring"
             classList={{ "bg-tab-selected hover:bg-tab-selected": page() === item().id }}
           >
@@ -82,10 +82,11 @@ export function SettingsDialog(props: {
           </Button>
         }</Each>
       </View>
-      <Scroll class="min-h-0 min-w-0 flex-1 rounded-(--radius-panel) bg-sidebar">
+      <Scroll ref={(ref) => content.set(ref)} testID="settings-content" class="min-h-0 min-w-0 flex-1 rounded-(--radius-panel) bg-sidebar" scrollbar={true}>
         <View class="gap-4 p-3">
           <If when={page() === "appearance"}>
             <View class="gap-2">
+              <Type role="body">Color theme</Type>
               <View class="flex-row rounded-(--radius-tab) bg-chrome p-0.5">
                 <Each of={["system", "light", "dark"] as const}>{(mode) =>
                   <Button
@@ -105,6 +106,44 @@ export function SettingsDialog(props: {
                 }</Each>
               </View>
               <Type role="caption">Applies immediately. Open terminals stay mounted.</Type>
+            </View>
+            <View class="gap-3">
+              <View class="gap-1">
+                <Type role="body">Working indicator</Type>
+                <Type role="caption">Shown while a program reports working without progress. The preview uses the default color; in the sidebar it follows the tab's group color. Reduce Motion shows a still version.</Type>
+                <View class="gap-0.5">
+                  <Each of={workingIndicators}>{(item) =>
+                    <Button testID={`working-indicator-${item().id}`}
+                      accessibilityLabel={`${item().label} working indicator`}
+                      selected={props.workingIndicator() === item().id}
+                      onPress={() => props.workingIndicator.set(item().id)}
+                      class="h-(--height-tab) flex-row items-center gap-2 rounded-(--radius-tab) px-2 hover:bg-tab-hover focus-visible:ring-2 ring-sidebar-ring"
+                      classList={{ "bg-tab-selected hover:bg-tab-selected": props.workingIndicator() === item().id }}>
+                      <WorkingIndicator kind={item().id} size={16} active={props.open} />
+                      <Text class="font-medium" style={{
+                        fontSize: token("text-body"), lineHeight: token("leading-body"),
+                        color: token(props.workingIndicator() === item().id ? "tab-selected-foreground" : "sidebar-foreground"),
+                      }}>{item().label}</Text>
+                      <Text class="ml-auto" style={{
+                        fontSize: token("text-caption"), lineHeight: token("leading-caption"),
+                        color: token("muted-foreground"),
+                      }}>{item().detail}</Text>
+                    </Button>
+                  }</Each>
+                </View>
+              </View>
+              <View class="gap-1">
+                <Type role="body">Interface font</Type>
+                <Type role="caption">System is the platform font. The toolbar path uses the terminal family at body size, {token("text-body")} pt.</Type>
+                <FontChoices fonts={interfaceFonts} selected={interfaceFont} testID="ui-font" onSelect={(id) => { interfaceFont.set(id); applyFonts(); }} />
+              </View>
+              <View class="gap-1 rounded-(--radius-tab) bg-chrome px-3 py-2">
+                <Type role="title">Title {token("text-title")}</Type>
+                <Type role="body">Body {token("text-body")} keeps names and settings readable.</Type>
+                <Type role="body" family="mono" tone="muted-foreground">~/Projects/termlevel</Type>
+                <Type role="label">Label {token("text-label")}</Type>
+                <Type role="caption">Caption {token("text-caption")} for counts and hints.</Type>
+              </View>
             </View>
           </If>
           <If when={page() === "terminal"}>
@@ -161,45 +200,6 @@ export function SettingsDialog(props: {
               <View class="rounded-(--radius-tab) bg-chrome px-3 py-2">
                 <Text style={{ fontFamily: monoFont(), fontSize: props.fontSize(), lineHeight: lineHeight(), color: token("terminal-prompt") }}>~/Projects/termlevel</Text>
                 <Text style={{ fontFamily: monoFont(), fontSize: props.fontSize(), lineHeight: lineHeight(), color: token("terminal-foreground") }}>echo typography</Text>
-              </View>
-            </View>
-          </If>
-          <If when={page() === "interface"}>
-            <View class="gap-3">
-              <View class="gap-1">
-                <Type role="body">Working indicator</Type>
-                <Type role="caption">Shown while a program reports working without progress. The preview uses the default color; in the sidebar it follows the tab's group color. Reduce Motion shows a still version.</Type>
-                <View class="gap-0.5">
-                  <Each of={workingIndicators}>{(item) =>
-                    <Button testID={`working-indicator-${item().id}`}
-                      accessibilityLabel={`${item().label} working indicator`}
-                      selected={props.workingIndicator() === item().id}
-                      onPress={() => props.workingIndicator.set(item().id)}
-                      class="h-(--height-tab) flex-row items-center gap-2 rounded-(--radius-tab) px-2 hover:bg-tab-hover focus-visible:ring-2 ring-sidebar-ring"
-                      classList={{ "bg-tab-selected hover:bg-tab-selected": props.workingIndicator() === item().id }}>
-                      <WorkingIndicator kind={item().id} size={16} active={props.open} />
-                      <Text class="font-medium" style={{
-                        fontSize: token("text-body"), lineHeight: token("leading-body"),
-                        color: token(props.workingIndicator() === item().id ? "tab-selected-foreground" : "sidebar-foreground"),
-                      }}>{item().label}</Text>
-                      <Text class="ml-auto" style={{
-                        fontSize: token("text-caption"), lineHeight: token("leading-caption"),
-                        color: token("muted-foreground"),
-                      }}>{item().detail}</Text>
-                    </Button>
-                  }</Each>
-                </View>
-              </View>
-              <View class="gap-1">
-                <Type role="caption">System is the platform font. The toolbar path uses the terminal family at body size, {token("text-body")} pt.</Type>
-                <FontChoices fonts={interfaceFonts} selected={interfaceFont} testID="ui-font" onSelect={(id) => { interfaceFont.set(id); applyFonts(); }} />
-              </View>
-              <View class="gap-1 rounded-(--radius-tab) bg-chrome px-3 py-2">
-                <Type role="title">Title {token("text-title")}</Type>
-                <Type role="body">Body {token("text-body")} keeps names and settings readable.</Type>
-                <Type role="body" family="mono" tone="muted-foreground">~/Projects/termlevel</Type>
-                <Type role="label">Label {token("text-label")}</Type>
-                <Type role="caption">Caption {token("text-caption")} for counts and hints.</Type>
               </View>
             </View>
           </If>

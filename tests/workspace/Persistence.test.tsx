@@ -207,11 +207,15 @@ test("the working indicator is saved and restored through settings", async () =>
     // An unknown stored value falls back and is rewritten by the workspace save.
     await app.waitUntil(() => JSON.parse(app.storage().workspace).workingIndicator === "bars");
     await app.press("id:settings");
-    await app.press("id:settings-interface");
+    expect(app.shows("id:settings-interface")).toBe(false);
+    expect(app.shows("id:appearance-dark")).toBe(true);
     await app.press("id:working-indicator-vinyl");
     await app.waitUntil(() => JSON.parse(app.storage().workspace).workingIndicator === "vinyl");
     await app.press("id:working-indicator-beat");
     await app.waitUntil(() => JSON.parse(app.storage().workspace).workingIndicator === "beat");
+    await app.scroll("id:settings-content", 500);
+    await app.press("id:ui-font-Georgia");
+    await app.waitUntil(() => JSON.parse(app.storage().workspace).interfaceFont === "Georgia");
   } finally {
     app.dispose();
   }

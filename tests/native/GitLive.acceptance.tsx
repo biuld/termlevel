@@ -49,3 +49,22 @@ test("Git tabs read the real repository through the system git CLI", async () =>
     app.dispose();
   }
 });
+
+
+test("Changes switches diff layouts in a native window", async () => {
+  const app = await open("./tests/workspace/fixtures/GitStatesFixture.tsx", {
+    platform: "macos", width: 1200, height: 780, colorScheme: "dark",
+  });
+  try {
+    await app.waitFor("id:changes-diff-unified");
+    await app.press("id:diff-layout-split");
+    await app.waitFor("id:changes-diff-split");
+    await app.screenshot("artifacts/changes-diff-split-fixture.png");
+    await app.setViewport(700, 700);
+    await app.screenshot("artifacts/changes-diff-split-fixture-narrow.png");
+    await app.press("id:diff-layout-unified");
+    await app.waitFor("id:changes-diff-unified");
+  } finally {
+    app.dispose();
+  }
+});

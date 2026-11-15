@@ -189,7 +189,7 @@ libghostty 的独立 OSC parser 只暴露两类数据：标题字符串和未知
  ✓  tests               ×       完成结果待查看
 ```
 
-保留 28 pt 行高、选中背景、hover / 键盘焦点关闭按钮和布局圆点让位规则。展开态进度为标题下方 2 pt 圆角线，收起态为图标下 12 pt 短线；hover 展开只恢复同一内容，不触发确认。线不参与命中、不越过 tab 圆角，不移动分组引导线。收起态仍可通过 tooltip 获得标题和动作提示。
+保留 28 pt 行高、选中背景、hover / 键盘焦点关闭按钮。展开态进度为标题下方 2 pt 圆角线，收起态为图标下 12 pt 短线；hover 展开只恢复同一内容，不触发确认。线不参与命中、不越过 tab 圆角，不移动分组引导线。收起态仍可通过 tooltip 获得标题和动作提示。
 
 ### 进度只有一种含义
 
@@ -275,7 +275,7 @@ UI 在主动选择前捕获当前摘要的 statusRevision；初始化恢复跳�
 - 业务：blocked 查看后仍显示且不重新通知；同状态重复报告不重置已读；blocked → working → blocked 再提醒；两个 blocked 记录分别进入历史，聚合未变也不漏；确认旧版本不能吞掉新结果。
 - 生命周期：done/error 确认后不遮挡 working；新 prompt 清掉旧 working/blocked 与 9;4；无 integration 不猜测 busy；干净退出关闭、非零退出保留；热重载恢复且不确认；持久化丢弃运行期字段。
 - 图文一致：9;4=42%、7501=40% 时，线、tooltip、无障碍均用终端进度 42%；blocked 无进度不画线；pause/error 无百分比不画满且不动画；100% 不自动 done。
-- 原生窗口：展开 / 收起 / hover 展开、固定与分组标签、键盘选择、分屏焦点和通知来源跳转；不挤压关闭按钮、不重叠 BEL / 布局圆点；多种字号下 2 pt 线可读。
+- 原生窗口：展开 / 收起 / hover 展开、固定与分组标签、键盘选择、分屏焦点和通知来源跳转；不挤压关闭按钮、不重叠 BEL 圆点；多种字号下 2 pt 线可读。
 - 人工 UX：无需读 tooltip 能分清工作 / 待操作 / 完成 / 失败；不抢焦点；长消息可从历史查看；减少动态效果、色彩辨识和长时间多会话进度下的稳定性单独记录。
 
 验证命令沿用 [开发指南](development.md)：`./scripts/nsh check`、`./scripts/nsh test`、`./scripts/nsh build`；原生按需运行 `./scripts/test-native status` 和 `./scripts/test-native osc`，不得与全量 headless 并行。本次执行结果和日志见 validation，人工验收不得由自动化通过代替。

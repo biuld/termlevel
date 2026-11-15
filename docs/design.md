@@ -20,7 +20,7 @@
 - pane 内的工具栏左侧显示终端图标和当前目录，窄窗口改为会话名；右侧提供内容搜索、分屏和更多操作。搜索打开当前 pane 的查找条，和 ⌘F、菜单里的 Find in terminal 是同一个入口。工具栏内容与正文的左内边距一致。窗口拖动由顶部统一窗口栏负责。预览身份仍由终端欢迎信息与设置说明明确展示。
 - 界面默认用平台字体 `system-ui`。`SF Pro Text` 不是已安装的字体族，不能当作 `font-sans`。设置里可以选择已安装的界面字体，以及终端和工具栏路径共用的等宽字体。工具栏路径用 body 字号和终端的等宽字体，没有单独字号；快捷键用所选等宽字体，字号与 caption 相同。字级见下方「字体」。图标按钮 26 pt、操作按钮 28 pt、输入框 30 pt。
 - 居中对话框使用 NSH `Dialog`。运行时只提供层和关闭行为，外观由应用绘制：底板是窗口的 `chrome`，圆角与 pane 相同，一圈 `sidebar-border`，轻阴影，底下是均匀 `bg-scrim`，不用玻璃，也不用弹层白卡片。短标题放在 36 pt 标题栏左侧，关闭按钮在右侧。确认删除把问题放在内容区，使用 `alertdialog`。主动作使用标签选中色，取消是无底色文字，删除保留危险色。输入框是侧栏同色的内凹字段。Escape 和点击遮罩关闭。分组编辑仍是锚定组头的 `Overlay`，不是这个对话框。
-- 设置沿用窗口的两层表面：左侧分区直接放在底板上，选中态与侧栏标签相同；右侧是一块 `sidebar` 圆角面板，只显示当前分区。分区为 Appearance、Terminal、Interface、Shortcuts、About。外观是底板凹槽里的 System / Light / Dark，默认跟随系统；切换外观保留终端实例。终端可选等宽字体，字号 10–24 pt，默认 Menlo 13 pt，行高为字号加 `line-gap-terminal`。滚动历史默认 10_000 行，可在 1_000 到 100_000 之间按 1_000 行调整，立即作用于已打开的终端；减小会丢掉最老的行。工具栏路径使用同一等宽字体，字号保持 body。界面可选 System、Helvetica Neue、Avenir Next、Gill Sans、Futura、Georgia，字级仍来自主题。快捷键页列出当前实际绑定。工作区结构与设置由 NSH Storage 持久化（`~/Library/Application Support/app.termlevel.desktop/storage.json`）；外观、字体、字号、滚动历史、侧栏宽度和标签组在重启后恢复，剪贴板读取权限仍按安全设计复位。
+- 设置沿用窗口的两层表面：左侧分区直接放在底板上，选中态与侧栏标签相同；右侧是一块 `sidebar` 圆角面板，只显示当前分区。分区为 Appearance、Terminal、Shortcuts、About。Appearance 汇集颜色主题、工作状态指示器和界面字体；颜色主题提供 System / Light / Dark，默认跟随系统，切换外观保留终端实例。终端可选等宽字体，字号 10–24 pt，默认 Menlo 13 pt，行高为字号加 `line-gap-terminal`。滚动历史默认 10_000 行，可在 1_000 到 100_000 之间按 1_000 行调整，立即作用于已打开的终端；减小会丢掉最老的行。工具栏路径使用同一等宽字体，字号保持 body。界面可选 System、Helvetica Neue、Avenir Next、Gill Sans、Futura、Georgia，字级仍来自主题。快捷键页列出当前实际绑定。工作区结构与设置由 NSH Storage 持久化（`~/Library/Application Support/app.termlevel.desktop/storage.json`）；外观、字体、字号、滚动历史、侧栏宽度和标签组在重启后恢复，剪贴板读取权限仍按安全设计复位。
 
 ## 字体
 

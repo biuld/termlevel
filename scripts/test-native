@@ -14,7 +14,8 @@ case "$kind" in
   osc) fixture=Osc; report=osc-native-acceptance ;;
   gitlive) fixture=GitLive; report=git-live-native ;;
   history) fixture=History; report=history-native ;;
-  *) echo 'Usage: scripts/test-native {input|scroll|selection|tiling|protocols|ghostty|notifications|status|osc|gitlive|history} [NSH test options]' >&2; exit 2 ;;
+  settings) fixture=Settings; report=settings-native ;;
+  *) echo 'Usage: scripts/test-native {input|scroll|selection|tiling|protocols|ghostty|notifications|status|osc|gitlive|history|settings} [NSH test options]' >&2; exit 2 ;;
 esac
 shift
 # NSH resolves open() relative to the test module. Acceptance sources use

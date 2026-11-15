@@ -85,6 +85,7 @@ export function IconButton(props: {
   return <Button
     testID={props.testID}
     accessibilityLabel={props.label}
+    selected={props.selected}
     onPress={props.onPress}
     disabled={props.disabled}
     tooltip={<Hint>{props.label}</Hint>}

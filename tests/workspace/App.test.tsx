@@ -30,12 +30,14 @@ test("Git menu opens one view per group and returns to the preserved terminal", 
   await app.press("id:titlebar-git");
   await app.chooseMenuItem("Changes");
   await app.waitFor("id:git-tab-termlevel-changes");
+  expect(app.texts()).toContain("Changes · Termlevel");
   await app.press("id:titlebar-git");
   await app.chooseMenuItem("Changes");
   expect(app.count("id:git-tab-termlevel-changes")).toBe(1);
   await app.press("id:titlebar-git");
   await app.chooseMenuItem("History");
   await app.waitFor("id:git-tab-termlevel-history");
+  expect(app.texts()).toContain("History · Termlevel");
   await app.press("id:tab-colors");
   await app.press("id:titlebar-git");
   await app.chooseMenuItem("Changes");

@@ -115,13 +115,18 @@ export function WorkspaceApp(props: {
     store.expanded.update((value) => !value);
   }
 
+  const titleGroup = () => {
+    const name = store.groupTitle(store.workspaceKey() || null);
+    return store.dashboardOpen() ? name : name.replace(/^./u, (initial) => initial.toLocaleUpperCase());
+  };
+
   win.set({
     title: "Termlevel", titleBar: { style: "hidden", height: token("height-titlebar") },
     minSize: { width: 640, height: 420 },
   });
   effect(() => win.set({
     title: store.canvasBlocked()
-      ? `${store.dashboardOpen() ? "Group settings" : store.activeGitView() === "changes" ? "Changes" : "History"} — ${store.groupTitle(store.workspaceKey() || null)} — Termlevel`
+      ? `${store.dashboardOpen() ? "Group settings" : store.activeGitView() === "changes" ? "Changes" : "History"} — ${titleGroup()} — Termlevel`
       : `${store.activeTab()?.title ?? "Termlevel"} — Termlevel`,
   }));
 
@@ -218,7 +223,7 @@ export function WorkspaceApp(props: {
           testID="toggle-sidebar" onPress={actions.toggleSidebar} />
       </View>
       <View class="absolute inset-0 items-center justify-center" style={{ pointerEvents: "none" }}>
-        <Type role="label">{store.canvasBlocked() ? `${store.dashboardOpen() ? "Group settings" : store.activeGitView() === "changes" ? "Changes" : "History"} · ${store.groupTitle(store.workspaceKey() || null)}` : "Termlevel"}</Type>
+        <Type role="label">{store.canvasBlocked() ? `${store.dashboardOpen() ? "Group settings" : store.activeGitView() === "changes" ? "Changes" : "History"} · ${titleGroup()}` : "Termlevel"}</Type>
       </View>
       <View testID="global-actions" desktop={{ windowDrag: false }} class="ml-auto flex-row items-center gap-0.5">
         <IconButton icon="plus" label={store.workspaceKey() ? `New terminal in ${store.groupTitle(store.workspaceKey())}` : "New ungrouped terminal"} testID="titlebar-new-terminal" onPress={actions.newTerminal} />
