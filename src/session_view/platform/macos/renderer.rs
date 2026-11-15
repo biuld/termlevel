@@ -1,5 +1,5 @@
 //! macOS CoreText/CoreGraphics drawing and bounded main-thread caches.
-use crate::session_view::paint::{PaintConfig, Scene, image_rect};
+use crate::session_view::paint::{self, PaintConfig, Scene, image_rect};
 use objc2::rc::Retained;
 use objc2_app_kit::{NSFont, NSFontWeightRegular};
 use objc2_core_foundation::{
@@ -229,12 +229,12 @@ impl Renderer {
         for (row, spans) in snap.rows.iter().enumerate() {
             let mut spans = spans.iter().peekable();
             while let Some(span) = spans.next() {
-                let bg = background(span, cfg);
+                let bg = paint::run_background(span, cfg);
                 if let Some(bg) = bg {
                     let mut end = span.col + span.cells;
                     while let Some(next) = spans.peek()
                         && next.col == end
-                        && background(next, cfg) == Some(bg)
+                        && paint::run_background(next, cfg) == Some(bg)
                     {
                         end += next.cells;
                         spans.next();
@@ -465,13 +465,6 @@ fn graphics_path(line: &CTLine) -> Option<CFRetained<CGPath>> {
 
 fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
     CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
-}
-fn background(span: &crate::terminal::GridRun, cfg: &PaintConfig) -> Option<nsh_core::Hsla> {
-    if span.selected {
-        Some(cfg.selection)
-    } else {
-        cfg.colors(span.run.style).1
-    }
 }
 /// Round shared edges, not widths, in backing pixels (including the view's
 /// fractional device origin). Adjacent colors then cover each pixel once.

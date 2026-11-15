@@ -1,6 +1,6 @@
 //! Owned rendering inputs shared by the engine and the AppKit surface.
 //! No parser, PTY, or framework drawing commands cross this boundary.
-use crate::terminal::{SearchHit, WindowSnap};
+use crate::terminal::{GridRun, SearchHit, WindowSnap};
 use nsh_base::{TerminalColor, TerminalStyle};
 use nsh_core::prelude::*;
 use std::sync::Arc;
@@ -27,6 +27,32 @@ impl PaintConfig {
         }
     }
 }
+/// Solid fill for one grid run. `None` means the terminal default shows through.
+pub(super) fn run_background(span: &GridRun, cfg: &PaintConfig) -> Option<Hsla> {
+    if span.selected {
+        Some(cfg.selection)
+    } else {
+        cfg.colors(span.run.style).1
+    }
+}
+
+/// Opaque field-editor fill while composing. The editor covers the composing
+/// text, so it uses the cursor cell's painted background.
+pub(super) fn composition_background(snap: &WindowSnap, cfg: &PaintConfig) -> Hsla {
+    let Some((col, row)) = snap.frame.cursor.position else {
+        return cfg.background;
+    };
+    let col = col as usize;
+    snap.rows
+        .get(row as usize)
+        .and_then(|runs| {
+            runs.iter()
+                .find(|run| run.col <= col && col < run.col + run.cells)
+        })
+        .and_then(|run| run_background(run, cfg))
+        .unwrap_or(cfg.background)
+}
+
 fn resolve(color: TerminalColor) -> Hsla {
     let (r, g, b) = match color {
         TerminalColor::Rgb(r, g, b) => (r, g, b),
@@ -90,4 +116,80 @@ pub(super) fn semantics(snap: &WindowSnap, cw: f32, lh: f32) -> Painter {
         ));
     }
     metadata
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{session_view::window::Window, terminal::GhosttyEmulator};
+    use nsh_base::{TerminalColor, TerminalEmulator, TerminalRun, TerminalSize, TerminalStyle};
+
+    fn config() -> PaintConfig {
+        PaintConfig {
+            cw: 8.0,
+            lh: 21.0,
+            family: "Menlo".into(),
+            size: 13.0,
+            foreground: nsh_core::color::rgb(0xeeeeee).into(),
+            background: nsh_core::color::rgb(0x18191b).into(),
+            selection: nsh_core::color::rgb(0x0870e4).into(),
+            search: nsh_core::color::rgb(0xffffff).into(),
+        }
+    }
+
+    fn run(text: &str, style: TerminalStyle, selected: bool) -> GridRun {
+        GridRun {
+            col: 0,
+            cells: text.chars().count(),
+            selected,
+            hyperlink: None,
+            run: TerminalRun::new(text, style),
+        }
+    }
+
+    #[test]
+    fn run_background_uses_the_cell_color_unless_selected() {
+        let cfg = config();
+        let mut gray = TerminalStyle::default();
+        gray.bg = Some(TerminalColor::Rgb(40, 42, 46));
+        assert_eq!(
+            run_background(&run(" ", gray, false), &cfg),
+            Some(resolve(TerminalColor::Rgb(40, 42, 46)))
+        );
+        assert_eq!(
+            run_background(&run(" ", TerminalStyle::default(), false), &cfg),
+            None
+        );
+        assert_eq!(
+            run_background(&run(" ", gray, true), &cfg),
+            Some(cfg.selection)
+        );
+    }
+
+    #[test]
+    fn composition_fill_follows_the_cursor_cell() {
+        let cfg = config();
+        let mut emulator = GhosttyEmulator::new(TerminalSize::new(12, 1), 10);
+        // Gray across the row, then leave the cursor inside that run.
+        emulator.feed(b"\x1b[48;2;40;42;46m> prompt    \x1b[4D");
+        let snap = emulator
+            .begin_window(&mut Window::default(), false, None)
+            .unwrap()
+            .finish();
+        assert_eq!(
+            nsh_core::Rgba::from(composition_background(&snap, &cfg)),
+            nsh_core::Rgba::from(resolve(TerminalColor::Rgb(40, 42, 46)))
+        );
+
+        let mut plain = GhosttyEmulator::new(TerminalSize::new(12, 1), 10);
+        plain.feed(b"hi");
+        let snap = plain
+            .begin_window(&mut Window::default(), false, None)
+            .unwrap()
+            .finish();
+        assert_eq!(
+            nsh_core::Rgba::from(composition_background(&snap, &cfg)),
+            nsh_core::Rgba::from(cfg.background)
+        );
+    }
 }

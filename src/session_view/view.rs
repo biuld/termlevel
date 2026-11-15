@@ -1065,6 +1065,7 @@ impl Display {
         let focused = self.focused;
         let focus_session = self.session.clone();
         let blur_session = self.session.clone();
+        let fill = self.clone();
         input()
             .font_family(move || family(props))
             .text_size(move || Length::from(props.font_size.get()))
@@ -1073,14 +1074,31 @@ impl Display {
             .absolute()
             .left(move || px(anchor.get().0))
             .top(move || px(anchor.get().1))
-            .w(move || px((snap.get().frame.cols as f32 * cw.get().0 - anchor.get().0).max(1.0)))
+            .w(move || {
+                let snap = snap.get();
+                let cw = cw.get().0;
+                let col = snap.frame.cursor.position.map(|(col, _)| col).unwrap_or(0);
+                let text = value.get();
+                let measured = crate::runtime::terminal_text_width(
+                    &family(props),
+                    props.font_size.get().0,
+                    &text,
+                );
+                px(
+                    super::input::field_columns(measured, cw, col, snap.frame.cols) as f32
+                        * cw.max(1.0),
+                )
+            })
             .h(move || Length::from(props.line_height.get()))
             .p_0()
             .border(px(0.0))
             .pointer_events(PointerEvents::None)
             .bg(move || {
                 if composing.get() {
-                    default_color(props.default_background, theme().background)
+                    AdaptiveColor::from(paint::composition_background(
+                        &fill.surface.snap().get(),
+                        &fill.paint_config(),
+                    ))
                 } else {
                     AdaptiveColor::TRANSPARENT
                 }

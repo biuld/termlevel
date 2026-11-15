@@ -68,12 +68,25 @@ impl Runtime {
     }
 }
 
-pub(crate) fn terminal_cell_width(font: &str, size: f32) -> f32 {
-    let css = match font {
+fn terminal_font_css(font: &str, size: f32) -> String {
+    match font {
         "monospace" | "ui-monospace" => format!("{size}px {font}"),
         _ => format!("{size}px \"{}\"", font.replace('"', "")),
-    };
-    nsh_core::element::measure_text(&css, "0000000000").0 / 10.0
+    }
+}
+
+pub(crate) fn terminal_cell_width(font: &str, size: f32) -> f32 {
+    nsh_core::element::measure_text(&terminal_font_css(font, size), "0000000000").0 / 10.0
+}
+
+/// Width of `text` in the same font the terminal grid uses. Empty text is zero
+/// and does not ask the text engine.
+pub(crate) fn terminal_text_width(font: &str, size: f32, text: &str) -> f32 {
+    if text.is_empty() {
+        0.0
+    } else {
+        nsh_core::element::measure_text(&terminal_font_css(font, size), text).0
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Props)]

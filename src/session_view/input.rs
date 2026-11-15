@@ -52,9 +52,33 @@ impl InputState {
     }
 }
 
+/// Columns the field editor occupies. The measured text gets one extra cell
+/// for the caret, and the result stays inside the columns left on this row.
+pub(super) fn field_columns(text_px: f32, cell_px: f32, cursor_col: u16, grid_cols: u16) -> u16 {
+    let cell = cell_px.max(1.0);
+    let used = if text_px <= 0.0 {
+        0
+    } else {
+        (text_px / cell).ceil().min(u16::MAX as f32) as u16
+    };
+    let want = used.saturating_add(1).max(1);
+    let remain = grid_cols.saturating_sub(cursor_col).max(1);
+    want.min(remain)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn field_covers_the_composition_and_one_caret_cell() {
+        assert_eq!(field_columns(11.0 * 8.0, 8.0, 4, 80), 12);
+        assert_eq!(field_columns(16.0, 8.0, 0, 80), 3);
+        assert_eq!(field_columns(0.0, 8.0, 10, 80), 1);
+        assert_eq!(field_columns(8.1, 8.0, 0, 80), 3);
+        assert_eq!(field_columns(11.0 * 8.0, 8.0, 75, 80), 5);
+        assert_eq!(field_columns(88.0, 8.0, 79, 80), 1);
+    }
 
     #[test]
     fn composition_only_sends_final_text() {
