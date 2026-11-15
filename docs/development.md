@@ -12,12 +12,14 @@ validation 按日期保留验证证据，不作为当前模块路径索引。带
 App.tsx                     NSH 默认挂载入口
 ui/app/                     启动恢复、窗口、菜单、快捷键和应用接线
 ui/workspace/               工作区状态、快照、存储、侧栏、分组和平铺
-ui/dashboard/               分组概览、头部组设置与 Git 变更 / diff 视图
+ui/dashboard/               分组概览、Git 变更 / diff、History、分支 / worktree 与提交车道
 ui/settings/                设置界面
 ui/notifications/           通知历史订阅与标题栏面板
 ui/terminal/                原生终端展示、查找和显式预览
 ui/shared/                  通用控件、图标、字体、文字和主题映射
 src/                        Rust 应用 crate
+  git.rs                    只读 Git 查询：status、refs、worktree、log、commit、diff
+  git_ops.rs                显式 Git 操作：checkout、建分支、worktree 管理
   sessions/                 显式会话 API 与进程生命周期测试
   terminal/                 Ghostty 应用适配测试
   session_view/             显示控制、输入策略、场景与平台后端
@@ -73,6 +75,7 @@ git diff --check
 ./scripts/test-native notifications
 ./scripts/test-native osc
 ./scripts/test-native gitlive
+./scripts/test-native history
 ```
 
 这些入口保持兼容，也可用 `./scripts/test-native <类别>`。完整 headless 发现不得与 scripts/test-native 并行：后者在仓库根目录生成临时 *.test.tsx，会被前者误发现。原生测试需要前台窗口，不能由类型检查或 headless 成功替代。系统输入法候选窗、拖动手感、选区和长期负载的人工验收另记。

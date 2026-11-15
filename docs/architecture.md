@@ -18,9 +18,11 @@ App.tsx                                      mount 工作区，仅作入口
   ui/workspace/TilingCanvas.tsx              按 session ID 稳定挂载、pane 工具栏与分隔拖动
   ui/dashboard/Dashboard.tsx                 组概览外壳：头部组设置与关闭
   ui/dashboard/GitPanel.tsx                  变更文件树、单文件 diff、刷新与状态
+  ui/dashboard/HistoryPanel.tsx              分支 / worktree、提交车道、详情与 patch
+  ui/dashboard/commit-graph.ts               由提交父关系计算稳定车道的纯函数
   ui/dashboard/git-types.ts                  TSX 侧的 Git 快照契约与 transport 接口
   ui/dashboard/native-git.ts                 经 termlevel/native 调用系统 git CLI
-  ui/dashboard/preview-git.ts                显式预览的干净仓库状态，不执行命令
+  ui/dashboard/preview-git.ts                显式预览的确定性仓库状态，不执行命令
   ui/shared/theme.ts                         分组标识到主题 token 的映射
   ui/terminal/TerminalSurface.tsx            真实终端的显示、焦点属性与低频状态
     native SessionTerminal       绑定已有 Rust 会话
@@ -30,7 +32,8 @@ App.tsx                                      mount 工作区，仅作入口
 src/lib.rs                                   注册 termlevel/native 导出与原生 renderer factory
 src/runtime.rs                               版本、启动目录、显式预览开关与原生 cell 测量
 src/dialog_keys.rs                           对话框 Escape 与 pane 缩放模式的原生键盘优先级
-src/git.rs                                   只读 Git CLI：porcelain v2 状态、unified diff、版本检查
+src/git.rs                                   只读 Git CLI：status、refs、worktree、log、diff、版本检查
+src/git_ops.rs                               显式 Git 操作：checkout、建分支、worktree add/remove/lock/prune
 src/terminal.rs                              Ghostty 状态 / RenderState 到 NSH 的适配；预览 provider
 src/sessions.rs                              SessionManager、PTY、进程、reader/writer/reaper
   sessions/api.rs                TSX 可调用的显式会话操作
@@ -92,24 +95,39 @@ Settings → Terminal 的 Terminal identity 默认是 Termlevel，也可显式�
 
 ## 概览的 Git 数据通路
 
-组概览的 Git 数据是只读的，由 `src/git.rs` 调用系统 `git` CLI 得到；应用不内嵌 Git 实现。最低版本为 Git 2.20，版本过低、找不到 git 或仓库不可读时返回带说明的 `RepoStatus`，由 UI 显示提示，不启动仓库操作。
+组概览由系统 `git` CLI 提供数据，应用不内嵌 Git 实现。最低版本为 Git 2.20；版本过低、找不到 git 或仓库不可读时返回带说明的错误，由 UI 显示提示。读取集中在 `src/git.rs`，显式写操作集中在 `src/git_ops.rs`。
 
 ```text
-TSX GitPanel ── status(root) / diff(root, path, mode) ── Rust Git
-                                                          │ blocking（engine 线程外）
-                                                          │ git -C <repo> ...
-                                                          ▼
-                                   RepoStatus（branch / ahead / behind / operation / entries）
-                                   unified patch（staged / unstaged / untracked）
+TSX GitPanel      ── status / diff ───────────────────────┐
+TSX HistoryPanel  ── branches / worktrees / log / commit ──┤ Rust Git（只读）
+                                                           │ blocking（engine 线程外）
+                                                           │ git -C <repo> ...
+                                                           ▼
+                                    RepoStatus / RepoBranches / RepoWorktrees
+                                    RepoLog / RepoCommitDetail / unified patch
+
+TSX HistoryPanel  ── checkout / createBranch / worktree* ── Rust GitOps
+                                                           │ 显式操作，60 秒超时
+                                                           ▼
+                                    git checkout / branch / worktree ...
 ```
 
 - 状态使用 `git status --porcelain=v2 --branch -z --untracked-files=all`，只解析文档化的机器格式；rename 用 `2` 记录的两个 NUL 路径，冲突用 `u`，untracked 用 `?`。
 - 差异使用 `git diff --no-ext-diff --no-textconv --no-color --unified=3 [--cached] -- <path>`；untracked 文件由 Rust 读取有界文本生成新文件 patch。
-- 所有命令以参数数组启动，不经过 shell；设置 `GIT_OPTIONAL_LOCKS=0`、`GIT_TERMINAL_PROMPT=0`、`GIT_NO_LAZY_FETCH=1`、`GIT_PAGER=cat` 和 `LC_ALL=C`。
-- 每条命令有 3 秒超时并终止自己的进程组；状态和 diff 分别限制 2 MiB，单文件预览限制 512 KiB，条目限制 5,000。
-- 先在 group 路径找 worktree，再以仓库根运行 status/diff，因此路径是仓库根相对路径；group 路径是仓库子目录时，UI 在分支 tooltip 显示仓库根。
-- 操作进行中通过 worktree 的 git dir 标记检测 merge / rebase / cherry-pick / revert / bisect，不执行 hooks。
-- V1 只读：不 stage、unstage、commit、checkout，也不修改 index。预览模式使用 `preview-git.ts` 的确定性干净仓库状态，不启动 git。
+- 分支使用 `git for-each-ref` 读取 `refs/heads`、`refs/remotes`、`refs/tags`；`%(HEAD)` 标记当前本地分支，跳过 `origin/HEAD` 之类的符号引用，upstream 只解析文档化的短名。标签很多时 UI 仍由虚拟化 `Tree` 承担。
+- Worktree 使用 `git worktree list --porcelain`，解析 worktree / HEAD / branch / bare / detached / locked / prunable；`current` 由 group 目录的 canonical path 与各 worktree 路径按组件前缀匹配，取最长匹配。
+- 历史使用 `git log --topo-order --max-count=<limit+1> --skip=<n>`，scope 为空时 `--all`，否则传完整 ref；`%H %h %P %an %ae %at %D %s` 以 NUL 分隔，只取文档化字段。提交详情分三条读取：`git show -s` 元数据、`--name-status` 变更路径、`--first-parent --unified=3` patch。
+- 所有命令以参数数组启动，不经过 shell；读取设置 `GIT_OPTIONAL_LOCKS=0`、`GIT_TERMINAL_PROMPT=0`、`GIT_NO_LAZY_FETCH=1`、`GIT_PAGER=cat` 和 `LC_ALL=C`。写操作不设置 `GIT_OPTIONAL_LOCKS=0`，允许 index 锁与仓库自身 hooks。
+- 读取命令 3 秒超时、历史 5 秒；每条命令终止自己的进程组。状态、diff、log 和 commit patch 各限制 2 MiB，单文件预览 512 KiB，条目限制 5,000；提交页默认 200 条，滚动到底继续加载。
+- 分支名先经 `git check-ref-format --branch`，起点先经 `git rev-parse --verify <start>^{commit}`；worktree 删除、锁定只接受 `git worktree list` 中的路径。写操作不使用 `--force`。
+- 先在 group 路径找仓库根，再以仓库根运行命令，因此路径是仓库根相对路径；group 路径是仓库子目录时，worktree `current` 仍匹配所属工作树。
+- 操作进行中通过 worktree 的 git dir 标记检测 merge / rebase / cherry-pick / revert / bisect，只读查询不执行 hooks。
+- 概览读取保持只读；History 的显式动作只有 checkout、新建/删除分支和 worktree 管理。删除分支使用 `git branch -d`，不 force；Git 拒绝当前分支、未合并分支或已在 worktree 中检出的分支。不 stage、unstage、commit、merge、rebase、cherry-pick、reset、stash，也不解决冲突。
+- 预览模式使用 `preview-git.ts` 的确定性仓库、分支、worktree、提交和 patch，不启动 git，也不接受写操作。
+
+### History 视图
+
+组概览头部在 Changes 与 History 之间切换。`HistoryPanel` 左栏用 `Tree` 展示 Local / Remote / Tags 并限定提交 scope，用 `List` 展示 worktree；中栏用虚拟化 `List` 提交行，首列由 `Canvas` 绘制车道，表头与行按实际分栏宽度计算并让 Commit 列吃掉剩余空间，所以拖动分栏或缩放窗口时列宽和可见列都会跟着变化；右栏是提交信息、变更路径和 `DiffView` patch。画布宽度 ≥1000 pt 时为左中右三栏；更窄时隐藏右栏，把提交信息 / 变更文件与 patch 放到提交列表下方的可调分栏，避免三栏被压到不可用。提交行整行是可点击的按钮，选中使用 primary tint，hover 使用较亮的 tab-selected 底色，当前分支历史使用更浅的底色。Changed files 的每一行同样可点击并带选中 / hover 态；选中文件后右侧只显示该文件的 patch，默认选中第一个文件，patch 由提交 diff 按文件段切分。`commit-graph.ts` 只根据 `GitCommit.parents` 计算每行的 lane、穿行车道和父边：第一个父提交延续当前 lane，其余父提交新建或并入另一条 lane；两条车道预期同一提交时合并到第一条，避免同一段历史画两条线。车道宽度随可见历史的最大 lane 数变化，只绘制视口内的行。提交列表同样虚拟化并按页加载，搜索只在已加载的提交上过滤。History 每 5 秒只轻量刷新 status / branches / worktrees；当前 HEAD 目标变化或 scope 失效时才重新加载提交，避免在输入、滚动或查看 patch 时重置列表。分支切换是显式动作：Git 自己拒绝 dirty 冲突，Termlevel 不自动 stash、不 force；删除分支同样交给 `git branch -d` 判断是否已合并。worktree 的 “Open in new group” 走 `Workspace.addGroup`，为该路径创建新分组和新 shell，不移动现有分组。
 
 ## 历史滚动与跨屏拖选
 

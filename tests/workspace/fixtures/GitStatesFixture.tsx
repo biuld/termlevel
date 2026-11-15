@@ -39,6 +39,18 @@ mount(() => {
       }
     },
     diff: async (_root, path, mode) => `--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old-line\n+${mode}-diff\n`,
+    branches: async () => ({ branches: [], error: null }),
+    worktrees: async () => ({ worktrees: [], error: null }),
+    log: async () => ({ commits: [], hasMore: false, truncated: false, error: null }),
+    commit: async () => { throw new Error("No history in this fixture."); },
+    checkout: async () => "",
+    createBranch: async () => "",
+    deleteBranch: async () => "",
+    addWorktree: async () => "",
+    removeWorktree: async () => "",
+    lockWorktree: async () => "",
+    unlockWorktree: async () => "",
+    pruneWorktrees: async () => "",
   };
   return <View class="flex-1 flex-col">
     <View class="h-10 flex-row items-center gap-1 px-2">

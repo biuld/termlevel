@@ -785,3 +785,25 @@ working 状态原先固定为三段横线呼吸。用户查看候选后认为三
 - 原生截图：`artifacts/working-indicator-{bars,vinyl,wave,beat}.png` 与 `artifacts/working-indicator-settings.png`。使用带 purple 分组的临时 fixture，确认侧栏指示器为分组紫色而不是 primary；设置页四个选项和实时预览可见。临时 fixture 与测试已删除，日志 `artifacts/working-indicator-native.log`。`artifacts/working-indicator-{dashes,spectrum}.png` 是移除前候选的历史截图，不再作为当前选项。
 - `./scripts/nsh check`、`./scripts/nsh build`、`git diff --check` 通过；原生宿主仍有既有 `__eh_frame` 链接警告。
 - 设置页预览固定使用 primary，不随活动标签的分组颜色变化；实际侧栏按每个标签自己的分组颜色渲染。动画手感、真实 Codex working 往返和长时间 CPU 占用尚未由用户人工验收。
+
+## 2026-11-16 · 组概览 History、分支与 worktree
+
+基于 `bf27737` 的未提交改动。新增 `HistoryPanel`、`commit-graph.ts`、`src/git_ops.rs`，并在组概览头部加入 Changes / History 切换。验证环境为 macOS arm64、Rust / Cargo 1.99.0、NSH 0.5.0；窗口 1200 × 780。
+
+实现边界：
+
+- 只读查询仍在 `src/git.rs`：porcelain v2 status、diff、`for-each-ref` 分支 / 标签、`worktree list --porcelain`、`git log`、单提交元数据 / 文件 / patch。读取不设置 optional locks、不执行 hooks。
+- 显式写入集中在 `src/git_ops.rs`：checkout、创建分支、删除分支（`git branch -d`，不 force）、worktree add / remove / lock / unlock / prune。写操作允许 index 锁和仓库 hooks，但不用 `--force`；分支名经 `check-ref-format --branch`，起点经 `rev-parse --verify`，worktree 路径必须匹配 `worktree list`。当前分支、未合并分支和已在 worktree 中检出的分支由 Git / 预检查拒绝。
+- 提交车道由 `ui/dashboard/commit-graph.ts` 从父关系计算，固定首列用 `Canvas` 绘制；提交行是虚拟化 `List` 中的整行 `Button`，只渲染视口内的行，分页 200 条；表头和行按实际分栏宽度计算，Commit 列填充剩余空间，拖动分栏或缩放窗口会增减 Author / Date / Hash 列。选中行使用 primary tint，hover 使用 `tab-selected` 底色，当前分支历史使用 `tab-hover` 底色。画布 ≥1000 pt 时三栏；更窄时隐藏右栏，提交列表下方显示可调的详情 / patch 分栏。Changed files 行可点击、带选中 / hover 态；默认选中第一个文件，右侧 `DiffView` 只显示该文件的 patch，按提交 patch 的文件段切分。面板每 5 秒轻量刷新 status / branches / worktrees，HEAD 目标变化或 scope 失效时才重载提交。
+- 合并、rebase、cherry-pick、reset、stash、冲突解决与 MR / PR 均未实现；没有 stage / unstage / commit。
+
+验证：
+
+- `./scripts/nsh check`、`./scripts/nsh build`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`git diff --check` 通过。
+- `cargo test --lib git`：**13 / 13**，覆盖版本解析、porcelain v2、refs、worktree、log、name-status、临时仓库 log / branch / commit、merge commit 对第一父提交的文件与 patch，以及分支创建、切换、删除、worktree add / remove。
+- `./scripts/nsh test --junit artifacts/headless-tests.xml`：**218 / 218**，日志 `artifacts/history-panel-tests.log`。新增 `History.test.tsx` 覆盖 Changes / History 切换、分支与 worktree 列表、提交与 patch、点击提交后详情更新、Changed files 默认选第一个文件、点击其他文件后 patch 切换、视口缩到 880 pt 时切为窄布局并隐藏 Hash、放大到 1600 pt 后回到宽布局、新建（不 checkout）分支、删除分支对话框、新建并删除 worktree 的对话框流程；`commit-graph.test.ts` 覆盖线性历史与合并车道。首次全量运行出现一次 `sessions::tests::closing_allows_shell_to_hang_up_background_jobs` 失败（“background job survived closing its terminal”），该测试与本次改动无关；单独重跑和随后两次全量重跑均通过，保留为并行负载下的既有不稳定记录。
+- 原生自动化：`./scripts/test-native history` **1 / 1**，截图 `artifacts/history-merge-graph.png`、`artifacts/history-selection.png`、`artifacts/history-hover.png`、`artifacts/history-file-hover.png`、`artifacts/history-file-diff.png`、`artifacts/history-worktrees.png`；`./scripts/test-native gitlive` **1 / 1**，在真实仓库上查看 History 与 Worktrees，并把窗口缩到 920 × 680 检查窄布局、放大到 1600 × 900 检查列填充，截图 `artifacts/dashboard-history-live.png`、`artifacts/dashboard-history-worktrees.png`、`artifacts/dashboard-history-920.png`、`artifacts/dashboard-history-wide.png`。原生宿主保留既有 `__eh_frame` 链接警告。
+- 预览 fixture 不执行 git；真实仓库截图显示 master 当前分支、27 个变更文件、提交车道、提交详情和选中文件 patch。原生 hover 截图通过像素采样确认被 hover 的行为 `tab-selected`、选中行为 primary tint；文件列表 hover 也可见。原生宿主后台运行，不作为人工 GUI 验收。
+- 最后一批 UI 调整（提交行从 `DataTable` 改为虚拟化 `List` 按钮、hover / 选中态、文件列表与单文件 patch 联动、按分栏宽度填充列）之后，按用户要求只跑了定向检查：`./scripts/nsh check`、`./scripts/nsh build`、定向 `History.test.tsx`、`./scripts/test-native history`、`./scripts/test-native gitlive`、`cargo fmt --check`、`git diff --check` 均通过；**没有重跑全量 218 项**。上面的 218 / 218 和 13 / 13 是这批 UI 调整前的最近全量结果。
+
+尚未验证：从 UI 在真实仓库切换 / 删除分支后运行中 shell 的表现、dirty 工作树下的 Git 拒绝提示、从 UI 新建 / 删除 worktree 后的分组与 shell 生命周期、长历史滚动、窄窗口三栏布局、实际输入法与选区回归。删除分支的 Rust 用例与 headless 对话框流程通过，但没有在真实已合并 / 未合并 / 已检出分支上逐项人工验收。预览截图和 headless 交互不能替代这些实机验收。

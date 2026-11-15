@@ -3,6 +3,7 @@
 mod clipboard;
 mod dialog_keys;
 mod git;
+mod git_ops;
 mod notifications;
 mod runtime;
 mod session_view;
@@ -20,6 +21,7 @@ fn native(registry: &mut Registry) {
         .module::<runtime::Runtime>()
         .module::<notifications::Notifications>()
         .module::<git::Git>()
+        .module::<git_ops::GitOps>()
         .module::<sessions::Sessions>()
         .register::<dialog_keys::DialogKeys>()
         .register::<dialog_keys::ResizeKeys>()

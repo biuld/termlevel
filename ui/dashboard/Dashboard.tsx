@@ -7,6 +7,7 @@ import { groupColor, groupPalette } from "../shared/theme";
 import { Type } from "../shared/type";
 import type { Workspace } from "../workspace/workspace";
 import { GitPanel } from "./GitPanel";
+import { HistoryPanel } from "./HistoryPanel";
 import type { GitTransport } from "./git-types";
 
 /** A group's full-canvas overview. Sessions stay mounted behind it. */
@@ -20,6 +21,7 @@ export function Dashboard(props: {
   const groupId = () => store.workspaceKey();
   const group = () => store.group(groupId());
   const colorOpen = signal(false);
+  const view = signal<"changes" | "history">("changes");
 
   function groupMenu() {
     void Menu.popup([
@@ -71,6 +73,20 @@ export function Dashboard(props: {
             class="h-(--height-tab) w-[220px] rounded-(--radius-control) bg-transparent px-1 text-(length:--text-title) font-semibold hover:bg-control-hover focus:bg-control-hover" />
           <Type role="body" family="mono" tone="muted-foreground" class="min-w-0 px-1" lines={1}>{group()?.cwd ?? ""}</Type>
         </View>
+        <View class="flex-row rounded-(--radius-tab) bg-chrome p-0.5">
+          <Button testID="dashboard-view-changes" selected={view() === "changes"}
+            onPress={() => view.set("changes")}
+            class="h-(--height-control) items-center justify-center rounded-(--radius-control) px-2.5 focus-visible:ring-2 ring-sidebar-ring"
+            classList={{ "bg-sidebar": view() === "changes" }}>
+            <Type role="label" tone={view() === "changes" ? "foreground" : "muted-foreground"}>Changes</Type>
+          </Button>
+          <Button testID="dashboard-view-history" selected={view() === "history"}
+            onPress={() => view.set("history")}
+            class="h-(--height-control) items-center justify-center rounded-(--radius-control) px-2.5 focus-visible:ring-2 ring-sidebar-ring"
+            classList={{ "bg-sidebar": view() === "history" }}>
+            <Type role="label" tone={view() === "history" ? "foreground" : "muted-foreground"}>History</Type>
+          </Button>
+        </View>
         <View class="flex-row items-center gap-1">
           <Button testID="dashboard-new-terminal" onPress={() => store.addTab(groupId())}
             class="h-(--height-action) flex-row items-center gap-1.5 rounded-(--radius-control) border border-sidebar-border px-2.5 hover:bg-control-hover active:bg-control-pressed focus-visible:ring-2 ring-ring">
@@ -83,6 +99,11 @@ export function Dashboard(props: {
       </View>
     </View>
 
-    <GitPanel workspace={store} git={props.git} preview={props.preview} />
+    <If when={view() === "changes"}>
+      <GitPanel workspace={store} git={props.git} preview={props.preview} />
+    </If>
+    <If when={view() === "history"}>
+      <HistoryPanel workspace={store} git={props.git} preview={props.preview} />
+    </If>
   </View>;
 }

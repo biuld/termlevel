@@ -21,6 +21,8 @@ use std::os::unix::process::CommandExt;
 const MIN_GIT: (u32, u32, u32) = (2, 20, 0);
 const STATUS_TIMEOUT: Duration = Duration::from_secs(3);
 const DIFF_TIMEOUT: Duration = Duration::from_secs(3);
+const LOG_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_LOG_PAGE: u32 = 500;
 const VERSION_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_STATUS_BYTES: usize = 2 * 1024 * 1024;
 const MAX_DIFF_BYTES: usize = 2 * 1024 * 1024;
@@ -92,6 +94,113 @@ impl RepoStatus {
     }
 }
 
+/// One local branch, remote-tracking branch or tag.
+#[derive(Clone, Debug, PartialEq, JsObject)]
+pub struct RepoBranch {
+    /// The short name: `main`, `origin/main` or a tag name.
+    pub name: String,
+    /// The full ref: `refs/heads/main`, `refs/remotes/origin/main` or `refs/tags/v1`.
+    pub full_name: String,
+    /// local, remote or tag.
+    pub kind: String,
+    /// The branch this worktree has checked out.
+    pub current: bool,
+    /// The upstream short name, when the branch tracks one.
+    pub upstream: Option<String>,
+    /// The object the ref points at.
+    pub target: String,
+}
+
+/// Branches and tags, with why Git could not list them.
+#[derive(Clone, Debug, PartialEq, JsObject)]
+pub struct RepoBranches {
+    pub branches: Vec<RepoBranch>,
+    pub error: Option<String>,
+}
+
+/// One worktree of the repository.
+#[derive(Clone, Debug, PartialEq, JsObject)]
+pub struct RepoWorktree {
+    pub path: String,
+    pub branch: Option<String>,
+    pub head: Option<String>,
+    pub bare: bool,
+    pub detached: bool,
+    pub locked: Option<String>,
+    pub prunable: Option<String>,
+    /// The repository's first worktree.
+    pub main: bool,
+    /// The worktree that holds the folder the overview asked about.
+    pub current: bool,
+}
+
+/// Worktrees, with why Git could not list them.
+#[derive(Clone, Debug, PartialEq, JsObject)]
+pub struct RepoWorktrees {
+    pub worktrees: Vec<RepoWorktree>,
+    pub error: Option<String>,
+}
+
+/// One commit in the history list.
+#[derive(Clone, Debug, PartialEq, JsObject)]
+pub struct RepoCommit {
+    pub oid: String,
+    pub short: String,
+    pub parents: Vec<String>,
+    pub author: String,
+    pub email: String,
+    /// Author time, seconds since the Unix epoch.
+    pub timestamp: i64,
+    /// Decorations such as `HEAD -> main`, `origin/main` or `tag: v1`.
+    pub refs: Vec<String>,
+    pub subject: String,
+}
+
+impl RepoCommit {
+    fn empty(oid: String) -> Self {
+        Self {
+            short: oid.chars().take(7).collect(),
+            oid,
+            parents: Vec::new(),
+            author: String::new(),
+            email: String::new(),
+            timestamp: 0,
+            refs: Vec::new(),
+            subject: String::new(),
+        }
+    }
+}
+
+/// A page of commits.
+#[derive(Clone, Debug, PartialEq, JsObject)]
+pub struct RepoLog {
+    pub commits: Vec<RepoCommit>,
+    pub has_more: bool,
+    pub truncated: bool,
+    pub error: Option<String>,
+}
+
+/// One path changed by a commit.
+#[derive(Clone, Debug, PartialEq, JsObject)]
+pub struct RepoCommitFile {
+    pub path: String,
+    pub old_path: Option<String>,
+    /// One status letter: M, A, D, R, C, T or U.
+    pub status: String,
+}
+
+/// One commit's metadata, changed paths and patch.
+#[derive(Clone, Debug, PartialEq, JsObject)]
+pub struct RepoCommitDetail {
+    pub commit: RepoCommit,
+    pub body: String,
+    pub files: Vec<RepoCommitFile>,
+    /// A unified patch against the first parent.
+    pub patch: String,
+    pub truncated: bool,
+    pub error: Option<String>,
+}
+
 /// Read-only Git status and patches from the system CLI.
 #[module]
 pub struct Git;
@@ -113,16 +222,67 @@ impl Git {
             Err(_) => Err("The Git diff task failed.".into()),
         }
     }
+
+    /// Local branches, remote-tracking branches and tags.
+    pub async fn branches(root: String) -> RepoBranches {
+        match blocking(move || branches_sync(&root)).await {
+            Ok(result) => result,
+            Err(_) => RepoBranches {
+                branches: Vec::new(),
+                error: Some("The Git branch task failed.".into()),
+            },
+        }
+    }
+
+    /// Worktrees of the repository that contains `root`.
+    pub async fn worktrees(root: String) -> RepoWorktrees {
+        match blocking(move || worktrees_sync(&root)).await {
+            Ok(result) => result,
+            Err(_) => RepoWorktrees {
+                worktrees: Vec::new(),
+                error: Some("The Git worktree task failed.".into()),
+            },
+        }
+    }
+
+    /// A page of commits. `scope` is a full ref, or empty for every ref.
+    pub async fn log(root: String, scope: String, limit: u32, skip: u32) -> RepoLog {
+        match blocking(move || log_sync(&root, &scope, limit, skip)).await {
+            Ok(result) => result,
+            Err(_) => RepoLog {
+                commits: Vec::new(),
+                has_more: false,
+                truncated: false,
+                error: Some("The Git log task failed.".into()),
+            },
+        }
+    }
+
+    /// One commit's metadata, changed paths and patch against its first parent.
+    pub async fn commit(root: String, oid: String) -> RepoCommitDetail {
+        let fallback = oid.clone();
+        match blocking(move || commit_sync(&root, &oid)).await {
+            Ok(result) => result,
+            Err(_) => RepoCommitDetail {
+                commit: RepoCommit::empty(fallback),
+                body: String::new(),
+                files: Vec::new(),
+                patch: String::new(),
+                truncated: false,
+                error: Some("The Git commit task failed.".into()),
+            },
+        }
+    }
 }
 
-struct Captured {
-    status: ExitStatus,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-    truncated: bool,
+pub(crate) struct Captured {
+    pub(crate) status: ExitStatus,
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: Vec<u8>,
+    pub(crate) truncated: bool,
 }
 
-fn git_path() -> Result<PathBuf, String> {
+pub(crate) fn git_path() -> Result<PathBuf, String> {
     static PATH: OnceLock<Result<PathBuf, String>> = OnceLock::new();
     PATH.get_or_init(resolve_git).clone()
 }
@@ -276,7 +436,7 @@ fn not_repo_or_failed(output: &Captured) -> RepoStatus {
     }
 }
 
-fn stderr_message(output: &Captured) -> String {
+pub(crate) fn stderr_message(output: &Captured) -> String {
     let text = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if text.is_empty() {
         "Git command failed.".into()
@@ -459,6 +619,567 @@ fn operation_in_progress(git_dir: &Path) -> Option<String> {
     }
 }
 
+pub(crate) fn repository_root(git: &Path, root: &Path) -> Result<PathBuf, String> {
+    let output = run_capture(
+        git,
+        Some(root),
+        &["rev-parse", "--show-toplevel"],
+        STATUS_TIMEOUT,
+        8192,
+    )?;
+    if !output.status.success() {
+        return Err(stderr_message(&output));
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() {
+        return Err("Git did not report a repository root.".into());
+    }
+    Ok(PathBuf::from(path))
+}
+
+fn open_repository(root: &str) -> Result<(PathBuf, PathBuf), String> {
+    let git = git_path()?;
+    let root = resolve_root(root)?;
+    let repo_root = repository_root(&git, &root)?;
+    Ok((git, repo_root))
+}
+
+pub(crate) fn ref_exists(git: &Path, root: &Path, name: &str) -> Result<bool, String> {
+    let output = run_capture(
+        git,
+        Some(root),
+        &["rev-parse", "--verify", "--quiet", name],
+        STATUS_TIMEOUT,
+        4096,
+    )?;
+    Ok(output.status.success())
+}
+
+fn branches_sync(root: &str) -> RepoBranches {
+    let (git, repo_root) = match open_repository(root) {
+        Ok(repository) => repository,
+        Err(error) => {
+            return RepoBranches {
+                branches: Vec::new(),
+                error: Some(error),
+            };
+        }
+    };
+    let output = match run_capture(
+        &git,
+        Some(&repo_root),
+        &[
+            "for-each-ref",
+            "--format=%(refname)%00%(refname:short)%00%(objectname)%00%(HEAD)%00%(upstream:short)",
+            "refs/heads",
+            "refs/remotes",
+            "refs/tags",
+        ],
+        STATUS_TIMEOUT,
+        MAX_STATUS_BYTES,
+    ) {
+        Ok(output) if output.status.success() => output,
+        Ok(output) => {
+            return RepoBranches {
+                branches: Vec::new(),
+                error: Some(stderr_message(&output)),
+            };
+        }
+        Err(error) => {
+            return RepoBranches {
+                branches: Vec::new(),
+                error: Some(error),
+            };
+        }
+    };
+    RepoBranches {
+        branches: parse_branches(&output.stdout),
+        error: None,
+    }
+}
+
+fn parse_branches(bytes: &[u8]) -> Vec<RepoBranch> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut branches = Vec::new();
+    for line in text.lines() {
+        let fields: Vec<&str> = line.split('\0').collect();
+        if fields.len() < 5 {
+            continue;
+        }
+        let full_name = fields[0].trim();
+        let name = fields[1].trim();
+        let target = fields[2].trim();
+        let head = fields[3].trim();
+        let upstream = fields[4].trim();
+        if full_name.is_empty() || name.is_empty() || target.is_empty() {
+            continue;
+        }
+        let kind = if full_name.starts_with("refs/heads/") {
+            "local"
+        } else if full_name.starts_with("refs/remotes/") {
+            "remote"
+        } else if full_name.starts_with("refs/tags/") {
+            "tag"
+        } else {
+            continue;
+        };
+        // origin/HEAD is a symbolic convenience ref, not a branch to switch to.
+        if kind == "remote" && name.ends_with("/HEAD") {
+            continue;
+        }
+        branches.push(RepoBranch {
+            name: name.to_string(),
+            full_name: full_name.to_string(),
+            kind: kind.to_string(),
+            current: kind == "local" && head == "*",
+            upstream: (!upstream.is_empty()).then(|| upstream.to_string()),
+            target: target.to_string(),
+        });
+    }
+    branches.sort_by(|a, b| {
+        let rank = |kind: &str| match kind {
+            "local" => 0,
+            "remote" => 1,
+            _ => 2,
+        };
+        (rank(&a.kind), !a.current, a.name.to_lowercase()).cmp(&(
+            rank(&b.kind),
+            !b.current,
+            b.name.to_lowercase(),
+        ))
+    });
+    branches
+}
+
+fn worktrees_sync(root: &str) -> RepoWorktrees {
+    match list_worktrees(root) {
+        Ok(worktrees) => RepoWorktrees {
+            worktrees,
+            error: None,
+        },
+        Err(error) => RepoWorktrees {
+            worktrees: Vec::new(),
+            error: Some(error),
+        },
+    }
+}
+
+/// Worktrees with `current` resolved against the repository that holds `root`.
+pub(crate) fn list_worktrees(root: &str) -> Result<Vec<RepoWorktree>, String> {
+    let (git, repo_root) = open_repository(root)?;
+    let group_root = resolve_root(root)?;
+    let output = run_capture(
+        &git,
+        Some(&repo_root),
+        &["worktree", "list", "--porcelain"],
+        STATUS_TIMEOUT,
+        MAX_STATUS_BYTES,
+    )?;
+    if !output.status.success() {
+        return Err(stderr_message(&output));
+    }
+    let mut worktrees = parse_worktrees(&output.stdout);
+    mark_current_worktree(&mut worktrees, &group_root);
+    Ok(worktrees)
+}
+
+fn parse_worktrees(bytes: &[u8]) -> Vec<RepoWorktree> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut worktrees = Vec::new();
+    let mut block: Vec<&str> = Vec::new();
+    let mut main = true;
+    for line in text.lines().chain(std::iter::once("")) {
+        if line.is_empty() {
+            if !block.is_empty() {
+                if let Some(worktree) = parse_worktree_block(&block, main) {
+                    worktrees.push(worktree);
+                    main = false;
+                }
+                block.clear();
+            }
+        } else {
+            block.push(line);
+        }
+    }
+    worktrees
+}
+
+fn parse_worktree_block(lines: &[&str], main: bool) -> Option<RepoWorktree> {
+    let mut path = None;
+    let mut branch = None;
+    let mut head = None;
+    let mut bare = false;
+    let mut detached = false;
+    let mut locked = None;
+    let mut prunable = None;
+    for line in lines {
+        if let Some(value) = line.strip_prefix("worktree ") {
+            path = Some(value.to_string());
+        } else if let Some(value) = line.strip_prefix("HEAD ") {
+            head = Some(value.trim().to_string());
+        } else if let Some(value) = line.strip_prefix("branch ") {
+            branch = Some(
+                value
+                    .trim()
+                    .strip_prefix("refs/heads/")
+                    .unwrap_or(value.trim())
+                    .to_string(),
+            );
+        } else if *line == "bare" {
+            bare = true;
+        } else if *line == "detached" {
+            detached = true;
+        } else if let Some(reason) = flag_reason(line, "locked") {
+            locked = Some(reason);
+        } else if let Some(reason) = flag_reason(line, "prunable") {
+            prunable = Some(reason);
+        }
+    }
+    Some(RepoWorktree {
+        path: path?,
+        branch,
+        head,
+        bare,
+        detached,
+        locked,
+        prunable,
+        main,
+        current: false,
+    })
+}
+
+fn flag_reason(line: &str, flag: &str) -> Option<String> {
+    let rest = line.strip_prefix(flag)?;
+    if rest.is_empty() || rest.starts_with(' ') {
+        let reason = rest.trim();
+        Some(if reason.is_empty() {
+            flag.to_string()
+        } else {
+            reason.to_string()
+        })
+    } else {
+        None
+    }
+}
+
+fn mark_current_worktree(worktrees: &mut [RepoWorktree], group_root: &Path) {
+    let group = canonical_path(group_root);
+    let mut best: Option<(usize, usize)> = None;
+    for (index, worktree) in worktrees.iter().enumerate() {
+        let path = canonical_path(Path::new(&worktree.path));
+        if group == path || group.starts_with(&path) {
+            let length = path.as_os_str().len();
+            if best.is_none_or(|(_, current)| length > current) {
+                best = Some((index, length));
+            }
+        }
+    }
+    if let Some((index, _)) = best {
+        worktrees[index].current = true;
+    }
+}
+
+pub(crate) fn canonical_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn log_sync(root: &str, scope: &str, limit: u32, skip: u32) -> RepoLog {
+    let (git, repo_root) = match open_repository(root) {
+        Ok(repository) => repository,
+        Err(error) => {
+            return RepoLog {
+                commits: Vec::new(),
+                has_more: false,
+                truncated: false,
+                error: Some(error),
+            };
+        }
+    };
+    if !scope.is_empty()
+        && (!scope.starts_with("refs/") || scope.chars().any(|character| character.is_whitespace()))
+    {
+        return RepoLog {
+            commits: Vec::new(),
+            has_more: false,
+            truncated: false,
+            error: Some("The history scope must be a full Git ref.".into()),
+        };
+    }
+    let limit = limit.clamp(1, MAX_LOG_PAGE);
+    let format_arg = "--format=%H%x00%h%x00%P%x00%an%x00%ae%x00%at%x00%D%x00%s";
+    let mut args: Vec<String> = vec![
+        "log".into(),
+        "--no-color".into(),
+        "--no-show-signature".into(),
+        "--topo-order".into(),
+        format!("--max-count={}", limit + 1),
+        format!("--skip={skip}"),
+        format_arg.into(),
+    ];
+    if scope.is_empty() {
+        args.push("--all".into());
+    } else {
+        args.push(scope.to_string());
+    }
+    let arguments: Vec<&str> = args.iter().map(String::as_str).collect();
+    let output = match run_capture(
+        &git,
+        Some(&repo_root),
+        &arguments,
+        LOG_TIMEOUT,
+        MAX_DIFF_BYTES,
+    ) {
+        Ok(output) if output.status.success() => output,
+        Ok(output) => {
+            let message = stderr_message(&output);
+            let empty = message.contains("does not have any commits yet")
+                || message.contains("bad revision");
+            return RepoLog {
+                commits: Vec::new(),
+                has_more: false,
+                truncated: false,
+                error: (!empty).then_some(message),
+            };
+        }
+        Err(error) => {
+            return RepoLog {
+                commits: Vec::new(),
+                has_more: false,
+                truncated: false,
+                error: Some(error),
+            };
+        }
+    };
+    let mut commits = parse_log(&output.stdout);
+    let has_more = commits.len() > limit as usize;
+    if has_more {
+        commits.truncate(limit as usize);
+    }
+    RepoLog {
+        commits,
+        has_more: has_more || output.truncated,
+        truncated: output.truncated,
+        error: None,
+    }
+}
+
+fn parse_log(bytes: &[u8]) -> Vec<RepoCommit> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut commits = Vec::new();
+    for line in text.lines() {
+        let fields: Vec<&str> = line.split('\0').collect();
+        if fields.len() < 8 {
+            continue;
+        }
+        let oid = fields[0].trim();
+        if oid.is_empty() {
+            continue;
+        }
+        commits.push(RepoCommit {
+            oid: oid.to_string(),
+            short: fields[1].trim().to_string(),
+            parents: fields[2].split_whitespace().map(str::to_string).collect(),
+            author: fields[3].to_string(),
+            email: fields[4].to_string(),
+            timestamp: fields[5].trim().parse().unwrap_or(0),
+            refs: parse_refs(fields[6]),
+            subject: fields[7].to_string(),
+        });
+    }
+    commits
+}
+
+fn parse_refs(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn commit_sync(root: &str, oid: &str) -> RepoCommitDetail {
+    let (git, repo_root) = match open_repository(root) {
+        Ok(repository) => repository,
+        Err(error) => {
+            return RepoCommitDetail {
+                commit: RepoCommit::empty(oid.to_string()),
+                body: String::new(),
+                files: Vec::new(),
+                patch: String::new(),
+                truncated: false,
+                error: Some(error),
+            };
+        }
+    };
+    if oid.is_empty()
+        || oid.len() > 64
+        || !oid.chars().all(|character| character.is_ascii_hexdigit())
+    {
+        return RepoCommitDetail {
+            commit: RepoCommit::empty(oid.to_string()),
+            body: String::new(),
+            files: Vec::new(),
+            patch: String::new(),
+            truncated: false,
+            error: Some("Not a commit hash.".into()),
+        };
+    }
+    let format_arg = "--format=%H%x00%h%x00%P%x00%an%x00%ae%x00%at%x00%D%x00%s%x00%b";
+    let meta = match run_capture(
+        &git,
+        Some(&repo_root),
+        &[
+            "show",
+            "-s",
+            "--no-color",
+            "--no-show-signature",
+            format_arg,
+            oid,
+        ],
+        STATUS_TIMEOUT,
+        MAX_STDERR_BYTES,
+    ) {
+        Ok(output) if output.status.success() => output,
+        Ok(output) => {
+            return RepoCommitDetail {
+                commit: RepoCommit::empty(oid.to_string()),
+                body: String::new(),
+                files: Vec::new(),
+                patch: String::new(),
+                truncated: false,
+                error: Some(stderr_message(&output)),
+            };
+        }
+        Err(error) => {
+            return RepoCommitDetail {
+                commit: RepoCommit::empty(oid.to_string()),
+                body: String::new(),
+                files: Vec::new(),
+                patch: String::new(),
+                truncated: false,
+                error: Some(error),
+            };
+        }
+    };
+    let meta_text = String::from_utf8_lossy(&meta.stdout);
+    let fields: Vec<&str> = meta_text.split('\0').collect();
+    let commit = if fields.len() >= 9 {
+        RepoCommit {
+            oid: fields[0].trim().to_string(),
+            short: fields[1].trim().to_string(),
+            parents: fields[2].split_whitespace().map(str::to_string).collect(),
+            author: fields[3].to_string(),
+            email: fields[4].to_string(),
+            timestamp: fields[5].trim().parse().unwrap_or(0),
+            refs: parse_refs(fields[6]),
+            subject: fields[7].to_string(),
+        }
+    } else {
+        RepoCommit::empty(oid.to_string())
+    };
+    let body = fields
+        .get(8)
+        .map(|value| value.trim_end_matches(['\n', '\r']).to_string())
+        .unwrap_or_default();
+    let files = run_capture(
+        &git,
+        Some(&repo_root),
+        &[
+            "show",
+            "--no-color",
+            "--format=",
+            "--name-status",
+            "--find-renames",
+            "--first-parent",
+            oid,
+        ],
+        STATUS_TIMEOUT,
+        MAX_STATUS_BYTES,
+    )
+    .map(|output| {
+        if output.status.success() {
+            parse_name_status(&output.stdout)
+        } else {
+            Vec::new()
+        }
+    })
+    .unwrap_or_default();
+    let patch = match run_capture(
+        &git,
+        Some(&repo_root),
+        &[
+            "show",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--format=",
+            "--unified=3",
+            "--find-renames",
+            "--first-parent",
+            oid,
+        ],
+        DIFF_TIMEOUT,
+        MAX_DIFF_BYTES,
+    ) {
+        Ok(output) if output.status.success() => output,
+        Ok(output) => {
+            return RepoCommitDetail {
+                commit,
+                body,
+                files,
+                patch: String::new(),
+                truncated: false,
+                error: Some(stderr_message(&output)),
+            };
+        }
+        Err(error) => {
+            return RepoCommitDetail {
+                commit,
+                body,
+                files,
+                patch: String::new(),
+                truncated: false,
+                error: Some(error),
+            };
+        }
+    };
+    RepoCommitDetail {
+        commit,
+        body,
+        files,
+        patch: String::from_utf8_lossy(&patch.stdout).into_owned(),
+        truncated: patch.truncated,
+        error: None,
+    }
+}
+
+fn parse_name_status(bytes: &[u8]) -> Vec<RepoCommitFile> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut files = Vec::new();
+    for line in text.lines() {
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() < 2 {
+            continue;
+        }
+        let status = fields[0].chars().next().unwrap_or('?').to_string();
+        if (status == "R" || status == "C") && fields.len() >= 3 {
+            files.push(RepoCommitFile {
+                path: fields[2].to_string(),
+                old_path: Some(fields[1].to_string()),
+                status,
+            });
+        } else {
+            files.push(RepoCommitFile {
+                path: fields[1].to_string(),
+                old_path: None,
+                status,
+            });
+        }
+    }
+    files
+}
+
 fn diff_sync(root: &str, path: &str, mode: &str) -> Result<String, String> {
     let git = git_path()?;
     let root = resolve_root(root)?;
@@ -561,7 +1282,7 @@ fn safe_relative(path: &str) -> Result<String, String> {
     Ok(path.to_string())
 }
 
-fn resolve_root(root: &str) -> Result<PathBuf, String> {
+pub(crate) fn resolve_root(root: &str) -> Result<PathBuf, String> {
     let expanded = expand_path(root);
     let path = expanded
         .canonicalize()
@@ -572,7 +1293,7 @@ fn resolve_root(root: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn expand_path(root: &str) -> PathBuf {
+pub(crate) fn expand_path(root: &str) -> PathBuf {
     let trimmed = root.trim();
     if trimmed == "~" {
         return crate::sessions::home_directory();
@@ -583,20 +1304,45 @@ fn expand_path(root: &str) -> PathBuf {
     PathBuf::from(trimmed)
 }
 
-fn run_capture(
+pub(crate) fn run_capture(
     git: &Path,
     root: Option<&Path>,
     args: &[&str],
     timeout: Duration,
     max_stdout: usize,
 ) -> Result<Captured, String> {
+    run_capture_with(git, root, args, timeout, max_stdout, true)
+}
+
+/// Runs an explicit write operation. Unlike reads, it may take optional locks
+/// and is allowed to run the repository's own hooks.
+pub(crate) fn run_capture_mutating(
+    git: &Path,
+    root: Option<&Path>,
+    args: &[&str],
+    timeout: Duration,
+    max_stdout: usize,
+) -> Result<Captured, String> {
+    run_capture_with(git, root, args, timeout, max_stdout, false)
+}
+
+fn run_capture_with(
+    git: &Path,
+    root: Option<&Path>,
+    args: &[&str],
+    timeout: Duration,
+    max_stdout: usize,
+    read_only: bool,
+) -> Result<Captured, String> {
     let mut command = Command::new(git);
     if let Some(root) = root {
         command.arg("-C").arg(root);
     }
+    command.args(args);
+    if read_only {
+        command.env("GIT_OPTIONAL_LOCKS", "0");
+    }
     command
-        .args(args)
-        .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_NO_LAZY_FETCH", "1")
         .env("GIT_PAGER", "cat")
@@ -769,11 +1515,132 @@ mod tests {
     }
 
     #[test]
+    fn parses_branch_records() {
+        let input = concat!(
+            "refs/heads/main\0main\0aaa\0*\0origin/main\n",
+            "refs/heads/topic\0topic\0bbb\0 \0\n",
+            "refs/remotes/origin/main\0origin/main\0aaa\0 \0\n",
+            "refs/remotes/origin/HEAD\0origin/HEAD\0aaa\0 \0\n",
+            "refs/tags/v1\0v1\0ccc\0\0\n",
+        );
+        let branches = parse_branches(input.as_bytes());
+        assert_eq!(branches.len(), 4);
+        assert_eq!(branches[0].name, "main");
+        assert!(branches[0].current);
+        assert_eq!(branches[0].upstream.as_deref(), Some("origin/main"));
+        assert_eq!(branches[1].name, "topic");
+        assert_eq!(branches[2].kind, "remote");
+        assert_eq!(branches[3].kind, "tag");
+    }
+
+    #[test]
+    fn parses_worktree_records() {
+        let input = concat!(
+            "worktree /repo\nHEAD aaa\nbranch refs/heads/main\n\n",
+            "worktree /repo-side\nHEAD bbb\nbranch refs/heads/side\nlocked in use\n\n",
+            "worktree /repo-detached\nHEAD ccc\ndetached\nprunable gitdir file points to non-existent location\n",
+        );
+        let worktrees = parse_worktrees(input.as_bytes());
+        assert_eq!(worktrees.len(), 3);
+        assert!(worktrees[0].main);
+        assert_eq!(worktrees[0].branch.as_deref(), Some("main"));
+        assert_eq!(worktrees[1].locked.as_deref(), Some("in use"));
+        assert!(worktrees[2].detached);
+        assert_eq!(
+            worktrees[2].prunable.as_deref(),
+            Some("gitdir file points to non-existent location")
+        );
+    }
+
+    #[test]
+    fn parses_log_records() {
+        let input = concat!(
+            "aaaaaaaa\0aaaaaaa\0bbbbbbbb cccccccc\0Ada\0ada@example.com\0",
+            "1700000000\0HEAD -> main, tag: v1\0Add history\n",
+            "bbbbbbbb\0bbbbbbb\0\0Grace\0grace@example.com\0",
+            "1600000000\0\0First commit\n",
+        );
+        let commits = parse_log(input.as_bytes());
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].short, "aaaaaaa");
+        assert_eq!(commits[0].parents, vec!["bbbbbbbb", "cccccccc"]);
+        assert_eq!(commits[0].refs, vec!["HEAD -> main", "tag: v1"]);
+        assert_eq!(commits[0].subject, "Add history");
+        assert_eq!(commits[0].timestamp, 1_700_000_000);
+        assert!(commits[1].parents.is_empty());
+    }
+
+    #[test]
+    fn parses_name_status_records() {
+        let input = "M\tsrc/a.rs\nR100\tsrc/old.rs\tsrc/new.rs\nA\tnew.txt\n";
+        let files = parse_name_status(input.as_bytes());
+        assert_eq!(files.len(), 3);
+        assert_eq!(files[0].status, "M");
+        assert_eq!(files[1].old_path.as_deref(), Some("src/old.rs"));
+        assert_eq!(files[1].path, "src/new.rs");
+    }
+
+    #[test]
     fn rejects_paths_outside_the_repository() {
         assert!(safe_relative("docs/notes.md").is_ok());
         assert!(safe_relative("../notes.md").is_err());
         assert!(safe_relative("/etc/passwd").is_err());
         assert!(safe_relative("a/../../b").is_err());
+    }
+
+    #[test]
+    fn reads_a_merge_commit_against_its_first_parent() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "termlevel-git-merge-test-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = git_path().expect("git is available");
+        let run = |args: &[&str]| {
+            let output = Command::new(&git)
+                .arg("-C")
+                .arg(&dir)
+                .args(args)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        run(&["init", "-q"]);
+        run(&["config", "user.email", "test@example.com"]);
+        run(&["config", "user.name", "Test"]);
+        std::fs::write(dir.join("a.txt"), "a\n").unwrap();
+        run(&["add", "a.txt"]);
+        run(&["commit", "-qm", "init"]);
+        run(&["checkout", "-qb", "side"]);
+        std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+        run(&["add", "b.txt"]);
+        run(&["commit", "-qm", "side"]);
+        run(&["checkout", "-q", "@{-1}"]);
+        std::fs::write(dir.join("c.txt"), "c\n").unwrap();
+        run(&["add", "c.txt"]);
+        run(&["commit", "-qm", "main"]);
+        run(&["merge", "--no-ff", "-qm", "merge side", "side"]);
+        let head = Command::new(&git)
+            .arg("-C")
+            .arg(&dir)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        let oid = String::from_utf8_lossy(&head.stdout).trim().to_string();
+        let detail = commit_sync(dir.to_str().unwrap(), &oid);
+        assert!(detail.error.is_none(), "{:?}", detail.error);
+        assert!(detail.files.iter().any(|file| file.path == "b.txt"));
+        assert!(detail.patch.contains("+b"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -829,6 +1696,31 @@ mod tests {
         assert!(diff.contains("+two"));
         let patch = diff_sync(dir.to_str().unwrap(), "new.txt", "untracked").unwrap();
         assert!(patch.contains("+new"));
+
+        let branches = branches_sync(dir.to_str().unwrap());
+        assert!(branches.error.is_none(), "{:?}", branches.error);
+        assert!(
+            branches
+                .branches
+                .iter()
+                .any(|branch| branch.kind == "local" && branch.current)
+        );
+        let worktrees = worktrees_sync(dir.to_str().unwrap());
+        assert!(worktrees.error.is_none(), "{:?}", worktrees.error);
+        assert_eq!(worktrees.worktrees.len(), 1);
+        assert!(worktrees.worktrees[0].main);
+        assert!(worktrees.worktrees[0].current);
+        let log = log_sync(dir.to_str().unwrap(), "", 10, 0);
+        assert!(log.error.is_none(), "{:?}", log.error);
+        let commit = log
+            .commits
+            .iter()
+            .find(|commit| commit.subject == "init")
+            .expect("the init commit is in the log");
+        let detail = commit_sync(dir.to_str().unwrap(), &commit.oid);
+        assert!(detail.error.is_none(), "{:?}", detail.error);
+        assert!(detail.files.iter().any(|file| file.path == "tracked.txt"));
+        assert!(detail.patch.contains("+one"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
