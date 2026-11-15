@@ -44,6 +44,13 @@ impl Runtime {
             .into_owned()
     }
 
+    /// The user's home directory, where a first terminal and an empty group start.
+    pub fn home() -> String {
+        crate::sessions::home_directory()
+            .to_string_lossy()
+            .into_owned()
+    }
+
     /// The system's folder dialog. `None` when the user cancels.
     pub async fn pick_folder(start: String) -> Result<Option<String>, String> {
         let mut dialog = nsh_core::file_dialog::OpenDialog::folders()

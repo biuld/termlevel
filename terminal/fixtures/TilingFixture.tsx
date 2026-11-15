@@ -7,6 +7,8 @@ import { WorkspaceApp } from "../../ui/WorkspaceApp";
 mount(() => {
   const workspace = createWorkspace({ cwd: Runtime.cwd(), list: Sessions.list,
     open: cwd => Sessions.open(cwd, token("terminal-foreground"), token("terminal-background"), "/bin/sh"), close: Sessions.close });
+  // A real fixture starts with one shell; the app itself starts empty.
+  if (!workspace.tabs().length) workspace.addTab();
   const snapshot = signal("");
   const probe = signal("");
   const output = signal("");

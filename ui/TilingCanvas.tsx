@@ -14,6 +14,7 @@ export function TilingCanvas(props: {
   workspace: Workspace;
   preview: boolean;
   rename: (id: string) => void;
+  newGroup: () => void;
   finding: Signal<boolean>;
   findQuery: Signal<string>;
 }) {
@@ -174,8 +175,11 @@ export function TilingCanvas(props: {
       <View testID="empty-state" class="flex-1 items-center justify-center gap-3 rounded-(--radius-panel) bg-terminal-background">
         <View class="h-10 w-10 items-center justify-center rounded-(--radius-panel) border border-border bg-muted"><Icon name="terminal" size={20} /></View>
         <Type role="heading">Room for something new.</Type>
-        <Type role="body" tone="muted-foreground">Open a terminal to get started.</Type>
-        <Action primary onPress={() => store.addTab()} testID="empty-new-terminal">New terminal</Action>
+        <Type role="body" tone="muted-foreground">Open a terminal in your home folder, or create a group for a project.</Type>
+        <View class="flex-row items-center gap-2">
+          <Action primary onPress={() => store.addTab()} testID="empty-new-terminal">Open terminal in Home</Action>
+          <Action onPress={() => props.newGroup()} testID="empty-new-group">New group…</Action>
+        </View>
       </View>
     </If>
     <If when={store.paneDrag() !== null}><DialogKeys dismiss={store.cancelPaneDrag} /></If>

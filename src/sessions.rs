@@ -702,7 +702,7 @@ fn resolve_cwd(cwd: &str) -> Result<String, String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
-fn home_directory() -> PathBuf {
+pub(crate) fn home_directory() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/"))

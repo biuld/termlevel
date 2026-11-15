@@ -1,7 +1,8 @@
 import { batch, computed, effect, signal, token } from "nsh";
 import { Runtime, Sessions } from "termlevel/native";
-import { dropPosition, equalize, geometry, insertPane, minimum, neighbor, panes, removePane, siblings, updateNode, type Direction, type DropPosition, type LayoutNode, type Pane, type Rect, type Size, type TilingState } from "./tiling";
+import { dropPosition, equalize, geometry, insertPane, minimum, neighbor, nodeIds, panes, removePane, siblings, updateNode, type Direction, type DropPosition, type LayoutNode, type Pane, type Rect, type Size, type TilingState } from "./tiling";
 import { groupPalette, type GroupColor } from "./theme";
+import { SNAPSHOT_VERSION, type SnapshotPreferences, type WorkspaceSnapshot } from "./workspace-snapshot";
 
 export interface Tab {
   id: string;
@@ -39,37 +40,136 @@ function pathName(cwd: string) {
   return (cut >= 0 ? trimmed.slice(cut + 1) : trimmed) || trimmed;
 }
 
-export function createWorkspace(transport?: SessionTransport) {
-  const restored = transport?.list() ?? [];
-  const initial = transport ? (restored.length ? restored : [transport.open(transport.cwd)]) : null;
+/** The home folder reads better as "Home" than as the user's short name. */
+function groupName(cwd: string) {
+  return cwd === "~" || cwd === Runtime.home() ? "Home" : pathName(cwd);
+}
+
+export interface WorkspaceOptions {
+  /** The document restored from storage. Null or omitted on a first launch. */
+  snapshot?: WorkspaceSnapshot | null;
+}
+
+const DEMO_ACTIVE = "prototype";
+const DEMO_TABS: Tab[] = [
+  { id: "home", title: "Terminal", groupId: null, pinned: true, cwd: "~" },
+  { id: "prototype", title: "UI prototype", groupId: "termlevel", pinned: false, cwd: "~/Projects/termlevel" },
+  { id: "preview", title: "Build & preview", groupId: "termlevel", pinned: false, cwd: "~/Projects/termlevel" },
+  { id: "colors", title: "Color test", groupId: "playground", pinned: false, cwd: "~/Playground" },
+];
+const DEMO_GROUPS: TabGroup[] = [
+  { id: "termlevel", title: "termlevel", cwd: "~/Projects/termlevel", color: "purple", collapsed: false },
+  { id: "playground", title: "Playground", cwd: "~/Playground", color: "blue", collapsed: false },
+];
+
+/** Trailing number of a generated id, so restored ids never collide with new ones. */
+function idSuffix(id: string) {
+  const match = /^(?:group|tab|pane|split)-(\d+)$/.exec(id);
+  return match ? Number(match[1]) : 0;
+}
+
+/** Reopens a saved tab in its directory; one that disappeared falls back to home. */
+function openRestored(transport: SessionTransport, cwd: string): ReturnType<SessionTransport["open"]> {
+  const requested = cwd || "~";
+  const opened = transport.open(requested);
+  if (opened.state !== "error" || requested === "~") return opened;
+  // The failed entry owns no process; close it so the fallback is the only tab.
+  transport.close(opened.id);
+  return transport.open("~");
+}
+
+export function createWorkspace(transport?: SessionTransport, options: WorkspaceOptions = {}) {
+  const snapshot = options.snapshot ?? null;
+  // The preview workspace is a deterministic demo; the real app starts empty.
+  const demo = !transport && !snapshot;
+  const live = transport?.list() ?? [];
+  const groups = signal<TabGroup[]>(demo ? DEMO_GROUPS.map((item) => ({ ...item })) : (snapshot?.groups ?? []).map((item) => ({ ...item })));
+  const groupIds = new Set(groups().map((item) => item.id));
+
+  // Saved tabs are reopened under new session ids; the old id only keys the layout.
+  const remap = new Map<string, string>();
+  const initialTabs: Tab[] = [];
+  if (snapshot) {
+    for (const saved of snapshot.tabs) {
+      const existing = live.find((session) => session.id === saved.id);
+      const session = existing ?? (transport ? openRestored(transport, saved.cwd) : undefined);
+      const id = session?.id ?? saved.id;
+      remap.set(saved.id, id);
+      const groupId = saved.groupId && groupIds.has(saved.groupId) ? saved.groupId : null;
+      initialTabs.push({
+        id,
+        title: saved.customTitle ? saved.title : session?.title || saved.title,
+        cwd: session?.cwd ?? saved.cwd,
+        groupId,
+        pinned: groupId ? false : saved.pinned,
+        customTitle: saved.customTitle,
+        state: session?.state,
+        exitCode: session?.exitCode,
+        error: session?.error,
+      });
+    }
+  } else if (demo) {
+    initialTabs.push(...DEMO_TABS.map((item) => ({ ...item })));
+  }
+  // A live session the document does not know about (UI hot reload) keeps its tab.
+  const known = new Set(initialTabs.map((tab) => tab.id));
+  for (const session of live) {
+    if (known.has(session.id)) continue;
+    known.add(session.id);
+    initialTabs.push({ ...session, title: session.title || `Terminal ${initialTabs.length + 1}`, groupId: null, pinned: false });
+  }
   // IDs, not tab objects or their positions, own the terminal surfaces.
-  const tabs = signal<Tab[]>(initial ? initial.map((session, index) => ({
-    ...session, title: session.title || `Terminal ${index + 1}`, groupId: null, pinned: false,
-  })) : [
-    { id: "home", title: "Terminal", groupId: null, pinned: true, cwd: "~" },
-    { id: "prototype", title: "UI prototype", groupId: "termlevel", pinned: false, cwd: "~/Projects/termlevel" },
-    { id: "preview", title: "Build & preview", groupId: "termlevel", pinned: false, cwd: "~/Projects/termlevel" },
-    { id: "colors", title: "Color test", groupId: "playground", pinned: false, cwd: "~/Playground" },
-  ]);
-  const groups = signal<TabGroup[]>(transport ? [] : [
-    { id: "termlevel", title: "termlevel", cwd: "~/Projects/termlevel", color: "purple", collapsed: false },
-    { id: "playground", title: "Playground", cwd: "~/Playground", color: "blue", collapsed: false },
-  ]);
+  const tabs = signal<Tab[]>(initialTabs);
+
   let layoutSequence = 1;
-  const firstSession = initial ? initial[0]?.id ?? null : "prototype";
+  let sequence = 0;
+  if (snapshot) {
+    for (const id of [...snapshot.groups.map((item) => item.id), ...snapshot.tabs.map((item) => item.id)]) {
+      sequence = Math.max(sequence, idSuffix(id));
+    }
+    for (const state of Object.values(snapshot.layouts)) {
+      for (const id of nodeIds(state.root)) layoutSequence = Math.max(layoutSequence, idSuffix(id));
+    }
+  }
   // Each tab group is one tiling workspace. Ungrouped and pinned tabs share the "" workspace.
   // The canvas shows only the active workspace, so a layout never mixes groups.
   const NO_LAYOUT: TilingState = { root: null, focusedPaneId: null, zoomed: false };
   const layoutKey = (groupId: string | null | undefined) => groupId ?? "";
-  const layouts = signal<Record<string, TilingState>>({});
-  const workspaceKey = signal("");
+  const savedLayouts: Record<string, TilingState> = {};
+  if (snapshot) {
+    const tabById = new Map(tabs().map((tab) => [tab.id, tab]));
+    const remapNode = (node: LayoutNode | null, key: string): LayoutNode | null => {
+      if (!node) return null;
+      if (node.kind === "pane") {
+        const sessionId = remap.get(node.sessionId);
+        return sessionId && layoutKey(tabById.get(sessionId)?.groupId) === key ? { ...node, sessionId } : null;
+      }
+      const first = remapNode(node.first, key), second = remapNode(node.second, key);
+      if (!first) return second;
+      if (!second) return first;
+      return { ...node, first, second };
+    };
+    for (const [key, state] of Object.entries(snapshot.layouts)) {
+      const root = remapNode(state.root, key);
+      if (!root) continue;
+      const open = panes(root);
+      savedLayouts[key] = {
+        root,
+        focusedPaneId: open.find((pane) => pane.id === state.focusedPaneId)?.id ?? open[0]?.id ?? null,
+        zoomed: state.zoomed && open.length > 1,
+      };
+    }
+  }
+  const layouts = signal<Record<string, TilingState>>(savedLayouts);
+  const activeFromSnapshot = snapshot?.activeTabId ? remap.get(snapshot.activeTabId) : undefined;
+  const initialActiveId = snapshot
+    ? (activeFromSnapshot && tabs().some((tab) => tab.id === activeFromSnapshot) ? activeFromSnapshot : tabs()[0]?.id ?? null)
+    : demo
+      ? (tabs().some((tab) => tab.id === DEMO_ACTIVE) ? DEMO_ACTIVE : tabs()[0]?.id ?? null)
+      : tabs()[0]?.id ?? null;
+  const workspaceKey = signal(layoutKey(tabs().find((tab) => tab.id === initialActiveId)?.groupId));
   // A sidebar choice outside the current split fills the canvas alone. The split tree stays put.
   const foreground = signal<string | null>(null);
-  if (firstSession) {
-    const initialKey = layoutKey(tabs().find(t => t.id === firstSession)?.groupId ?? null);
-    workspaceKey.set(initialKey);
-    layouts.set({ [initialKey]: { root: { kind: "pane", id: "pane-1", sessionId: firstSession }, focusedPaneId: "pane-1", zoomed: false } });
-  }
   const tiling = computed(() => {
     const id = foreground();
     const current = id ? tabs().find((t) => t.id === id) : undefined;
@@ -93,12 +193,18 @@ export function createWorkspace(transport?: SessionTransport) {
   const resizing = signal(false);
   const recent: string[] = [];
   const nextPane = (sessionId: string): Pane => ({ kind: "pane", id: `pane-${++layoutSequence}`, sessionId });
-  const expanded = signal(true);
-  const sidebarWidth = signal(token("width-sidebar"));
-  const fontSize = signal(token("text-terminal"));
+  const expanded = signal(snapshot?.expanded ?? true);
+  const savedWidth = snapshot?.sidebarWidth;
+  const sidebarWidth = signal(savedWidth != null ? Math.min(288, Math.max(176, savedWidth)) : token("width-sidebar"));
+  const savedFont = snapshot?.fontSize;
+  const fontSize = signal(savedFont != null ? Math.min(24, Math.max(10, savedFont)) : token("text-terminal"));
   const clipboardRead = signal(false);
   effect(() => { Sessions.setClipboardRead(clipboardRead()); });
-  const scrollback = signal(Runtime.scrollbackLimit());
+  const scrollStep = Runtime.scrollbackStep();
+  const savedScrollback = snapshot?.scrollback;
+  const scrollback = signal(savedScrollback != null && scrollStep > 0
+    ? Math.min(Runtime.scrollbackMax(), Math.max(Runtime.scrollbackMin(), Math.round(savedScrollback / scrollStep) * scrollStep))
+    : Runtime.scrollbackLimit());
   effect(() => { Sessions.setScrollback(scrollback()); });
   const activeTab = computed(() => tabs().find((t) => t.id === activeId()));
   const paneMinimum = computed(() => ({
@@ -119,7 +225,6 @@ export function createWorkspace(transport?: SessionTransport) {
   function setCanvasSize(size: Size) {
     if (size.width !== canvasSize().width || size.height !== canvasSize().height) canvasSize.set(size);
   }
-  let sequence = initial?.length ?? 0;
 
   const tab = (id: string) => tabs().find((t) => t.id === id);
   const group = (id: string) => groups().find((g) => g.id === id);
@@ -200,7 +305,8 @@ export function createWorkspace(transport?: SessionTransport) {
   function addTab(groupId: string | null = null, focus = true) {
     sequence++;
     const destination = groupId ? group(groupId) : undefined;
-    const cwd = destination?.cwd || activeTab()?.cwd || transport?.cwd || "~";
+    // With no active terminal, a new one starts in the home folder.
+    const cwd = destination?.cwd || activeTab()?.cwd || "~";
     const session = transport?.open(cwd);
     const id = session?.id ?? `tab-${sequence}`;
     const validGroup = destination ? groupId : null;
@@ -417,7 +523,7 @@ export function createWorkspace(transport?: SessionTransport) {
     const color = nextGroupColor();
     batch(() => {
       groups.update((all) => [...all, {
-        id, title: pathName(directory), cwd: directory, color, collapsed: false,
+        id, title: groupName(directory), cwd: directory, color, collapsed: false,
       }]);
       expanded.set(true);
     });
@@ -534,7 +640,7 @@ export function createWorkspace(transport?: SessionTransport) {
     const follow = activeId() === sourceId || activeId() === targetId;
     const shown = follow ? activeId()! : targetId;
     batch(() => {
-      groups.update((all) => [...all, { id: groupId, title: pathName(cwd), cwd, color, collapsed: false }]);
+      groups.update((all) => [...all, { id: groupId, title: groupName(cwd), cwd, color, collapsed: false }]);
       tabs.set(next);
       expanded.set(true);
       forgetSession(sourceId);
@@ -572,8 +678,37 @@ export function createWorkspace(transport?: SessionTransport) {
     tabs.set(all);
   }
 
+  /** The serializable workspace. Transient session state, bells and processes stay out. */
+  function snapshotFile(preferences: SnapshotPreferences): WorkspaceSnapshot {
+    const open: Record<string, TilingState> = {};
+    for (const [key, state] of Object.entries(layouts())) {
+      if (state.root) open[key] = { root: state.root, focusedPaneId: state.focusedPaneId, zoomed: state.zoomed };
+    }
+    return {
+      version: SNAPSHOT_VERSION,
+      groups: groups().map(({ id, title, cwd, color, collapsed }) => ({ id, title, cwd, color, collapsed })),
+      tabs: tabs().map(({ id, title, cwd, groupId, pinned, customTitle }) => ({ id, title, cwd, groupId, pinned, customTitle: !!customTitle })),
+      layouts: open,
+      activeTabId: activeId(),
+      workspaceKey: workspaceKey(),
+      expanded: expanded(),
+      sidebarWidth: sidebarWidth(),
+      fontSize: fontSize(),
+      scrollback: scrollback(),
+      ...preferences,
+    };
+  }
+
+  // Restoring is not a user selection: keep the saved focus and collapsed groups.
+  if (initialActiveId) select(initialActiveId);
+  if (snapshot) {
+    for (const saved of snapshot.groups) {
+      if (saved.collapsed !== group(saved.id)?.collapsed) patchGroup(saved.id, { collapsed: saved.collapsed });
+    }
+  }
+
   return {
-    tabs, groups, activeId, activeTab, expanded, sidebarWidth, fontSize, scrollback, clipboardRead, workspaceKey,
+    tabs, groups, activeId, activeTab, expanded, sidebarWidth, fontSize, scrollback, clipboardRead, workspaceKey, snapshot: snapshotFile,
     tiling, paneList, inputBlocked, cellWidth, canvasSize, setCanvasSize, paneMinimum, fullGeometry, constrained, projected,
     paneForSession, frameForSession, focusPane, canSplit, splitTerminal, hidePane, toggleZoom, focusDirection,
     layoutSessions, placeSplit, inSplit,

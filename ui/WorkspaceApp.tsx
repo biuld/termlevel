@@ -1,4 +1,4 @@
-import { effect, keymap, platform, Scroll, signal, Text, token, View } from "nsh";
+import { effect, keymap, platform, Scroll, setColorScheme, signal, Text, token, View } from "nsh";
 import { Button, Input, ResizablePanel, ResizablePanelGroup } from "nsh/base";
 import { Application, currentWindow, Menu, titleBar } from "nsh/desktop";
 import { Runtime, Sessions, TerminalEngine } from "termlevel/native";
@@ -9,30 +9,27 @@ import { GroupPathDialog } from "./GroupPathDialog";
 import { SettingsDialog } from "./SettingsDialog";
 import { Sidebar, type SidebarActions } from "./Sidebar";
 import { Type } from "./type";
-import { applyFonts } from "./fonts";
+import { applyFonts, interfaceFont, monoFont } from "./fonts";
+import { writeWorkspaceSnapshot } from "./persistence";
 import { createWorkspace, type Workspace } from "./workspace";
+import type { Appearance, WorkspaceSnapshot } from "./workspace-snapshot";
 
 type Editor = { title: string; value: string; save: (value: string) => void };
 
-export function WorkspaceApp(props: { shell?: string; workspace?: Workspace } = {}) {
+export function WorkspaceApp(props: {
+  shell?: string;
+  workspace?: Workspace;
+  snapshot?: WorkspaceSnapshot | null;
+  /** Persist the workspace document after changes. The app entry opts in. */
+  persist?: boolean;
+} = {}) {
   const preview = Runtime.previewMode();
   const store = props.workspace ?? createWorkspace(preview ? undefined : {
     cwd: Runtime.cwd(), list: Sessions.list,
     open: (cwd) => Sessions.open(cwd, token("terminal-foreground"), token("terminal-background"), props.shell),
     close: Sessions.close,
-  });
+  }, { snapshot: props.snapshot ?? null });
   const win = currentWindow();
-  if (!preview) {
-    win.on("close", () => Sessions.shutdown());
-    Application.on("quit", async () => {
-      Sessions.shutdown();
-      // NSH allows at most 200 ms for quit cleanup. Children get a brief
-      // hangup grace period in Rust; wait for reaping within that budget.
-      for (let attempt = 0; attempt < 30 && !Sessions.settled(); attempt++) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 5));
-      }
-    });
-  }
   const editor = signal<Editor | null>(null);
   const draft = signal("");
   const searching = signal(false);
@@ -40,8 +37,47 @@ export function WorkspaceApp(props: { shell?: string; workspace?: Workspace } = 
   const settings = signal(false);
   const finding = signal(false);
   const findQuery = signal("");
-  const appearance = signal<"system" | "light" | "dark">("system");
+  const appearance = signal<Appearance>(props.snapshot?.appearance ?? "system");
+  effect(() => { setColorScheme(appearance()); });
   effect(() => { applyFonts(); });
+
+  // Workspace changes are low frequency; coalesce bursts and flush on exit.
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  let lastSaved = "";
+  const serializedWorkspace = () => JSON.stringify(store.snapshot({
+    appearance: appearance(), interfaceFont: interfaceFont(), monoFont: monoFont(),
+  }));
+  async function flushWorkspace() {
+    if (!props.persist) return;
+    if (saveTimer !== undefined) { clearTimeout(saveTimer); saveTimer = undefined; }
+    const serialized = serializedWorkspace();
+    if (serialized === lastSaved) return;
+    lastSaved = serialized;
+    await writeWorkspaceSnapshot(serialized);
+  }
+  if (props.persist) {
+    effect(() => {
+      const serialized = serializedWorkspace();
+      if (serialized === lastSaved) return;
+      if (saveTimer !== undefined) clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => { saveTimer = undefined; void flushWorkspace(); }, 250);
+    });
+  }
+
+  win.on("close", () => {
+    void flushWorkspace();
+    if (!preview) Sessions.shutdown();
+  });
+  Application.on("quit", async () => {
+    await flushWorkspace();
+    if (preview) return;
+    Sessions.shutdown();
+    // NSH allows at most 200 ms for quit cleanup. Children get a brief
+    // hangup grace period in Rust; wait for reaping within that budget.
+    for (let attempt = 0; attempt < 30 && !Sessions.settled(); attempt++) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    }
+  });
   const closingGroup = signal<string | null>(null);
   const editingGroup = signal<string | null>(null);
   const choosingPath = signal(false);
@@ -176,7 +212,8 @@ export function WorkspaceApp(props: { shell?: string; workspace?: Workspace } = 
         </ResizablePanel>
         <ResizablePanel minSize={320}>
           <View class="h-full min-w-0 flex-1" style={{ paddingLeft: token("gap-pane") / 2 }}>
-            <TilingCanvas workspace={store} preview={preview} rename={actions.renameTab} finding={finding} findQuery={findQuery} />
+            <TilingCanvas workspace={store} preview={preview} rename={actions.renameTab} newGroup={actions.newGroup}
+              finding={finding} findQuery={findQuery} />
           </View>
         </ResizablePanel>
       </ResizablePanelGroup>
@@ -246,7 +283,7 @@ export function WorkspaceApp(props: { shell?: string; workspace?: Workspace } = 
     </AppDialog>
 
     <GroupPathDialog open={choosingPath()} error={pathError()} dismiss={() => choosingPath.set(false)}
-      paths={[...new Set([store.activeTab()?.cwd, ...store.tabs().map((tab) => tab.cwd)].filter((cwd): cwd is string => !!cwd))]}
+      paths={[...new Set([store.activeTab()?.cwd, ...store.tabs().map((tab) => tab.cwd), Runtime.home()].filter((cwd): cwd is string => !!cwd))]}
       onChoose={(cwd) => { choosingPath.set(false); store.addGroup(cwd); }}
       onBrowse={() => {
         const start = store.activeTab()?.cwd ?? "";

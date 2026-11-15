@@ -6,7 +6,10 @@
 
 ```text
 App.tsx                          mount 工作区，仅作入口
+  ui/WorkspaceRoot.tsx            先读持久化文档，再挂载工作区
   ui/WorkspaceApp.tsx             窗口、菜单、快捷键、对话框与会话操作接线
+  ui/workspace-snapshot.ts        工作区文档 schema、校验与会话 ID 还原
+  ui/persistence.ts               NSH Storage 的读取与保存
   ui/Sidebar.tsx                  vertical tabs、分组与响铃标记
   ui/GroupEditor.tsx              锚定组头的名称、颜色和组操作
   ui/workspace.ts                 会话、分组与平铺操作、唯一逻辑焦点
@@ -62,7 +65,7 @@ TSX 工作区 ── open / close / list / shutdown ── Rust SessionManager
 Rust → TSX：标题、运行/退出/错误状态、响铃；不发送终端 chunk 或 cell grid
 ```
 
-每个会话有独立 Ghostty terminal、持久 parser、原生 RenderState 与 Rust 帧缓存。默认展示最新 10,000 行历史，设置可在 1,000 到 100,000 之间按 1,000 行调整；备用屏幕没有历史。Ghostty 底层按页回收，物理存储可能额外保留一页。安全层用两个屏幕各自的 tracked grid reference 记录逻辑起点，因此展示的上限精确，改小后再改大不会重新出现已丢弃的旧行。设置不写入磁盘。
+每个会话有独立 Ghostty terminal、持久 parser、原生 RenderState 与 Rust 帧缓存。默认展示最新 10,000 行历史，设置可在 1,000 到 100,000 之间按 1,000 行调整；备用屏幕没有历史。Ghostty 底层按页回收，物理存储可能额外保留一页。安全层用两个屏幕各自的 tracked grid reference 记录逻辑起点，因此展示的上限精确，改小后再改大不会重新出现已丢弃的旧行。滚动历史上限随工作区文档持久化。
 
 reader 直接将原始字节送入同一个 Rust/C parser，保留跨 chunk 的 UTF-8 和转义状态。活动屏幕按需生成拥有独立内存的 RenderState 帧；固定格网只复制当前窗口的行，历史锚点由 Ghostty tracked reference 随重排和淘汰维护，不在每个输出 chunk 复制整份历史。宽字符与组合字符保留列坐标，ASCII 同样式 run 合并。所有终端字节、网格、历史与匹配都留在 Rust。
 
@@ -76,7 +79,8 @@ reader 直接将原始字节送入同一个 Rust/C parser，保留跨 chunk 的 
 
 `SessionManager` 在 Rust 中独立于视图持有会话。只有 `Sessions.open` 创建进程；`SessionTerminal` 只能按 ID 获取已有会话，已关闭或丢失的 ID 返回错误，不会隐式重新创建进程。ID 由 Rust 生成，与标题、排序、分组、选择、PID 和视图位置无关。
 
-- 默认工作区恢复 `Sessions.list()` 的仍存活或已退出会话；没有会话时启动一个新 shell。这个恢复只发生在同一个原生宿主进程内，不是应用重启恢复。
+- 同一原生宿主进程内重建 TSX 工作区时，从 `Sessions.list()` 重新绑定仍存活或已退出的会话。应用启动则读取持久化文档：标签按保存的顺序、分组和分屏恢复，并为每个标签在保存的目录重新启动 shell；首次启动、没有文档时保持空白，不自动创建 shell。
+- 持久化文档带 schema 版本，保存标签组、标签顺序与固定状态、分屏树、选中标签、侧栏宽度与展开状态、字号、滚动历史、字体和外观。session ID 不跨进程恢复，布局中旧的 session ID 在还原时映射到新会话；进程 PID 从不写入文档。NSH Storage 在 macOS 上位于 `~/Library/Application Support/app.termlevel.desktop/storage.json`，损坏时应用以空工作区启动。剪贴板读取权限不持久化，重启复位。
 - TSX 工作区销毁/重建以及原生终端视图卸载/重挂均不关闭会话。重新绑定读取当前 Rust 网格和状态，不依赖 JS 中的输出副本或事件补发。
 - 标签切换、分组折叠、重命名、排序与主题变更保留同一 session ID。工作区保留按 session ID 挂载的终端显示；布局树决定哪些会话同时展示，暂未展示的会话隐藏、禁用命中并移出无障碍遍历。焦点 pane 决定唯一输入目标，其他可见 pane 仍持续刷新。
 - 显式关闭标签调用 `Sessions.close`；关闭组逐个关闭其会话。Shell 退出码为 0（含空行 Ctrl+D）时同样关闭标签和 pane，不自动重启。非 0 退出和启动失败保留输出与状态。
@@ -144,7 +148,7 @@ reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I
 - OSC52 / 文本剪贴板回调同步接入 macOS 系统剪贴板，单次上限 1 MiB。默认允许复制，读取需设置中的“Read and write”明确开启，重启复位。回调使用有超时的 pbcopy / pbpaste helper，不在持有 parser mutex 时等待 AppKit 主线程，避免主线程与 reader 互等；不支持非文本 MIME 和 primary / selection 剪贴板。
 - 实际系统输入法候选列表、跨行选择复制、复杂 emoji、多会话持续输出的性能仍需独立验收；不声称 Neovim/tmux 完整兼容。
 - macOS arm64 已完成自动化验证；x86_64、Windows/Linux 尚未进行应用平台验收。
-- 布局与设置尚未持久化；应用重启会结束并丢失会话，PID 不能作为恢复凭证。
+- 布局与设置已持久化；应用重启仍会结束旧会话，保存的标签以新 shell 重开，PID 不能作为恢复凭证。首次启动显示空白引导页。
 
 ### libghostty-vt 独立 Rust 封装
 

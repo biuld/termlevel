@@ -12,6 +12,10 @@ export type Divider = { id: string; axis: "row" | "column"; rect: Rect; parent: 
 export function panes(root: LayoutNode | null): Pane[] {
   return !root ? [] : root.kind === "pane" ? [root] : [...panes(root.first), ...panes(root.second)];
 }
+/** Every pane and split id, in tree order. Persistence uses it to keep new ids unique. */
+export function nodeIds(root: LayoutNode | null): string[] {
+  return !root ? [] : root.kind === "pane" ? [root.id] : [root.id, ...nodeIds(root.first), ...nodeIds(root.second)];
+}
 export function updateNode(root: LayoutNode, id: string, fn: (node: LayoutNode) => LayoutNode): LayoutNode {
   if (root.id === id) return fn(root);
   return root.kind === "pane" ? root : { ...root, first: updateNode(root.first, id, fn), second: updateNode(root.second, id, fn) };

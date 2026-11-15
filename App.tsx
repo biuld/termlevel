@@ -1,4 +1,4 @@
 import { mount } from "nsh";
-import { WorkspaceApp } from "./ui/WorkspaceApp";
+import { WorkspaceRoot } from "./ui/WorkspaceRoot";
 
-mount(WorkspaceApp);
+mount(WorkspaceRoot);

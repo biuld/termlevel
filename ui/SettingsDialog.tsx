@@ -109,7 +109,7 @@ export function SettingsDialog(props: {
               <View class="flex-row items-center gap-2">
                 <View class="min-w-0 flex-1 gap-0.5">
                   <Type role="body">Scrollback</Type>
-                  <Type role="caption">Open terminals keep this many lines. Lowering it drops the oldest lines now. It resets when the app restarts.</Type>
+                  <Type role="caption">Open terminals keep this many lines. Lowering it drops the oldest lines now. The setting is saved with the workspace.</Type>
                 </View>
                 <Step testID="scrollback-less" label="Fewer scrollback lines" onPress={() => props.scrollback.update((n) => Math.max(props.scrollbackMin, n - props.scrollbackStep))}>−</Step>
                 <Type role="mono" class="w-16 text-center">{props.scrollback().toLocaleString("en-US")}</Type>
@@ -155,7 +155,10 @@ export function SettingsDialog(props: {
           <If when={page() === "about"}>
             <View class="gap-1">
               <Type role="body">Termlevel {props.version}</Type>
-              <Type role="caption">{props.preview ? "Interactive UI preview. No shell is connected. Sessions and settings reset when the app restarts." : "Native terminal sessions powered by Ghostty. Closing a terminal ends its processes. Workspace layout and settings reset when the app restarts."}</Type>
+              <Type role="caption">{props.preview ? "Interactive UI preview. No shell is connected. Workspace and settings are not saved in preview." : "Native terminal sessions powered by Ghostty. Closing a terminal ends its processes. The next launch restores the workspace and starts fresh shells in the saved directories."}</Type>
+              <If when={!props.preview}>
+                <Type role="caption">Settings live in ~/Library/Application Support/app.termlevel.desktop/storage.json.</Type>
+              </If>
             </View>
           </If>
         </View>

@@ -15,6 +15,9 @@ export const groupPalette = [
 
 export type GroupColor = typeof groupPalette[number]["id"];
 
+/** The palette ids as plain strings, for validating persisted group state. */
+export const groupColorIds: readonly GroupColor[] = groupPalette.map((item) => item.id);
+
 export const groupColor = (color: GroupColor = "purple") => token(`group-${color}`);
 export const groupTint = (color: GroupColor = "purple") => token(`group-${color}-muted`);
 export const groupLine = (color: GroupColor = "purple") => token(`group-${color}-line`);

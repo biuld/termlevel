@@ -508,3 +508,21 @@ CARGO_NET_OFFLINE=true
 - 沙箱内首次调用 `iconutil` 报 Invalid Iconset；使用打包所需的系统工具权限重跑后成功。首次 release 宿主编译约三分钟，仍有此前诊断代码的 9 条警告。
 
 本次只改变图标资源与打包配置，没有重跑完整交互测试；验证针对真实应用包和图标资源，未额外启动打包应用确认 Finder / Dock 的图标缓存表现。打包与编译产物均位于忽略目录，不提交。
+
+## 2026-11-15：工作区与设置持久化
+
+首次启动不再自动创建 shell：窗口打开后画布显示空白引导，可直接在 home 打开终端或新建分组。保存的标签组、标签顺序、固定状态、分屏树、选中标签、侧栏宽度与展开状态、字号、滚动历史、界面 / 终端字体和外观写入 NSH Storage，路径为 `~/Library/Application Support/app.termlevel.desktop/storage.json`。应用重启时标签按保存的目录重新启动 shell，旧 session ID 映射到新会话；进程 PID 和终端输出不写入文档。剪贴板读取权限仍按设计在重启后复位。
+
+文档带 schema 版本。损坏、未知版本或非法布局节点会被丢弃，应用以安全默认值继续启动；标签引用不存在的分组时回到未分组区域，布局中无法映射的 pane 会被剪掉。`ui/workspace-snapshot.ts` 负责解析与校验，`ui/persistence.ts` 负责 NSH Storage 读写，`ui/WorkspaceRoot.tsx` 在挂载工作区前应用字体与外观，避免首帧闪烁。
+
+本轮验证（macOS arm64 debug）：
+
+- `./scripts/nsh check`、`./scripts/nsh build`、`cargo fmt --check`、`cargo clippy --workspace --all-targets -- -D warnings` 通过。
+- `./scripts/nsh test --junit artifacts/persistence-tests.xml`：**126 / 128**。新增 `ui/Persistence.test.tsx` 5 项与 `ui/Snapshot.test.tsx` 3 项全部通过：首次启动空白引导、home 终端启动与保存、空白引导新建 home 分组、分组 / 固定 / 分屏恢复、折叠状态保留、目录消失后回退 home、损坏与只有分组的文档回退、schema 解析与引用规范化、重复 pane / session ID 的布局丢弃。
+- 两项失败与本次改动路径无关，未通过修改测试绕过：
+  - `sessions::tests::real_shell_utf8_resize_title_and_exit_status` 等待 PTY 状态超时。该项在 `docs/validation.md` 中已有超时后单独重跑通过的记录；本轮单独重跑仍超时，未修改 Rust PTY 或超时阈值。
+  - `terminal/Session.test.tsx` 的中文粘贴断言在 headless 下得到 `--------` 而不是 `PASTE_中文`。该测试与 `SessionFixture` 本轮未修改，历史记录通过的是 `--target macos` 原生运行。
+- 预览模式显式不读写真实存储，`App.test.tsx` 仍使用确定性演示工作区。
+- 持久化测试使用 headless 测试自己的 NSH Storage，`app.storage()` 可读回保存文档，不触碰用户真实 `storage.json`。
+
+尚未进行真实窗口重启人工验收：需要在原生宿主里确认首次空白页、重建分组后退出再打开时 shell 数量与目录、侧栏宽度 / 外观 / 字体恢复，以及关闭窗口和退出应用时最后一次保存能落盘。headless 证据不等于原生 GUI 验收。
