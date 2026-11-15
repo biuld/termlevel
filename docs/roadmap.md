@@ -96,7 +96,7 @@
 - [x] pane 间隙缩放、键盘缩放、均分；侧栏 / pane 标题拖放与取消。设计和实现边界见 [多终端平铺设计](terminal-tiling.md)。
 - [ ] 多终端日用人工验收：实际系统输入法候选列表、选区复制、持续输出负载和拖动跟手；headless 与原生自动化证据分别记录。
 - [x] Git Changes tab 与只读状态 / diff：系统 `git` CLI、Git 2.20+、组设置独立入口；产品预览不访问 Git 仓库。
-- [x] Git History tab：提交车道、提交详情与 patch、分支 scope；Branches / Worktrees 列表与切换、fetch、fast-forward pull、checkout、新建 / 删除分支、worktree 新建 / 打开为分组 / 删除 / 锁定。合并、rebase、cherry-pick、stash 与冲突解决不在本项。
+- [x] Git History tab：提交车道、提交详情与 patch、分支 scope；Branches / Worktrees 列表与切换、fetch、fast-forward pull、push、checkout、新建 / 删除分支、worktree 新建 / 打开为分组 / 删除 / 锁定。合并、rebase、cherry-pick、stash 与冲突解决不在本项。
 - [ ] History 人工验收：真实分支切换、dirty 工作树拒绝、worktree 新建 / 删除后的分组与 shell 生命周期、长历史滚动和窄窗口。
 - 配置错误、shell 启动失败、崩溃恢复、运行中关闭提示。
 - 区分恢复工作区结构、重开 shell 与恢复活着的会话；若需要后者，再决定后台进程模型。

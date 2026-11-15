@@ -17,9 +17,14 @@ test("Git results appear as temporary toasts and remain in global notification h
     expect(app.texts()).toContain("Pull failed");
     await app.press("id:toast-dismiss");
     expect(app.shows("id:notification-toast")).toBe(false);
+    await app.press("id:history-push");
+    await app.waitFor("id:notification-toast");
+    expect(app.texts()).toContain("Push complete");
+    await app.press("id:toast-dismiss");
     await app.press("id:notifications");
     await app.waitFor("id:notification-panel");
     expect(app.texts().some(text => text.includes("Cannot fast-forward divergent branches."))).toBe(true);
     expect(app.texts().some(text => text.includes("Fetch complete"))).toBe(true);
+    expect(app.texts().some(text => text.includes("Push complete"))).toBe(true);
   } finally { app.dispose(); }
 });

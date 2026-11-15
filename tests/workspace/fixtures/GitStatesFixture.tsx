@@ -45,6 +45,7 @@ mount(() => {
     commit: async () => { throw new Error("No history in this fixture."); },
     fetch: async () => "Fetched.",
     pull: async () => "Pulled.",
+    push: async () => "Pushed.",
     checkout: async () => "",
     createBranch: async () => "",
     deleteBranch: async () => "",

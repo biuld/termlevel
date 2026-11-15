@@ -50,7 +50,7 @@ test("branch loading keeps the history toolbar in place", async () => {
   await app.waitFor("id:history-refresh");
   await app.press("text:origin/main");
   await app.waitFor("id:history-refreshing");
-  for (const id of ["history-fetch", "history-pull", "history-search-open", "history-refresh"]) expect(app.shows(`id:${id}`)).toBe(true);
+  for (const id of ["history-fetch", "history-pull", "history-push", "history-search-open", "history-refresh"]) expect(app.shows(`id:${id}`)).toBe(true);
   expect(app.texts()).not.toContain("Loading…");
   await app.waitUntil(() => !app.shows("id:history-refreshing"));
   app.dispose();
@@ -69,6 +69,20 @@ test("fetch and pull report results and refresh remote state after failure", asy
   await app.press("id:history-pull");
   await app.waitUntil(() => app.texts().some(text => text.includes("Pull complete")));
   expect(app.texts()).toContain("↑1 ↓0");
+  app.dispose();
+});
+
+test("push reports rejection and success through global notifications", async () => {
+  const app = await open("./fixtures/HistoryStatesFixture.tsx", options);
+  await app.press("id:dashboard-view-history");
+  await app.waitFor("id:history-push");
+  await app.press("text:origin/main");
+  await app.press("id:history-push");
+  await app.waitUntil(() => app.texts().some(text => text.includes("Push failed")));
+  expect(app.texts().some(text => text.includes("Remote rejected non-fast-forward push."))).toBe(true);
+  await app.waitFor("label:Push current branch to upstream");
+  await app.press("id:history-push");
+  await app.waitUntil(() => app.texts().some(text => text.includes("Push complete")));
   app.dispose();
 });
 

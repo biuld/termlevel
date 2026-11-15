@@ -89,6 +89,11 @@ test("History search and Git result toast fit the app window", async () => {
     await app.waitFor("id:notification-toast");
     await app.screenshot("artifacts/history-git-toast.png");
     await app.press("id:toast-dismiss");
+    await app.waitFor("label:Push current branch to upstream");
+    await app.press("id:history-push");
+    await app.waitFor("id:notification-toast");
+    await app.screenshot("artifacts/history-push-toast.png");
+    await app.press("id:toast-dismiss");
     await app.press("id:history-search-open");
     await app.type("id:history-search", "Merge");
     await app.waitUntil(() => app.texts().some(text => /^1\//.test(text)));

@@ -12,6 +12,7 @@ mount(() => {
     ...previewGit,
     fetch: async () => { await new Promise<void>(resolve => setTimeout(resolve, 300)); return "Fetch complete."; },
     pull: async () => { throw new Error("Cannot fast-forward divergent branches."); },
+    push: async () => "Push complete.",
   };
   return <View class="flex-1"><WorkspaceApp workspace={workspace} git={git} /></View>;
 });

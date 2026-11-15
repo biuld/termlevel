@@ -35,7 +35,7 @@ export function createHistoryState(props: HistoryProps) {
   const error = signal("");
   const logError = signal("");
   const opError = signal("");
-  const networkAction = signal<"fetch" | "pull" | null>(null);
+  const networkAction = signal<"fetch" | "pull" | "push" | null>(null);
   const busy = signal(false);
   const branchDialog = signal(false);
   const deleteDialog = signal(false);

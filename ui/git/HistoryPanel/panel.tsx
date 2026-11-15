@@ -64,6 +64,8 @@ export function HistoryPanel(props: HistoryProps) {
           testID="history-fetch" disabled={props.preview || busy() || loading() || !repo()} onPress={() => { void updateRemote("fetch"); }} />
         <IconButton icon={networkAction() === "pull" ? "refresh" : "gitPull"} label={networkAction() === "pull" ? "Pulling…" : "Pull current branch (fast-forward only)"}
           testID="history-pull" disabled={props.preview || busy() || loading() || !repo()} onPress={() => { void updateRemote("pull"); }} />
+        <IconButton icon={networkAction() === "push" ? "refresh" : "gitPush"} label={networkAction() === "push" ? "Pushing…" : "Push current branch to upstream"}
+          testID="history-push" disabled={props.preview || busy() || loading() || !repo()} onPress={() => { void updateRemote("push"); }} />
         <If when={!searchOpen()}>
           <IconButton icon="search" label="Search loaded commits" testID="history-search-open" onPress={() => searchOpen.set(true)} />
         </If>

@@ -912,3 +912,8 @@ Ungrouped 工作区入口（基于 `7dd7c8c` 的未提交改动）：`./scripts/
 
 - `./scripts/nsh check`、`./scripts/nsh build`、收起侧栏 Git 导航定向测试 1/1 通过。
 - 原生自动化 `./scripts/test-native gitlive` 2/2 通过，已检查收起侧栏选中状态截图；人工 GUI 操作验收及完整 headless 套件未执行。
+
+### History Push（2026-11-16，未提交工作区）
+
+- `./scripts/nsh check`、`./scripts/nsh build` 通过；本地裸仓库 Push 定向测试通过，覆盖当前上游、拒绝非快进、未设置上游及 detached HEAD，且不受通配 push 配置影响。History 定向测试 6/6，Git 通知定向测试 1/1。
+- 原生自动化 `./scripts/test-native history` 3/3，通过测试夹具检查按钮和通知；未推送真实远端，未做人工 GUI 验收，也未运行完整 headless 套件。

@@ -38,7 +38,7 @@ src/lib.rs                                   注册 termlevel/native 导出与�
 src/runtime.rs                               版本、启动目录、显式预览开关与原生 cell 测量
 src/dialog_keys.rs                           对话框 Escape 与 pane 缩放模式的原生键盘优先级
 src/git.rs                                   只读 Git CLI：status、refs、worktree、log、diff、版本检查
-src/git_ops.rs                               显式 Git 操作：fetch、fast-forward pull、checkout、建分支、worktree add/remove/lock/prune
+src/git_ops/                                 显式 Git 操作：fetch、fast-forward pull、push、checkout、建分支、worktree add/remove/lock/prune
 src/terminal.rs                              Ghostty 状态 / RenderState 到 NSH 的适配；预览 provider
 src/sessions.rs                              SessionManager、PTY、进程、reader/writer/reaper
   sessions/api.rs                TSX 可调用的显式会话操作
@@ -111,7 +111,7 @@ TSX HistoryPanel  ── branches / worktrees / log / commit ──┤ Rust Git�
                                     RepoStatus / RepoBranches / RepoWorktrees
                                     RepoLog / RepoCommitDetail / unified patch
 
-TSX HistoryPanel  ── fetch / pull / checkout / createBranch / worktree* ── Rust GitOps
+TSX HistoryPanel  ── fetch / pull / push / checkout / createBranch / worktree* ── Rust GitOps
                                                            │ 显式操作，60 秒超时
                                                            ▼
                                     git checkout / branch / worktree ...
@@ -127,7 +127,7 @@ TSX HistoryPanel  ── fetch / pull / checkout / createBranch / worktree* ─�
 - 分支名先经 `git check-ref-format --branch`，起点先经 `git rev-parse --verify <start>^{commit}`；worktree 删除、锁定只接受 `git worktree list` 中的路径。写操作不使用 `--force`。
 - 先在 group 路径找仓库根，再以仓库根运行命令，因此路径是仓库根相对路径；group 路径是仓库子目录时，worktree `current` 仍匹配所属工作树。
 - 操作进行中通过 worktree 的 git dir 标记检测 merge / rebase / cherry-pick / revert / bisect，只读查询不执行 hooks。
-- Git 查询保持只读；History 的显式动作包括 fetch、fast-forward-only pull、checkout、新建/删除分支和 worktree 管理。Fetch 使用 Git 配置的默认远端；Pull 更新当前 worktree 的当前分支，分叉时 Git 拒绝，操作失败后仍刷新远端引用。网络操作使用系统 Git 和已配置的凭据助手；终端交互式提示被禁用。删除分支使用 `git branch -d`，不 force；Git 拒绝当前分支、未合并分支或已在 worktree 中检出的分支。不 stage、unstage、commit、创建 merge commit、rebase、cherry-pick、reset、stash，也不解决冲突。
+- Git 查询保持只读；History 的显式动作包括 fetch、fast-forward-only pull、push、checkout、新建/删除分支和 worktree 管理。Fetch 使用 Git 配置的默认远端；Pull 更新当前 worktree 的当前分支，分叉时 Git 拒绝，操作失败后仍刷新远端引用。Push 仅推送当前 worktree 当前分支到已配置的上游远端分支，不推其他分支或标签，不强推；缺少上游或 detached HEAD 时提示用户。网络操作使用系统 Git 和已配置的凭据助手；终端交互式提示被禁用。删除分支使用 `git branch -d`，不 force；Git 拒绝当前分支、未合并分支或已在 worktree 中检出的分支。不 stage、unstage、commit、创建 merge commit、rebase、cherry-pick、reset、stash，也不解决冲突。
 - 产品预览不提供 Git 数据，也不启动 git；测试夹具可注入确定性 Git 替身。
 
 ### History 视图

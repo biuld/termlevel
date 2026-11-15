@@ -108,6 +108,7 @@ mount(() => {
   let worktreeList: GitWorktree[] = [...worktrees];
   let behind = 0;
   let pullAttempts = 0;
+  let pushAttempts = 0;
   const git: GitTransport = {
     status: async () => ({ ...status, behind }),
     diff: async () => "",
@@ -126,6 +127,11 @@ mount(() => {
       if (pullAttempts === 1) { behind = 3; throw new Error("Cannot fast-forward divergent branches."); }
       behind = 0;
       return "Pull complete (fast-forward only).";
+    },
+    push: async () => {
+      pushAttempts++;
+      if (pushAttempts === 1) throw new Error("Remote rejected non-fast-forward push.");
+      return "Push complete.";
     },
     checkout: async () => "",
     createBranch: async (_root, name, _start, checkout) => {

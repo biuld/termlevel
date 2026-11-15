@@ -13,7 +13,7 @@ export function createHistoryActions(state: HistoryState, data: HistoryData) {
     canDeleteBranch, selectedWorktreeInfo,
   } = state;
   const { reloadLog, load } = data;
-  async function updateRemote(action: "fetch" | "pull") {
+  async function updateRemote(action: "fetch" | "pull" | "push") {
     if (busy() || props.preview || !repo()) return;
     const path = cwd();
     const owner = groupId();
@@ -27,8 +27,8 @@ export function createHistoryActions(state: HistoryState, data: HistoryData) {
     } catch (next) {
       failure = errorMessage(next);
     } finally {
-      props.notify(failure ? "error" : "info", `${action === "fetch" ? "Fetch" : "Pull"} ${failure ? "failed" : "complete"}`, failure ? `${ownerTitle} · ${failure}` : ownerTitle);
-      // Pull may fetch refs even when the fast-forward fails.
+      props.notify(failure ? "error" : "info", `${action === "fetch" ? "Fetch" : action === "pull" ? "Pull" : "Push"} ${failure ? "failed" : "complete"}`, failure ? `${ownerTitle} · ${failure}` : ownerTitle);
+      // Refresh status after remote operations, including failures.
       if (groupId() === owner && cwd() === path) {
         await load();
       }

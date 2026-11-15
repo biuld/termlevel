@@ -20,6 +20,7 @@ export const nativeGit: GitTransport = {
   commit: (root, oid) => Git.commit(root, oid),
   fetch: (root) => GitOps.fetch(root),
   pull: (root) => GitOps.pull(root),
+  push: (root) => GitOps.push(root),
   checkout: (root, branch) => GitOps.checkout(root, branch),
   createBranch: (root, name, start, checkout) => GitOps.createBranch(root, name, start, checkout),
   deleteBranch: (root, name) => GitOps.deleteBranch(root, name),

@@ -186,6 +186,7 @@ export const previewGit: GitTransport = {
   commit: async (_root, oid) => detail(oid),
   fetch: fail,
   pull: fail,
+  push: fail,
   checkout: fail,
   createBranch: fail,
   deleteBranch: fail,

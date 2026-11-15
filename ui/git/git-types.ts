@@ -112,6 +112,7 @@ export interface GitTransport {
   commit(root: string, oid: string): Promise<GitCommitDetail>;
   fetch(root: string): Promise<string>;
   pull(root: string): Promise<string>;
+  push(root: string): Promise<string>;
   checkout(root: string, branch: string): Promise<string>;
   createBranch(root: string, name: string, start: string, checkout: boolean): Promise<string>;
   deleteBranch(root: string, name: string): Promise<string>;
