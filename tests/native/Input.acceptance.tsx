@@ -47,9 +47,10 @@ test("native AppKit composition commits once, cancels, and follows the grid curs
     const converted = await probe("convert");
     expect(converted.marked).toBe(true);
     expect(converted.text).toBe("中文");
+    console.log("composition candidate geometry", { before, converted });
+    await app.screenshot("artifacts/native-ime-preedit.png");
     expect(Math.abs(converted.y - before.y) < 2).toBe(true);
     expect(converted.x > before.x).toBe(true);
-    await app.screenshot("artifacts/native-ime-preedit.png");
     await probe("commit");
     expect((await probe("read")).text).toBe("");
     await app.keyboard.press("enter");
@@ -120,3 +121,27 @@ test("native AppKit composition commits once, cancels, and follows the grid curs
     app.dispose();
   }
 });
+
+test("large Kitty transfers keep native composition and English/Chinese echo responsive", async () => {
+  const app = await open("./tests/terminal/fixtures/GraphicsInputFixture.tsx", { platform: "macos", width: 1000, height: 700 });
+  try {
+    await app.type("id:graphics-input-terminal", "python3 -u tests/probes/graphics_input_probe.py");
+    await app.keyboard.press("enter");
+    await waitForOutput(app, "INPUT_GRAPHICS_READY");
+    await app.press("id:graphics-input-measure");
+    await app.waitUntil(() => app.texts().some(text => text.startsWith("GRAPHICS_INPUT_RESULT_") || text.startsWith("GRAPHICS_INPUT_ERROR_")), { timeout: 20000 });
+    const error = app.texts().find(text => text.startsWith("GRAPHICS_INPUT_ERROR_"));
+    if (error) throw new Error(error);
+    const encoded = app.texts().find(text => text.startsWith("GRAPHICS_INPUT_RESULT_"));
+    expect(encoded !== undefined).toBe(true);
+    const result = JSON.parse(encoded!.slice("GRAPHICS_INPUT_RESULT_".length));
+    console.log("graphics input latency (ms)", result);
+    expect(result.marks.length).toBe(24);
+    expect(result.echoes.length).toBe(8);
+    // A complete large image may share the input frame; repeated PTY polling
+    // sleeps must not turn it into a half-second or longer input stall.
+    expect(Math.max(...result.marks) < 150).toBe(true);
+    expect(Math.max(...result.echoes) < 300).toBe(true);
+    await app.screenshot("artifacts/native-graphics-input.png");
+  } finally { app.dispose(); }
+}, 30000);

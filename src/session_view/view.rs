@@ -24,6 +24,9 @@ pub(super) struct Display {
     cursor_ref: ElementRef,
     focused: Signal<bool>,
     composing: Signal<bool>,
+    /// Marked text lives in the native field editor, not in `value`, so the
+    /// field width must measure it separately.
+    composition_text: Signal<String>,
     value: Signal<String>,
     state: Rc<RefCell<InputState>>,
     viewport: Signal<Size<Points>>,
@@ -267,6 +270,7 @@ impl Display {
             cursor_ref: element_ref(),
             focused: signal(false),
             composing: signal(false),
+            composition_text: signal(String::new()),
             value: signal(String::new()),
             state: Rc::default(),
             viewport: signal(Size::default()),
@@ -409,6 +413,11 @@ impl Display {
             .borrow_mut()
             .composition(event.composing, &event.text);
         self.composing.set(event.composing);
+        self.composition_text.set(if event.composing {
+            event.text.clone()
+        } else {
+            String::new()
+        });
         if let Some(text) = committed {
             self.send(&text);
         }
@@ -1058,6 +1067,7 @@ impl Display {
         });
         let props = self.props;
         let composing = self.composing;
+        let composition_text = self.composition_text;
         let value = self.value;
         let snap = self.surface.snap();
         let cw = self.cell_width;
@@ -1079,11 +1089,11 @@ impl Display {
                 let cw = cw.get().0;
                 let col = snap.frame.cursor.position.map(|(col, _)| col).unwrap_or(0);
                 let text = value.get();
-                let measured = crate::runtime::terminal_text_width(
-                    &family(props),
-                    props.font_size.get().0,
-                    &text,
-                );
+                let marked = composition_text.get();
+                let size = props.font_size.get().0;
+                let font = family(props);
+                let measured = crate::runtime::terminal_text_width(&font, size, &text)
+                    .max(crate::runtime::terminal_text_width(&font, size, &marked));
                 px(
                     super::input::field_columns(measured, cw, col, snap.frame.cols) as f32
                         * cw.max(1.0),

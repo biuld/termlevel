@@ -757,3 +757,20 @@ Rust Session 独有的 InputQueue 改为 FIFO 总字节预算：4 MiB 待发送�
 安装中的 `/Applications/Termlevel.app` 未替换，用户人工验收仍待进行；正常的光标定时闪烁不作为 pet 消失证据。首轮排查把未设置 cell 像素尺寸的测试误认成 hold 快照丢图，补齐尺寸后排除；最终修复依据为真实原生空帧与超时关联，以及旧看门狗下失败的分块回归。
 
 最终检查：`./scripts/nsh check`、`./scripts/nsh build`、`cargo fmt --all -- --check`、`git diff --check` 通过；`./scripts/nsh test --junit artifacts/pets-watchdog-tests.xml` 在沙箱外运行，197/197（`artifacts/pets-watchdog-tests.log`）。`cargo clippy --workspace --all-targets -- -D warnings` 初次因沙箱网络限制无法下载官方库；设置 `GHOSTTY_VT_ARCHIVE=/tmp/termlevel-ghostty-vt-1.0.1.xcframework.zip CARGO_NET_OFFLINE=true` 后通过（`artifacts/pets-watchdog-clippy.log`）。原生开发宿主保留一条既有链接警告。
+
+## 2026-11-15 · 分块图片传输期间的输入回显停顿
+
+基于 `ea48542` 的未提交改动。用户在实际 Codex composer 中报告：上一版同步刷新看门狗修复后，输入英文或中文仍要等一段时间才显示。`ea48542` 只调整同步提交截止时间；本轮定位到 PTY reader 在 `WouldBlock` 后的固定 `thread::sleep(4 ms)`。Codex pet / 图片按块输出时，块与块之间都可能进入该分支，等待随块数累积。
+
+reader 改为 `poll(POLLIN, 4 ms)`：下一块可读时立即唤醒，无数据时仍以 4 ms 为上限检查会话关闭与同步提交截止时间。非 Unix 分支保留原 sleep。
+
+新增 `tests/terminal/fixtures/GraphicsInputFixture.tsx` 与 `tests/probes/graphics_input_probe.py`：真实 PTY 持续输出分块 Kitty RGB 图片，同时经实际 AppKit field editor 做 marked text 和中英文提交，分别记录组合输入调用与字符回显耗时。原生用例要求 24 次 marked 调用 < 150 ms、8 次回显 < 300 ms。
+
+- 对照（仅把 reader 恢复为固定 4 ms sleep）：8 次回显为 612 / 746 / 897 / 692 / 715 / 733 / 662 / 736 ms，超过 300 ms 断言失败；日志 `artifacts/ime-reader-baseline-final.log`。
+- 恢复 `poll` 后：回显 14–24 ms，24 次 marked 调用最大 6 ms；`./scripts/test-native input -v` **2 / 2** 通过，日志 `artifacts/ime-reader-native-final.log`、报告 `artifacts/native-ime-tests.xml`。
+
+同轮排查发现 `native AppKit composition commits once…` 在干净 `ea48542` 上已失败：中文 marked text 的 `firstRectForCharacterRange` 返回 `(0,0,0,0)`，ASCII 正常；暂存 reader 改动后同样失败，确认与 reader 无关。上一版“按组合内容扩展 field editor”只用受控 `value` 测宽，而 marked text 存在原生 field editor 内，中文组合时字段仍为 1 格。现在分开测量 `value` 与 `composition_text` 并取较大值；修复后中文候选锚点为 `(845.5,937)`，与组合前同一基线，用例通过。首次失败记录保留在 `artifacts/ime-reader-composition.log`。
+
+常规检查：`./scripts/nsh check`、`./scripts/nsh build`、`./scripts/nsh test --junit artifacts/ime-reader-tests.xml` **197 / 197**、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check` 通过；日志 `artifacts/ime-reader-{check,tests,build,clippy}.log`。原生宿主仍有一条既有 `__eh_frame` 链接警告。
+
+受控探针不是实际 Codex 负载，也不等同于系统输入法候选窗的人工验收；用户实机手感、真实 IME 候选窗位置及其他平台仍未复验。

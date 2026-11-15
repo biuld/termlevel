@@ -551,6 +551,9 @@ impl Session {
                         ) =>
                     {
                         read_session.flush_output(false);
+                        #[cfg(unix)]
+                        wait_for_output(&reader);
+                        #[cfg(not(unix))]
                         thread::sleep(Duration::from_millis(4));
                     }
                     // A PTY master commonly returns EIO when the slave closes.
@@ -1184,6 +1187,23 @@ impl Session {
             info.shell_phase = "unknown".into();
         }
         self.revision.fetch_add(1, Ordering::Release);
+    }
+}
+
+// Wake as soon as the child supplies another chunk instead of adding a
+// polling sleep to every gap in a large graphics transfer. The bounded wait
+// still lets the reader notice session close and commit a sync deadline.
+#[cfg(unix)]
+fn wait_for_output(reader: &std::fs::File) {
+    use std::os::fd::AsRawFd;
+    let mut descriptor = libc::pollfd {
+        fd: reader.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: descriptor is valid for this call and reader owns the live fd.
+    unsafe {
+        libc::poll(&mut descriptor, 1, 4);
     }
 }
 
