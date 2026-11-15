@@ -1,4 +1,4 @@
-import { cleanup, effect, signal, Text, token, untracked, View, type Signal } from "nsh";
+import { cleanup, effect, signal, token, untracked, View, type Signal } from "nsh";
 import { monoFont } from "../shared/fonts";
 import { Terminal, type TerminalRef } from "nsh/base";
 import type { Workspace } from "../workspace/workspace";
@@ -99,12 +99,5 @@ export function PreviewTerminal(props: {
         />
       }</Each>
     </View>
-    <If when={store.tab(id)?.state === "exited" || store.tab(id)?.state === "error"}>
-      <View class="shrink-0 border-t border-border bg-popover px-3 py-2">
-        <Text testID={`session-status-${id}`} class="text-(length:--text-label) text-muted-foreground">
-          {store.tab(id)?.error ?? `Process exited with code ${store.tab(id)?.exitCode ?? "unknown"}. Open a new terminal to continue.`}
-        </Text>
-      </View>
-    </If>
   </View>;
 }

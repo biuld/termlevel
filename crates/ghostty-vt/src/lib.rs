@@ -90,6 +90,7 @@ pub fn library_version() -> &'static str {
 pub enum Event {
     WritePty(Vec<u8>),
     Bell,
+    Notification { title: String, body: String },
     TitleChanged(String),
     WorkingDirectoryChanged(String),
     Reset,
@@ -189,6 +190,10 @@ impl Terminal {
                 (
                     sys::GHOSTTY_TERMINAL_OPT_WRITE_PTY,
                     on_write as *const () as *const c_void,
+                ),
+                (
+                    sys::GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION,
+                    on_notification as *const () as *const c_void,
                 ),
                 (
                     sys::GHOSTTY_TERMINAL_OPT_BELL,
@@ -402,6 +407,33 @@ unsafe extern "C" fn on_write(
             }
             Ok(Event::WritePty(bytes))
         })
+    }
+}
+unsafe extern "C" fn on_notification(
+    _: sys::GhosttyTerminal,
+    userdata: *mut c_void,
+    notification: *const sys::GhosttyTerminalDesktopNotification,
+) {
+    // SAFETY: native callback strings are valid only until return. Copy bounded
+    // UTF-8 owned text synchronously; no native pointer crosses the callback.
+    unsafe {
+        enqueue(userdata, || {
+            let notification = notification
+                .as_ref()
+                .ok_or(Error(sys::GHOSTTY_INVALID_VALUE))?;
+            let copy = |value: sys::GhosttyString, limit: usize| {
+                if value.len == 0 || value.ptr.is_null() {
+                    return String::new();
+                }
+                let bytes =
+                    std::slice::from_raw_parts(value.ptr.cast::<u8>(), value.len.min(limit));
+                String::from_utf8_lossy(bytes).into_owned()
+            };
+            Ok(Event::Notification {
+                title: copy(notification.title, 640),
+                body: copy(notification.body, 16384),
+            })
+        });
     }
 }
 unsafe extern "C" fn on_bell(_: sys::GhosttyTerminal, userdata: *mut c_void) {

@@ -1,4 +1,4 @@
-import { effect, keymap, platform, Scroll, setColorScheme, signal, Text, token, View } from "nsh";
+import { effect, keymap, platform, Scroll, setColorScheme, signal, Text, token, View, type ViewRef } from "nsh";
 import { Button, Input, ResizablePanel, ResizablePanelGroup } from "nsh/base";
 import { Application, currentWindow, Menu, titleBar } from "nsh/desktop";
 import { Runtime, Sessions, TerminalEngine } from "termlevel/native";
@@ -6,6 +6,8 @@ import { TilingCanvas } from "../workspace/TilingCanvas";
 import { Action, AppDialog, DialogActions, fieldClass, IconButton } from "../shared/controls";
 import { Icon } from "../shared/icons";
 import { GroupPathDialog } from "../workspace/GroupPathDialog";
+import { createNotificationCenter } from "../notifications/notifications";
+import { NotificationPanel } from "../notifications/NotificationPanel";
 import { SettingsDialog } from "../settings/SettingsDialog";
 import { Sidebar, type SidebarActions } from "../workspace/Sidebar";
 import { Type } from "../shared/type";
@@ -36,6 +38,10 @@ export function WorkspaceApp(props: {
   const searching = signal(false);
   const query = signal("");
   const settings = signal(false);
+  const notifying = signal(false);
+  const windowHeight = signal(420);
+  let notificationAnchor: ViewRef | undefined;
+  const notifications = createNotificationCenter(preview, notifying);
   const finding = signal(false);
   const findQuery = signal("");
   const appearance = signal<Appearance>(props.snapshot?.appearance ?? "system");
@@ -85,7 +91,7 @@ export function WorkspaceApp(props: {
   const pathError = signal("");
   const version = Runtime.version();
   effect(() => {
-    const modal = editor() !== null || searching() || settings() || closingGroup() !== null || editingGroup() !== null || choosingPath() || finding();
+    const modal = editor() !== null || searching() || settings() || notifying() || closingGroup() !== null || editingGroup() !== null || choosingPath() || finding();
     if (modal) { store.resizing.set(false); store.cancelPaneDrag(); }
     store.inputBlocked.set(modal || store.resizing());
   });
@@ -181,7 +187,8 @@ export function WorkspaceApp(props: {
   const searchResults = () => store.tabs().filter((tab) =>
     `${tab.title} ${tab.cwd} ${store.groupTitle(tab.groupId)}`.toLowerCase().includes(query().toLowerCase()));
 
-  return <TerminalEngine class="relative flex-1 bg-chrome font-sans text-foreground">
+  return <TerminalEngine class="relative flex-1 bg-chrome font-sans text-foreground"
+    onLayout={({ bounds }) => { if (windowHeight() !== bounds.size.height) windowHeight.set(bounds.size.height); }}>
     <View testID="window-toolbar" desktop={{ windowDrag: true }}
       class="relative h-(--height-titlebar) shrink-0 flex-row items-center"
       style={{ paddingLeft: titleBar().left + token("gap-pane"), paddingRight: titleBar().right + token("gap-pane") }}>
@@ -195,6 +202,13 @@ export function WorkspaceApp(props: {
       <View testID="global-actions" desktop={{ windowDrag: false }} class="ml-auto flex-row items-center gap-0.5">
         <IconButton icon="folder" label="New group" testID="new-group" onPress={actions.newGroup} />
         <IconButton icon="search" label="Find a terminal" testID="find-terminal" onPress={actions.search} />
+        <View ref={ref => { notificationAnchor = ref; }} class="relative">
+          <IconButton icon="bell" label={notifications.unread() ? `Notifications (${notifications.unread()} unread)` : "Notifications"} testID="notifications" selected={notifying()}
+            onPress={() => { notifying.update(value => !value); if (notifying()) notifications.read(); }} />
+          <If when={notifications.unread() > 0}>
+            <View testID="notifications-unread" class="absolute right-0 top-0 h-2 w-2 rounded-full bg-primary" style={{ pointerEvents: "none" }} />
+          </If>
+        </View>
         <IconButton icon="settings" label="Settings" testID="settings" onPress={actions.settings} />
       </View>
     </View>
@@ -292,9 +306,17 @@ export function WorkspaceApp(props: {
           if (!choosingPath()) return;
           if (picked) { choosingPath.set(false); store.addGroup(picked); }
         }).catch((error: unknown) => {
-          pathError.set(error instanceof Error ? error.message : "Could not open the folder dialog.");
+          const message = error instanceof Error ? error.message : "Could not open the folder dialog.";
+          pathError.set(message);
+          notifications.report("Could not open folder dialog", message);
         });
       }} />
+    <If when={notifying() ? notificationAnchor : undefined}>{(anchor) =>
+      <NotificationPanel anchor={anchor()} windowHeight={windowHeight()} entries={notifications.entries()} close={() => notifying.set(false)}
+        clear={notifications.clear} dismiss={notifications.dismiss}
+        sessionTitle={id => store.tab(id)?.title}
+        select={id => { if (store.tab(id)) store.select(id); notifying.set(false); }} />
+    }</If>
     <SettingsDialog open={settings()} dismiss={() => settings.set(false)} appearance={appearance}
       terminalIdentity={terminalIdentity} fontSize={store.fontSize} version={version} preview={preview} scrollback={store.scrollback} clipboardRead={store.clipboardRead}
       scrollbackMin={Runtime.scrollbackMin()} scrollbackMax={Runtime.scrollbackMax()} scrollbackStep={Runtime.scrollbackStep()} />

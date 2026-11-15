@@ -174,13 +174,13 @@ test("ctrl+d closes a clean shell and a failed exit keeps the terminal", async (
   await app.press("id:split-right");
   await app.type("id:terminal-tab-1", "exit 1");
   await app.keyboard.press("enter");
-  await app.waitFor("id:session-status-tab-1");
+  await app.waitFor("id:session-state-tab-1");
   expect(app.shows("id:tab-tab-1")).toBe(true);
   await app.press("id:terminal-prototype");
   await app.keyboard.press("ctrl+d");
   await app.waitUntil(() => !app.shows("id:tab-prototype"));
   expect(app.shows("id:terminal-tab-1")).toBe(true);
-  expect(app.shows("id:session-status-tab-1")).toBe(true);
+  expect(app.shows("id:session-state-tab-1")).toBe(true);
   expect(app.shows("id:tab-tab-1")).toBe(true);
 });
 

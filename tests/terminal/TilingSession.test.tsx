@@ -51,7 +51,7 @@ test("two real PTYs render concurrently and route input to the clicked pane whil
     expect(app.count(`id:terminal-${left.id}`)).toBe(1);
     expect((await sessions()).find(s => s.id === right.id)?.pid).toBe(right.pid);
     await command(left.id, "exit 3");
-    await app.waitFor(`id:session-status-${left.id}`);
+    await app.waitFor(`id:session-state-${left.id}`);
     expect(app.shows(`id:tab-${left.id}`)).toBe(true);
     await app.press("id:terminal-actions");
     await app.chooseMenuItem("Show terminal on the right > Terminal 2");
@@ -59,7 +59,7 @@ test("two real PTYs render concurrently and route input to the clicked pane whil
     await app.keyboard.press("ctrl+d");
     await app.waitUntil(() => !app.shows(`id:tab-${right.id}`));
     expect(app.shows(`id:terminal-${left.id}`)).toBe(true);
-    expect(app.shows(`id:session-status-${left.id}`)).toBe(true);
+    expect(app.shows(`id:session-state-${left.id}`)).toBe(true);
     expect((await sessions()).some(s => s.id === right.id)).toBe(false);
     await app.keyboard.press("mod+w");
     expect((await sessions()).length).toBe(0);

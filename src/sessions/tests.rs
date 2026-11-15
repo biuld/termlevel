@@ -402,3 +402,27 @@ fn rejected_paste_is_a_warning_and_a_later_delivered_input_clears_it() {
     manager.shutdown();
     wait_for(|| finished(&session));
 }
+
+#[test]
+fn notifications_survive_session_close_without_a_mounted_view() {
+    let mut manager = SessionManager::default();
+    let session = shell(&mut manager);
+    let id = session.info().id;
+    session.input(b"printf '\\033]777;notify;SESSION_NOTICE;Background done\\007'\n");
+    wait_for(|| {
+        crate::notifications::Notifications::list()
+            .iter()
+            .any(|entry| {
+                entry.session_id.as_deref() == Some(&id) && entry.title == "SESSION_NOTICE"
+            })
+    });
+    manager.close(&id);
+    wait_for(|| finished(&session));
+    assert!(
+        crate::notifications::Notifications::list()
+            .iter()
+            .any(
+                |entry| entry.session_id.as_deref() == Some(&id) && entry.body == "Background done"
+            )
+    );
+}

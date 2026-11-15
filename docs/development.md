@@ -13,6 +13,7 @@ App.tsx                     NSH 默认挂载入口
 ui/app/                     启动恢复、窗口、菜单、快捷键和应用接线
 ui/workspace/               工作区状态、快照、存储、侧栏、分组和平铺
 ui/settings/                设置界面
+ui/notifications/           通知历史订阅与标题栏面板
 ui/terminal/                原生终端展示、查找和显式预览
 ui/shared/                  通用控件、图标、字体、文字和主题映射
 src/                        Rust 应用 crate
@@ -29,7 +30,7 @@ artifacts/                  忽略的本地日志、截图与报告
 
 TSX 的应用接线位于 app；工作区状态与操作位于 workspace；终端视图位于 terminal；无业务状态的公共表现放 shared。组件用 PascalCase，状态与工具文件用小写及连字符。沿用当前两空格 TSX 缩进，避免目录整理时混入整文件格式重写。
 
-app 可以组合 workspace、settings、terminal 和 shared。workspace 的状态模块不导入 app 或 terminal 展示组件；TilingCanvas 是工作区到终端展示的组合点。terminal 可消费 workspace 状态接口，但不创建应用窗口或接管进程生命周期。shared 不导入上述业务模块。当前 workspace 状态使用 NSH signals 和原生服务，不宣称是纯函数领域层；tiling 的树变换和 snapshot 的解析各自保留独立入口。
+app 可以组合 workspace、settings、notifications、terminal 和 shared。workspace 的状态模块不导入 app 或 terminal 展示组件；TilingCanvas 是工作区到终端展示的组合点。terminal 可消费 workspace 状态接口，但不创建应用窗口或接管进程生命周期。shared 不导入上述业务模块。当前 workspace 状态使用 NSH signals 和原生服务，不宣称是纯函数领域层；tiling 的树变换和 snapshot 的解析各自保留独立入口。
 
 Rust 的 lib.rs 只做导出注册。SessionManager 拥有 PTY、进程与工作线程；terminal 负责 Ghostty 到应用的适配；session_view 负责显示与交互；平台对象只放 platform 下。两个 Ghostty crate 不依赖 NSH、PTY 或应用。跨线程传 owned 数据，句柄同步和回调约束见 crates/ghostty-vt/THREADING.md。
 

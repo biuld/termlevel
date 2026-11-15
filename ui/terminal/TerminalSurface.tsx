@@ -1,4 +1,4 @@
-import { effect, signal, Text, token, View, type Signal } from "nsh";
+import { effect, signal, token, View, type Signal } from "nsh";
 import { SessionTerminal, type SessionTerminalRef } from "termlevel/native";
 import { monoFont } from "../shared/fonts";
 import type { Workspace } from "../workspace/workspace";
@@ -84,12 +84,5 @@ export function TerminalSurface(props: {
           ...(!tab()?.customTitle && info.title ? { title: info.title } : {}),
         });
       }} />
-    <If when={tab()?.state === "exited" || tab()?.state === "error" || !!tab()?.inputWarning}>
-      <View class="shrink-0 border-t border-border bg-popover px-3 py-2">
-        <Text testID={`session-status-${id}`} class="text-(length:--text-label) text-muted-foreground">
-          {tab()?.error ?? tab()?.inputWarning ?? `Process exited with code ${tab()?.exitCode ?? "unknown"}. Open a new terminal to continue.`}
-        </Text>
-      </View>
-    </If>
   </View>;
 }

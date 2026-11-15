@@ -48,6 +48,7 @@ pub(crate) struct SearchHit {
 pub(crate) enum BackendEvent {
     Title(String),
     Bell,
+    Notification { title: String, body: String },
     Reply(Vec<u8>),
     Error(String),
 }
@@ -343,6 +344,9 @@ impl GhosttyEmulator {
                 Event::TitleChanged(title) => Some(BackendEvent::Title(title)),
                 Event::Reset => Some(BackendEvent::Title(String::new())),
                 Event::Bell => Some(BackendEvent::Bell),
+                Event::Notification { title, body } => {
+                    Some(BackendEvent::Notification { title, body })
+                }
                 Event::WritePty(bytes) => Some(BackendEvent::Reply(bytes)),
                 Event::WorkingDirectoryChanged(_) => None,
             })
@@ -985,6 +989,7 @@ impl TerminalEmulator for GhosttyEmulator {
             .filter_map(|event| match event {
                 BackendEvent::Title(title) => Some(TerminalEmulatorEvent::Title(title)),
                 BackendEvent::Bell => Some(TerminalEmulatorEvent::Bell),
+                BackendEvent::Notification { .. } => None,
                 BackendEvent::Reply(bytes) => Some(TerminalEmulatorEvent::Reply(bytes)),
                 BackendEvent::Error(error) => {
                     eprintln!("Ghostty preview: {error}");

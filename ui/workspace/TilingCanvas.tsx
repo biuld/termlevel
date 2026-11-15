@@ -103,6 +103,13 @@ export function TilingCanvas(props: {
           <If when={tab()?.bell}><View testID={`pane-bell-${id}`} class="h-1.5 w-1.5 rounded-full bg-primary" /></If>
         </View>
         <View class="flex-row items-center">
+          <If when={tab()?.state === "exited" || tab()?.state === "error"}>
+            <Type testID={`session-state-${id}`} role="caption" class="px-1">
+              {tab()?.state === "exited" ? `Exited · ${tab()?.exitCode ?? "unknown"}` : "Error"}
+            </Type>
+            <IconButton icon="plus" label="Open new terminal" testID={`session-new-${id}`}
+              onPress={() => { store.select(id); store.addTab(tab()?.groupId ?? null); }} />
+          </If>
           <IconButton icon="search" label="Find in terminal" testID={focused() ? "pane-find" : `pane-find-${id}`}
             onPress={() => { store.select(id); props.finding.set(true); }} />
           <IconButton icon="splitRight" label="Split right" testID={focused() ? "split-right" : `split-right-${id}`}

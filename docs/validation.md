@@ -596,3 +596,28 @@ Rust Session 独有的 InputQueue 改为 FIFO 总字节预算：4 MiB 待发送�
 - `./scripts/nsh check`、`./scripts/nsh build`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`git diff --check` 均通过。check/build/clippy 日志分别为 artifacts/input-queue-{check,build,clippy}.log。
 
 未关闭或重启用户正在使用的终端。Rust 改动需重启应用后生效，当前运行实例不会热替换。真实 Codex 持续日用和截图中那次具体事件源尚未复现；不把上述自动化当作人工验收。有限内存无法保证永久不读输入的客户端无限接收，真正超过预算仍明确拒绝且要求重试，不静默丢弃、不无限扩容。
+
+## 2026-11-15：应用内通知面板
+
+基于 `bc3c8f7` 的未提交改动。此前终端身份和输入队列修复已提交为 `bc3c8f7`；原有 docs/codex-pets-handoff.md 保持未跟踪、未修改。标题栏新增铃铛、未读提示和历史面板，收录终端 OSC 9 / OSC 777、BEL，以及应用错误 / 警告。Rust 是运行期历史的唯一所有者，最多 100 条，两秒内连续相同通知合并计数；不随终端视图卸载或来源关闭而消失，不跨应用重启保存。支持单项移除、清空和按已有 session ID 返回来源；清空历史不清除原会话错误。preview 不调用真实通知服务。
+
+验证使用 `GHOSTTY_VT_ARCHIVE=/tmp/termlevel-ghostty-vt-1.0.1.xcframework.zip CARGO_NET_OFFLINE=true`：
+
+- `cargo test --workspace notification -- --nocapture`：safe crate 的 1 项、应用的 3 项通过；日志 artifacts/notifications-rust.log。覆盖 OSC 分块与 owned 字符串在 terminal 销毁后保留、bounded 历史淘汰、未读 / 重复计数、ID 不复用、无挂载视图的真实 PTY 通知和关闭来源后仍保留历史。
+- `./scripts/nsh test --junit artifacts/notifications-headless.xml`：152/152，包括新增三项真实 PTY 通知交互和 preview 空面板 / 侧栏收起入口用例。日志 artifacts/notifications-headless.log。通知专项最终 headless 3/3；日志 artifacts/notifications-focused.log。
+- 原生 AppKit 自动化：临时将 Notifications.test.tsx 复制为根目录 .native-notifications.test.tsx，修正相对 fixture 路径并插入截图，执行 `./scripts/nsh test .native-notifications.test.tsx --target macos --junit artifacts/notifications-native.xml`：3/3。日志 artifacts/notifications-native.log。临时驱动已删除；仓库内用例可用 `./scripts/nsh test tests/terminal/Notifications.test.tsx --target macos` 重跑。验证后台 shell 通知、跳回来源、关闭来源后的历史、应用输入警告恢复后的历史保留、逐项移除、五条历史滚动与清空。宿主仍有一条链接警告。
+- 已查看 artifacts/notifications-source-native.png 和 artifacts/notifications-history-native.png：单条按内容收缩，侧栏收起仍可打开；640×420 窄窗口最多三条可见，分隔线、滚动提示和清空按钮可见。面板高度根据根窗口可用空间及前三条实际测量高度计算；长正文可滚动查看。
+- `./scripts/nsh check`、`./scripts/nsh build`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`git diff --check` 通过。日志 artifacts/notifications-{check,build,clippy}.log。
+
+开发中专项曾因测试共享 Rust 历史而依赖了错误的通知编号；夹具现显式清空自己的历史，用例按具体通知的可访问性标签定位。原生还收到了额外的真实 BEL 通知，最初通用关闭标签不唯一，现标签包含通知标题并按单项移除验证，不假定移除一项后历史为空。上述最终回归已覆盖修正。
+
+本次是应用内通知历史，不发系统桌面推送；未实现 OSC 99、跨重启历史或 shell integration 的自动命令完成推断。真实 Codex 通知策略与用户长期日用尚未人工验收，受控 OSC / BEL 用例不能替代。Rust 改动需重新运行应用才能生效；未关闭用户当前会话。
+
+### 同日补充：移除终端底部状态条（amend 通知面板提交）
+
+按用户要求，从真实 TerminalSurface 和确定性 PreviewTerminal 移除底部状态条。输入拒绝和详细错误统一由通知面板展示；pane 标题栏保留 Exited / Error 简短状态与“Open new terminal”入口，已有输出和原 session ID 保留，点击入口才显式创建新会话。清空通知历史不清除退出状态，也不自动重启旧进程。当前 architecture 已同步，以上旧验证章节的状态条描述保留为历史记录。
+
+- `./scripts/nsh test tests/terminal/Notifications.test.tsx --target macos --junit artifacts/notification-status-removal-native.xml`：4/4。新增真实 /bin/sh 验证非零退出保留输出、底部不重复显示错误、通知历史包含退出原因、清空历史后标题栏仍显示退出状态，以及显式新建终端后可继续输入。日志 artifacts/notification-status-removal-native.log。宿主仍有一条链接警告；不作为长期人工日用验收。
+- 更新 InputBackpressure 和真实 / 预览平铺回归，分别验证通知入口与标题栏状态，不再依赖底部状态条。
+- `./scripts/nsh check`、`./scripts/nsh build`、`git diff --check` 通过。日志 artifacts/notification-status-removal-{check,build}.log。本次没有 Rust 代码变化。
+- `./scripts/nsh test --junit artifacts/notification-status-removal-headless.xml`：153/153，日志 artifacts/notification-status-removal-headless.log。

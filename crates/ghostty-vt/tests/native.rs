@@ -474,3 +474,27 @@ fn incremental_search_preserves_native_wrapped_matches_and_screen_results() -> R
     }
     panic!("incremental search did not complete");
 }
+
+#[test]
+fn desktop_notifications_are_owned_and_parse_across_chunks() -> Result<()> {
+    let mut terminal = Terminal::new(20, 4)?;
+    terminal.write(b"\x1b]777;notify;Build done;")?;
+    terminal.write("测试通过\x1b\\".as_bytes())?;
+    terminal.write(b"\x1b]9;Simple notice\x07")?;
+    let events = terminal.take_events();
+    drop(terminal);
+    assert!(
+        events.contains(&Event::Notification {
+            title: "Build done".into(),
+            body: "测试通过".into()
+        }),
+        "{events:?}"
+    );
+    assert!(
+        events.iter().any(
+            |event| matches!(event, Event::Notification { body, .. } if body == "Simple notice")
+        ),
+        "{events:?}"
+    );
+    Ok(())
+}

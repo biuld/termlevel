@@ -8,15 +8,17 @@ async function close(app: Awaited<ReturnType<typeof open>>) {
   app.dispose();
 }
 
-test("a rejected paste shows a recoverable warning and the next delivered input clears it", async () => {
+test("a rejected paste is recorded in notifications without a terminal status bar", async () => {
   const app = await open("./fixtures/WorkspaceFixture.tsx", options);
   try {
     await app.paste("id:session-panel", { text: "x".repeat(1024 * 1024 + 1) });
-    await app.waitUntil(() => app.texts().some(text => text.includes("Input not sent: paste exceeds")));
+    await app.waitFor("id:notifications-unread");
+    expect(app.texts().some(text => text.includes("Input not sent:"))).toBe(false);
     await app.type("id:session-panel", "printf 'INPUT_RECOVERED_%s\\n' OK");
     await app.keyboard.press("enter");
     await app.waitUntil(() => app.texts().some(text => text.includes("INPUT_RECOVERED_OK")));
-    await app.waitUntil(() => !app.texts().some(text => text.includes("Input not sent:")));
+    await app.press("id:notifications");
+    await app.waitUntil(() => app.texts().some(text => text.includes("Input not sent: paste exceeds")));
     expect(app.texts().some(text => text.includes("Terminal input unavailable"))).toBe(false);
   } finally { await close(app); }
 });

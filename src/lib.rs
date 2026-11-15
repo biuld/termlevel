@@ -2,6 +2,7 @@
 
 mod clipboard;
 mod dialog_keys;
+mod notifications;
 mod runtime;
 mod session_view;
 mod sessions;
@@ -16,6 +17,7 @@ fn native(registry: &mut Registry) {
     registry.module::<session_view::platform::NativeInputProbe>();
     registry
         .module::<runtime::Runtime>()
+        .module::<notifications::Notifications>()
         .module::<sessions::Sessions>()
         .register::<dialog_keys::DialogKeys>()
         .register::<dialog_keys::ResizeKeys>()

@@ -389,3 +389,15 @@ test("dragging onto a terminal joins its group, or starts one when it has none",
   await app.waitFor("text:grouped-session");
   expect(app.count("id:terminal-colors")).toBe(1);
 });
+
+test("preview notifications stay empty and the global entry survives sidebar collapse", async () => {
+  const app = await open("../../App.tsx", options);
+  try {
+    await app.press("id:toggle-sidebar");
+    await app.press("id:notifications");
+    await app.waitFor("id:notifications-empty");
+    await app.keyboard.press("escape");
+    expect(app.shows("id:notification-panel")).toBe(false);
+    expect(app.shows("id:notifications")).toBe(true);
+  } finally { app.dispose(); }
+});
