@@ -774,3 +774,14 @@ reader 改为 `poll(POLLIN, 4 ms)`：下一块可读时立即唤醒，无数据�
 常规检查：`./scripts/nsh check`、`./scripts/nsh build`、`./scripts/nsh test --junit artifacts/ime-reader-tests.xml` **197 / 197**、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check` 通过；日志 `artifacts/ime-reader-{check,tests,build,clippy}.log`。原生宿主仍有一条既有 `__eh_frame` 链接警告。
 
 受控探针不是实际 Codex 负载，也不等同于系统输入法候选窗的人工验收；用户实机手感、真实 IME 候选窗位置及其他平台仍未复验。
+
+## 2026-11-15 · 可配置的 working 指示器
+
+working 状态原先固定为三段横线呼吸。用户查看候选后认为三段横线的视觉辨识度太差，已从选项中移除；Spectrum 与 Equalizer 过于接近，也已替换为 Vinyl（黑胶转盘）。Reduce Motion 显示所选形状的静态版本。现在 Settings → Interface 提供 `Working indicator`：Equalizer（三柱，默认）、Vinyl（黑胶转盘）、Wave（三点）、Beat（节拍环）。选择写入工作区存储的 `workingIndicator`；缺失、未知、旧 `dashes` / `spectrum` 或旧文档一律回退为 `bars`，不提升快照版本。指示器颜色跟随标签所属分组的 folder 颜色，未分组回退 `primary`。只在 `working` 且没有进度时播放；有进度时仍显示静态图标和进度线，blocked / done / error 不变。
+
+`ui/shared/WorkingIndicator.tsx` 使用 NSH `createMotion` 的 `scaleY` / `translateY` / `rotate` keyframes，30 fps，无图片资源；每个子动效在卸载时 `stop()`。设置页的四个选项本身是实时预览，对话框关闭时暂停动画。
+
+- `./scripts/nsh test --junit artifacts/working-indicator-tests.xml`：**199 / 199**，日志 `artifacts/working-indicator-tests.log`。新增快照测试覆盖缺失 / 未知 / 合法值及旧 `dashes` / `spectrum` 回退，持久化测试覆盖未知值回退后重写、界面选择后写入 `vinyl` / `beat`。
+- 原生截图：`artifacts/working-indicator-{bars,vinyl,wave,beat}.png` 与 `artifacts/working-indicator-settings.png`。使用带 purple 分组的临时 fixture，确认侧栏指示器为分组紫色而不是 primary；设置页四个选项和实时预览可见。临时 fixture 与测试已删除，日志 `artifacts/working-indicator-native.log`。`artifacts/working-indicator-{dashes,spectrum}.png` 是移除前候选的历史截图，不再作为当前选项。
+- `./scripts/nsh check`、`./scripts/nsh build`、`git diff --check` 通过；原生宿主仍有既有 `__eh_frame` 链接警告。
+- 设置页预览固定使用 primary，不随活动标签的分组颜色变化；实际侧栏按每个标签自己的分组颜色渲染。动画手感、真实 Codex working 往返和长时间 CPU 占用尚未由用户人工验收。

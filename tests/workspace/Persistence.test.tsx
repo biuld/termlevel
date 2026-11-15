@@ -194,3 +194,23 @@ test("terminal identity is saved and restored through settings", async () => {
     app.dispose();
   }
 });
+
+test("the working indicator is saved and restored through settings", async () => {
+  const app = await open("./fixtures/RestoreFixture.tsx", {
+    ...options,
+    storage: { workspace: JSON.stringify({ version: 1, workingIndicator: "nope" }) },
+  });
+  try {
+    await app.waitFor("id:empty-state");
+    // An unknown stored value falls back and is rewritten by the workspace save.
+    await app.waitUntil(() => JSON.parse(app.storage().workspace).workingIndicator === "bars");
+    await app.press("id:settings");
+    await app.press("id:settings-interface");
+    await app.press("id:working-indicator-vinyl");
+    await app.waitUntil(() => JSON.parse(app.storage().workspace).workingIndicator === "vinyl");
+    await app.press("id:working-indicator-beat");
+    await app.waitUntil(() => JSON.parse(app.storage().workspace).workingIndicator === "beat");
+  } finally {
+    app.dispose();
+  }
+});

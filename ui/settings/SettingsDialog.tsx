@@ -3,6 +3,7 @@ import { Button } from "nsh/base";
 import { AppDialog } from "../shared/controls";
 import { applyFonts, interfaceFont, interfaceFonts, monoFont, monoFonts } from "../shared/fonts";
 import { Type } from "../shared/type";
+import { WorkingIndicator, type WorkingIndicatorKind } from "../shared/WorkingIndicator";
 
 import type { TerminalIdentity } from "../workspace/workspace-snapshot";
 
@@ -15,6 +16,13 @@ const pages = [
 ] as const;
 
 type SettingsPage = typeof pages[number]["id"];
+
+const workingIndicators: { id: WorkingIndicatorKind; label: string; detail: string }[] = [
+  { id: "bars", label: "Equalizer", detail: "Three bars" },
+  { id: "vinyl", label: "Vinyl", detail: "Record" },
+  { id: "wave", label: "Wave", detail: "Three dots" },
+  { id: "beat", label: "Beat", detail: "Pulse ring" },
+];
 
 const shortcuts = [
   { label: "New terminal", keys: "mod+t" },
@@ -43,6 +51,7 @@ export function SettingsDialog(props: {
   version: string;
   preview: boolean;
   terminalIdentity: Signal<TerminalIdentity>;
+  workingIndicator: Signal<WorkingIndicatorKind>;
   scrollback: Signal<number>;
   clipboardRead: Signal<boolean>;
   scrollbackMin: number;
@@ -157,8 +166,34 @@ export function SettingsDialog(props: {
           </If>
           <If when={page() === "interface"}>
             <View class="gap-3">
-              <Type role="caption">System is the platform font. The toolbar path uses the terminal family at body size, {token("text-body")} pt.</Type>
-              <FontChoices fonts={interfaceFonts} selected={interfaceFont} testID="ui-font" onSelect={(id) => { interfaceFont.set(id); applyFonts(); }} />
+              <View class="gap-1">
+                <Type role="body">Working indicator</Type>
+                <Type role="caption">Shown while a program reports working without progress. The preview uses the default color; in the sidebar it follows the tab's group color. Reduce Motion shows a still version.</Type>
+                <View class="gap-0.5">
+                  <Each of={workingIndicators}>{(item) =>
+                    <Button testID={`working-indicator-${item().id}`}
+                      accessibilityLabel={`${item().label} working indicator`}
+                      selected={props.workingIndicator() === item().id}
+                      onPress={() => props.workingIndicator.set(item().id)}
+                      class="h-(--height-tab) flex-row items-center gap-2 rounded-(--radius-tab) px-2 hover:bg-tab-hover focus-visible:ring-2 ring-sidebar-ring"
+                      classList={{ "bg-tab-selected hover:bg-tab-selected": props.workingIndicator() === item().id }}>
+                      <WorkingIndicator kind={item().id} size={16} active={props.open} />
+                      <Text class="font-medium" style={{
+                        fontSize: token("text-body"), lineHeight: token("leading-body"),
+                        color: token(props.workingIndicator() === item().id ? "tab-selected-foreground" : "sidebar-foreground"),
+                      }}>{item().label}</Text>
+                      <Text class="ml-auto" style={{
+                        fontSize: token("text-caption"), lineHeight: token("leading-caption"),
+                        color: token("muted-foreground"),
+                      }}>{item().detail}</Text>
+                    </Button>
+                  }</Each>
+                </View>
+              </View>
+              <View class="gap-1">
+                <Type role="caption">System is the platform font. The toolbar path uses the terminal family at body size, {token("text-body")} pt.</Type>
+                <FontChoices fonts={interfaceFonts} selected={interfaceFont} testID="ui-font" onSelect={(id) => { interfaceFont.set(id); applyFonts(); }} />
+              </View>
               <View class="gap-1 rounded-(--radius-tab) bg-chrome px-3 py-2">
                 <Type role="title">Title {token("text-title")}</Type>
                 <Type role="body">Body {token("text-body")} keeps names and settings readable.</Type>

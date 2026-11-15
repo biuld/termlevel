@@ -1,4 +1,5 @@
 import { groupColorIds, type GroupColor } from "../shared/theme";
+import type { WorkingIndicatorKind } from "../shared/WorkingIndicator";
 import { nodeIds, panes, type LayoutNode, type TilingState } from "./tiling";
 
 /**
@@ -36,6 +37,7 @@ export interface SnapshotPreferences {
   appearance: Appearance;
   interfaceFont: string;
   monoFont: string;
+  workingIndicator: WorkingIndicatorKind;
 }
 
 export interface WorkspaceSnapshot {
@@ -54,9 +56,11 @@ export interface WorkspaceSnapshot {
   /** Null when the stored family is absent or not a known choice. */
   interfaceFont: string | null;
   monoFont: string | null;
+  workingIndicator: WorkingIndicatorKind;
 }
 
 const appearances: readonly string[] = ["system", "light", "dark"];
+const workingIndicators: readonly string[] = ["bars", "vinyl", "wave", "beat"];
 
 function object(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -189,6 +193,9 @@ export function parseSnapshot(raw: string): WorkspaceSnapshot | null {
       : "system",
     interfaceFont: nonEmpty(document.interfaceFont),
     monoFont: nonEmpty(document.monoFont),
+    workingIndicator: typeof document.workingIndicator === "string" && workingIndicators.includes(document.workingIndicator)
+      ? document.workingIndicator as WorkingIndicatorKind
+      : "bars",
   };
 }
 

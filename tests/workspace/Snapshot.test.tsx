@@ -119,3 +119,12 @@ test("terminal identity defaults safely for old or unknown settings", () => {
   }
   expect(parseSnapshot(JSON.stringify({ version: 1, terminalIdentity: "ghostty" }))!.terminalIdentity).toBe("ghostty");
 });
+
+test("working indicator defaults safely for old or unknown settings", () => {
+  for (const workingIndicator of [undefined, null, "unknown", "dashes", "spectrum", 4]) {
+    expect(parseSnapshot(JSON.stringify({ version: 1, workingIndicator }))!.workingIndicator).toBe("bars");
+  }
+  for (const workingIndicator of ["vinyl", "wave", "beat"]) {
+    expect(parseSnapshot(JSON.stringify({ version: 1, workingIndicator }))!.workingIndicator).toBe(workingIndicator);
+  }
+});

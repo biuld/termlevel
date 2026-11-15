@@ -15,6 +15,7 @@ import { applyFonts, interfaceFont, monoFont } from "../shared/fonts";
 import { writeWorkspaceSnapshot } from "../workspace/persistence";
 import { createWorkspace, type Workspace } from "../workspace/workspace";
 import type { Appearance, TerminalIdentity, WorkspaceSnapshot } from "../workspace/workspace-snapshot";
+import type { WorkingIndicatorKind } from "../shared/WorkingIndicator";
 
 type Editor = { title: string; value: string; save: (value: string) => void };
 
@@ -46,6 +47,7 @@ export function WorkspaceApp(props: {
   const finding = signal(false);
   const findQuery = signal("");
   const appearance = signal<Appearance>(props.snapshot?.appearance ?? "system");
+  const workingIndicator = signal<WorkingIndicatorKind>(props.snapshot?.workingIndicator ?? "bars");
   effect(() => { setColorScheme(appearance()); });
   effect(() => { applyFonts(); });
 
@@ -54,6 +56,7 @@ export function WorkspaceApp(props: {
   let lastSaved = "";
   const serializedWorkspace = () => JSON.stringify(store.snapshot({
     terminalIdentity: terminalIdentity(), appearance: appearance(), interfaceFont: interfaceFont(), monoFont: monoFont(),
+    workingIndicator: workingIndicator(),
   }));
   async function flushWorkspace() {
     if (!props.persist) return;
@@ -252,7 +255,7 @@ export function WorkspaceApp(props: {
         borderRadius: token("radius-panel"),
         boxShadow: sidebarFloating() ? [{ x: 6, y: 0, blur: 28, color: token("panel-shadow") }] : [],
       }}>
-      <Sidebar workspace={store} actions={actions} groupEditor={editingGroup} expanded={sidebarOpen} />
+      <Sidebar workspace={store} actions={actions} groupEditor={editingGroup} expanded={sidebarOpen} indicator={workingIndicator} />
     </View>
 
     <AppDialog testID="name-dialog" open={editor() !== null} label={editor()?.title ?? "Edit name"} title={editor()?.title}
@@ -324,6 +327,7 @@ export function WorkspaceApp(props: {
     }</If>
     <SettingsDialog open={settings()} dismiss={() => settings.set(false)} appearance={appearance}
       terminalIdentity={terminalIdentity} fontSize={store.fontSize} version={version} preview={preview} scrollback={store.scrollback} clipboardRead={store.clipboardRead}
+      workingIndicator={workingIndicator}
       scrollbackMin={Runtime.scrollbackMin()} scrollbackMax={Runtime.scrollbackMax()} scrollbackStep={Runtime.scrollbackStep()} />
   </TerminalEngine>;
 }

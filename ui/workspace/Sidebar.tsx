@@ -2,6 +2,7 @@ import { reduceMotion, keymap, Scroll, signal, Text, token, View, type GestureRe
 import { Button, Progress } from "nsh/base";
 import { Menu } from "nsh/desktop";
 import { Icon, type IconName } from "../shared/icons";
+import { WorkingIndicator, type WorkingIndicatorKind } from "../shared/WorkingIndicator";
 import { Hint, IconButton } from "../shared/controls";
 import type { Workspace } from "./workspace";
 import { groupColor, groupLine, groupTint } from "../shared/theme";
@@ -21,7 +22,7 @@ export interface SidebarActions {
   toggleSidebar(): void;
 }
 
-export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; groupEditor: Signal<string | null>; expanded: () => boolean }) {
+export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; groupEditor: Signal<string | null>; expanded: () => boolean; indicator: () => WorkingIndicatorKind }) {
   const store = props.workspace;
   const actions = props.actions;
   const members = (groupId: string | null) => store.tabs().filter((t) => t.groupId === groupId && !t.pinned);
@@ -206,11 +207,15 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
       const groupId = tab()?.groupId;
       return active() && groupId ? groupColor(store.group(groupId)?.color) : null;
     };
+    const workingAccent = () => {
+      const groupId = tab()?.groupId;
+      return groupId ? groupColor(store.group(groupId)?.color) : token("primary");
+    };
     const status = () => tab()?.status;
     const progress = () => status()?.progress;
     const lineIndeterminate = () => progress()?.indeterminate ?? false;
     const animateLine = () => !!progress()?.animate && !reduceMotion();
-    const working = () => status()?.state === "working" && !progress() && !reduceMotion();
+    const working = () => status()?.state === "working" && !progress();
     const statusIcon = (): IconName => {
       switch (status()?.state) {
         case "working": return "busy";
@@ -222,7 +227,8 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
     };
     const statusColor = () => {
       switch (status()?.state) {
-        case "working": case "blocked": return token("primary");
+        case "working": return workingAccent();
+        case "blocked": return token("primary");
         case "done": return token("subtle-foreground");
         case "error": case "hostError": case "exited": return token("destructive");
         default: return accent() ?? token(active() ? "icon-active" : "icon");
@@ -286,9 +292,9 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
         class="h-full min-w-0 flex-1 flex-row items-center gap-2 rounded-(--radius-tab) focus-visible:ring-2 ring-sidebar-ring"
         style={{ justifyContent: props.expanded() ? "flex-start" : "center", paddingHorizontal: props.expanded() ? 7 : 0 }}>
         <View class="flex-col items-center">
-          <View testID={`tab-status-${id}`}
-            style={working() ? { animationName: "pulse", animationDuration: "1.2s", animationIterationCount: "infinite", animationFrameRate: 30 } : undefined}>
-            <Icon name={statusIcon()} size={13} color={statusColor()} />
+          <View testID={`tab-status-${id}`}>
+            <If when={working()}><WorkingIndicator kind={props.indicator()} color={statusColor()} /></If>
+            <If when={!working()}><Icon name={statusIcon()} size={13} color={statusColor()} /></If>
           </View>
           <If when={!props.expanded()}>{progressLine(true)}</If>
         </View>
