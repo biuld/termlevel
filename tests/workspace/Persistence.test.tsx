@@ -175,3 +175,22 @@ test("corrupt storage and group-only storage both fall back to the empty guide",
   expect(groups.shows("id:tab-session-1")).toBe(false);
   groups.dispose();
 });
+
+test("terminal identity is saved and restored through settings", async () => {
+  const app = await open("./fixtures/RestoreFixture.tsx", {
+    ...options,
+    storage: { workspace: JSON.stringify({ version: 1, terminalIdentity: "ghostty" }) },
+  });
+  try {
+    await app.waitFor("id:empty-state");
+    await app.press("id:settings");
+    await app.press("id:settings-terminal");
+    expect(app.texts()).toContain("TERM_PROGRAM=ghostty");
+    await app.press("id:terminal-identity-termlevel");
+    await app.waitUntil(() => JSON.parse(app.storage().workspace).terminalIdentity === "termlevel");
+    await app.press("id:terminal-identity-ghostty");
+    await app.waitUntil(() => JSON.parse(app.storage().workspace).terminalIdentity === "ghostty");
+  } finally {
+    app.dispose();
+  }
+});

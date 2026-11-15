@@ -4,6 +4,8 @@ import { AppDialog } from "../shared/controls";
 import { applyFonts, interfaceFont, interfaceFonts, monoFont, monoFonts } from "../shared/fonts";
 import { Type } from "../shared/type";
 
+import type { TerminalIdentity } from "../workspace/workspace-snapshot";
+
 const pages = [
   { id: "appearance", label: "Appearance" },
   { id: "terminal", label: "Terminal" },
@@ -40,6 +42,7 @@ export function SettingsDialog(props: {
   fontSize: Signal<number>;
   version: string;
   preview: boolean;
+  terminalIdentity: Signal<TerminalIdentity>;
   scrollback: Signal<number>;
   clipboardRead: Signal<boolean>;
   scrollbackMin: number;
@@ -114,6 +117,27 @@ export function SettingsDialog(props: {
                 <Step testID="scrollback-less" label="Fewer scrollback lines" onPress={() => props.scrollback.update((n) => Math.max(props.scrollbackMin, n - props.scrollbackStep))}>−</Step>
                 <Type role="mono" class="w-16 text-center">{props.scrollback().toLocaleString("en-US")}</Type>
                 <Step testID="scrollback-more" label="More scrollback lines" onPress={() => props.scrollback.update((n) => Math.min(props.scrollbackMax, n + props.scrollbackStep))}>+</Step>
+              </View>
+              <View class="gap-1">
+                <Type role="body">Terminal identity</Type>
+                <Type role="caption">Choose how new terminals identify themselves to programs. Saved for the next launch; existing sessions keep their identity.</Type>
+                <View class="flex-row rounded-(--radius-tab) bg-chrome p-0.5">
+                  <Each of={["termlevel", "ghostty"] as const}>{(identity) =>
+                    <Button testID={`terminal-identity-${identity()}`}
+                      accessibilityLabel={identity() === "termlevel" ? "Termlevel default identity" : "Ghostty compatibility identity"}
+                      selected={props.terminalIdentity() === identity()}
+                      onPress={() => props.terminalIdentity.set(identity())}
+                      class="h-(--height-tab) flex-1 items-center justify-center rounded-(--radius-control) focus-visible:ring-2 ring-sidebar-ring"
+                      classList={{ "bg-sidebar": props.terminalIdentity() === identity() }}>
+                      <Text class="font-medium" style={{
+                        fontSize: token("text-label"), lineHeight: token("leading-label"),
+                        color: token(props.terminalIdentity() === identity() ? "sidebar-foreground" : "muted-foreground"),
+                      }}>{identity() === "termlevel" ? "Termlevel (default)" : "Ghostty compatibility"}</Text>
+                    </Button>
+                  }</Each>
+                </View>
+                <Type role="mono">TERM_PROGRAM={props.terminalIdentity()}</Type>
+                <Type role="caption">Compatibility mode changes the reported identity. Available terminal features are provided by Termlevel.</Type>
               </View>
               <View class="flex-row items-center gap-2">
                 <View class="min-w-0 flex-1 gap-0.5">

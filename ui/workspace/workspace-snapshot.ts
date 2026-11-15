@@ -4,9 +4,11 @@ import { nodeIds, panes, type LayoutNode, type TilingState } from "./tiling";
 /**
  * The persisted workspace structure. Sessions are not part of it: a tab keeps
  * its initial directory and title, and the next launch starts a fresh shell.
- * `version` changes whenever the shape does; older documents are discarded.
+ * Additive preferences have defaults; incompatible schema versions are discarded.
  */
 export const SNAPSHOT_VERSION = 1;
+
+export type TerminalIdentity = "termlevel" | "ghostty";
 
 export type Appearance = "system" | "light" | "dark";
 
@@ -29,6 +31,7 @@ export interface PersistedGroup {
 
 /** Settings that live outside the workspace signals but belong in the same document. */
 export interface SnapshotPreferences {
+  terminalIdentity: TerminalIdentity;
   appearance: Appearance;
   interfaceFont: string;
   monoFont: string;
@@ -45,6 +48,7 @@ export interface WorkspaceSnapshot {
   sidebarWidth: number | null;
   fontSize: number | null;
   scrollback: number | null;
+  terminalIdentity: TerminalIdentity;
   appearance: Appearance;
   /** Null when the stored family is absent or not a known choice. */
   interfaceFont: string | null;
@@ -178,6 +182,7 @@ export function parseSnapshot(raw: string): WorkspaceSnapshot | null {
     sidebarWidth: finite(document.sidebarWidth),
     fontSize: finite(document.fontSize),
     scrollback: finite(document.scrollback),
+    terminalIdentity: document.terminalIdentity === "ghostty" ? "ghostty" : "termlevel",
     appearance: typeof document.appearance === "string" && appearances.includes(document.appearance)
       ? document.appearance as Appearance
       : "system",

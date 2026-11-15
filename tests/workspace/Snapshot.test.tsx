@@ -105,3 +105,10 @@ test("a layout that would draw one terminal twice is dropped", () => {
   expect(snapshot!.layouts["group-1"]).toBe(undefined);
   expect(snapshot!.layouts["group-2"]).toBe(undefined);
 });
+
+test("terminal identity defaults safely for old or unknown settings", () => {
+  for (const terminalIdentity of [undefined, null, "unknown", 4]) {
+    expect(parseSnapshot(JSON.stringify({ version: 1, terminalIdentity }))!.terminalIdentity).toBe("termlevel");
+  }
+  expect(parseSnapshot(JSON.stringify({ version: 1, terminalIdentity: "ghostty" }))!.terminalIdentity).toBe("ghostty");
+});

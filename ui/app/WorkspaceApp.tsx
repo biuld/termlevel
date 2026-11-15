@@ -12,7 +12,7 @@ import { Type } from "../shared/type";
 import { applyFonts, interfaceFont, monoFont } from "../shared/fonts";
 import { writeWorkspaceSnapshot } from "../workspace/persistence";
 import { createWorkspace, type Workspace } from "../workspace/workspace";
-import type { Appearance, WorkspaceSnapshot } from "../workspace/workspace-snapshot";
+import type { Appearance, TerminalIdentity, WorkspaceSnapshot } from "../workspace/workspace-snapshot";
 
 type Editor = { title: string; value: string; save: (value: string) => void };
 
@@ -24,9 +24,10 @@ export function WorkspaceApp(props: {
   persist?: boolean;
 } = {}) {
   const preview = Runtime.previewMode();
+  const terminalIdentity = signal<TerminalIdentity>(props.snapshot?.terminalIdentity ?? "termlevel");
   const store = props.workspace ?? createWorkspace(preview ? undefined : {
     cwd: Runtime.cwd(), list: Sessions.list,
-    open: (cwd) => Sessions.open(cwd, token("terminal-foreground"), token("terminal-background"), props.shell),
+    open: (cwd) => Sessions.open(cwd, token("terminal-foreground"), token("terminal-background"), props.shell, terminalIdentity()),
     close: Sessions.close,
   }, { snapshot: props.snapshot ?? null });
   const win = currentWindow();
@@ -45,7 +46,7 @@ export function WorkspaceApp(props: {
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
   let lastSaved = "";
   const serializedWorkspace = () => JSON.stringify(store.snapshot({
-    appearance: appearance(), interfaceFont: interfaceFont(), monoFont: monoFont(),
+    terminalIdentity: terminalIdentity(), appearance: appearance(), interfaceFont: interfaceFont(), monoFont: monoFont(),
   }));
   async function flushWorkspace() {
     if (!props.persist) return;
@@ -295,7 +296,7 @@ export function WorkspaceApp(props: {
         });
       }} />
     <SettingsDialog open={settings()} dismiss={() => settings.set(false)} appearance={appearance}
-      fontSize={store.fontSize} version={version} preview={preview} scrollback={store.scrollback} clipboardRead={store.clipboardRead}
+      terminalIdentity={terminalIdentity} fontSize={store.fontSize} version={version} preview={preview} scrollback={store.scrollback} clipboardRead={store.clipboardRead}
       scrollbackMin={Runtime.scrollbackMin()} scrollbackMax={Runtime.scrollbackMax()} scrollbackStep={Runtime.scrollbackStep()} />
   </TerminalEngine>;
 }

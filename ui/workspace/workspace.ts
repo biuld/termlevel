@@ -13,6 +13,7 @@ export interface Tab {
   state?: string;
   exitCode?: number | null;
   error?: string | null;
+  inputWarning?: string | null;
   customTitle?: boolean;
   bell?: boolean;
 }

@@ -12,6 +12,7 @@ impl Sessions {
         foreground: Option<String>,
         background: Option<String>,
         shell: Option<String>,
+        identity: Option<String>,
     ) -> SessionInfo {
         let mut command =
             CommandBuilder::new(shell.map(PathBuf::from).unwrap_or_else(default_shell));
@@ -24,6 +25,7 @@ impl Sessions {
             cwd,
             command,
             (foreground.as_deref(), background.as_deref()),
+            identity.as_deref(),
         )
     }
 

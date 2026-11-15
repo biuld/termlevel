@@ -566,3 +566,33 @@ SessionTerminal 使用 NSH 0.5.0 的原生 on_file_drop，Rust 解码本地 file
 用户 `./scripts/nsh run` 在原生宿主链接阶段失败，致命错误是 `ld: write() failed, errno=28 (No space left on device)`；macOS 最低版本与重复库提示属于警告。现场剩余 341 MiB；target 约 40 GB，其中 target/debug/incremental 约 3.7 GB，另有 .nsh/rust/target 约 4.9 GB。
 
 仅删除这两处可再生成的缓存，保留源码、artifacts、工具与 Ghostty 下载缓存。随后 `CARGO_TARGET_DIR=/Users/biu/Projects/termlevel/target cargo build --manifest-path .nsh/rust/macos-host/Cargo.toml` 成功（含原生宿主链接，约 5 秒）；日志 artifacts/macos-host-disk-recovery.log，完成后约 7.1 GiB 可用。未启动用户工作区或声称 GUI 验收通过，原有链接警告仍在。
+
+## 2026-11-15：终端身份设置
+
+基于 `55a0afdc335d13a5befd053c5fa7f11346986500` 的未提交改动。Settings → Terminal 新增 Termlevel 默认 / Ghostty compatibility 两项选择；随 workspace v1 文档保存，旧字段缺失或未知时回退默认。身份在每次显式 open 时传入 Rust，仅影响新进程；Ghostty 模式移除版本变量，保留 xterm-256color / truecolor。未改动用户 Codex 配置或私有 pet 素材。
+
+命令使用 `GHOSTTY_VT_ARCHIVE=/tmp/termlevel-ghostty-vt-1.0.1.xcframework.zip CARGO_NET_OFFLINE=true`：
+
+- `./scripts/nsh test --junit artifacts/terminal-identity-headless.xml`：136/136，通过 Rust、文档与 headless TSX 测试，包含真实 PTY 的身份隔离、旧会话保留、未知值回退以及设置存储。日志 artifacts/terminal-identity-headless.log。首次开发检查曾漏传已有 Rust 测试调用的新参数，补齐后重跑通过；新增 UI 测试也曾把多会话输入定位到整个 panel，改为按 session ID 定位后通过。
+- 全量运行后补充了恢复 shell 的测试，并调整选中状态样式。`./scripts/nsh test tests/terminal/Session.test.tsx --filter 'terminal identity' --junit artifacts/terminal-identity-focused.xml`：2/2，真实 /bin/sh 验证切换身份后旧进程环境不变、新会话使用所选身份，以及保存的 Ghostty 身份在恢复 shell 创建前生效；日志 artifacts/terminal-identity-focused.log。
+- 最终样式下 `./scripts/nsh test tests/workspace/Persistence.test.tsx --filter 'terminal identity' --junit artifacts/terminal-identity-persistence.xml`：1/1，日志 artifacts/terminal-identity-persistence.log。
+- 原生 AppKit 自动化：将 Session.test.tsx 临时复制到根目录，修正 fixture 相对路径并在选择身份后截图，运行 `./scripts/nsh test .native-identity.test.tsx --filter 'terminal identity' --target macos --junit artifacts/terminal-identity-native.xml`：2/2。临时驱动已删除；可用 `./scripts/nsh test tests/terminal/Session.test.tsx --filter 'terminal identity' --target macos` 重跑已提交用例。日志 artifacts/terminal-identity-native.log；已查看 artifacts/terminal-identity-ghostty-native.png，选中态明确、控件与说明无裁切。沙箱初次禁止 dev server 监听，经权限流程后原生验收通过。宿主构建仍有一条链接警告。
+- 最终 `./scripts/nsh check`、`./scripts/nsh build`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings` 与 `git diff --check` 通过；对应 check/build/clippy 日志在 artifacts/terminal-identity-*.log。
+
+预览不执行真实命令或访问真实 workspace storage。上述真实 PTY 与 AppKit 结果不代表 Codex Pets 验收：未启动真实 Codex 检查 picker、持续动画、resize、切 pane 与清理；用户 shell 启动文件和 multiplexer 环境仍可能影响客户端最终检测。人工日用验收另记。
+
+## 2026-11-15：输入队列背压与提示恢复
+
+基于 `55a0afdc335d13a5befd053c5fa7f11346986500` 的未提交状态，叠加同日终端身份改动。用户截图显示 `Terminal input unavailable: sending on a full channel`。代码确认旧队列按 128 条消息限制且 try_send 拒绝会永久置 state=error；截图本身没有绑定触发事件，不能确定那次是键盘、鼠标或协议回复洪峰。
+
+Rust Session 独有的 InputQueue 改为 FIFO 总字节预算：4 MiB 待发送（含在途块）、1 MiB 单次输入、8 KiB 合并写块。生产端不等待 PTY，不会为消除排队报错而阻塞 UI / reader。超限在复制前整条拒绝，独立 inputWarning 明确提示未发送，不覆盖真实 error；只有拒绝之后接受的输入成功写入 PTY 后才恢复提示，旧在途写入不能误清。真实读写故障仍报错。关闭 / 退出清空队列并唤醒 writer，保留 Session 生命周期与默认身份设置。
+
+验证命令均使用 `GHOSTTY_VT_ARCHIVE=/tmp/termlevel-ghostty-vt-1.0.1.xcframework.zip CARGO_NET_OFFLINE=true`：
+
+- `cargo test -p termlevel-native sessions:: -- --nocapture`：18/18，通过真实 PTY 会话与队列测试。日志 artifacts/input-queue-sessions.log。确定性测试覆盖 20,000 次单字节输入保序、4 MiB 饱和（含在途字节）、拒绝不部分写入、旧写入不清新警告、后续输入恢复以及关闭唤醒。
+- 新增 tests/probes/input_backpressure_probe.py：raw PTY 连续输出 20,000 次光标查询，发完后才读取输入，逐字节核对全部 120,000 字节回复与顺序。Rust 直启探针和 UI 启动均通过。该受控客户端不是用户截图中的真实 Codex。
+- `./scripts/nsh test --junit artifacts/input-queue-headless.xml`：144/144，通过 Rust / doc tests / headless TSX，含两项 InputBackpressure 测试：真实 /bin/sh 的超限粘贴警告与后续输入恢复，以及上述查询洪峰。日志 artifacts/input-queue-headless.log。初次专项测试为 1/2：工作区 shell 默认在 home，找不到相对探针路径；改用从项目目录启动的 ProtocolsFixture 后全量通过，保留初次日志 artifacts/input-queue-ui.log。
+- `./scripts/nsh test tests/terminal/InputBackpressure.test.tsx --target macos --junit artifacts/input-queue-native.xml`：2/2，同样的两项行为在原生 AppKit 窗口与真实 PTY 通过。日志 artifacts/input-queue-native.log。宿主构建仍有一条链接警告。
+- `./scripts/nsh check`、`./scripts/nsh build`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`git diff --check` 均通过。check/build/clippy 日志分别为 artifacts/input-queue-{check,build,clippy}.log。
+
+未关闭或重启用户正在使用的终端。Rust 改动需重启应用后生效，当前运行实例不会热替换。真实 Codex 持续日用和截图中那次具体事件源尚未复现；不把上述自动化当作人工验收。有限内存无法保证永久不读输入的客户端无限接收，真正超过预算仍明确拒绝且要求重试，不静默丢弃、不无限扩容。

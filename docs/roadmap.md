@@ -75,6 +75,8 @@
 
 完成标准：Neovim、tmux、less、top 以及常用 agent CLI 的真实使用验证；中文 / 组合字符 / emoji、ANSI / truecolor、备用屏幕、鼠标、滚动历史与重排有对应证据。测量大量输出和多会话时的响应、内存、帧耗时。图片协议按独立能力评估。
 
+- [x] 设置中提供 Termlevel 默认身份与 Ghostty 兼容身份，持久化并仅应用于新会话；真实 Codex Pets 的显示、持续动画与生命周期仍待独立验收。
+
 ## M4 · 日常使用与发布
 
 - 会话配置、搜索回滚历史、链接、shell integration。

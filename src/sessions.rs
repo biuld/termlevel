@@ -7,7 +7,6 @@ use std::{
     sync::{
         Arc, Mutex, OnceLock, Weak,
         atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc::{self, SyncSender},
     },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -18,6 +17,9 @@ use nsh_core::prelude::*;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 use crate::terminal::{BackendEvent, GhosttyEmulator, Rgb};
+
+mod input_queue;
+use input_queue::InputQueue;
 
 /// Low-frequency session metadata. No terminal output crosses this interface.
 #[derive(Debug, Clone, PartialEq, JsObject)]
@@ -34,6 +36,8 @@ pub struct SessionInfo {
     pub exit_code: Option<u32>,
     /// Startup or I/O error, when one occurred.
     pub error: Option<String>,
+    /// Recoverable input rejection, independent of process failure.
+    pub input_warning: Option<String>,
     /// Diagnostic PID only. Never used as the session identity.
     pub pid: Option<u32>,
 }
@@ -50,7 +54,6 @@ pub(crate) enum MouseReport {
 struct Control {
     master: Option<Box<dyn MasterPty + Send>>,
     child: Box<dyn Child + Send + Sync>,
-    input: Option<SyncSender<Vec<u8>>>,
 }
 
 pub(crate) struct Session {
@@ -61,6 +64,7 @@ pub(crate) struct Session {
     input_wait_ns: AtomicU64,
     input_total_ns: AtomicU64,
     input_count: AtomicU64,
+    input: InputQueue,
     info: Mutex<SessionInfo>,
     control: Mutex<Control>,
     closed: AtomicBool,
@@ -74,12 +78,20 @@ impl Session {
         mut command: CommandBuilder,
         colors: (Option<&str>, Option<&str>),
         scrollback: usize,
+        identity: Option<&str>,
     ) -> Result<Arc<Self>, String> {
         command.cwd(&cwd);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
-        command.env("TERM_PROGRAM", "termlevel");
-        command.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+        // Identity is a compatibility hint, not a change of terminal engine.
+        // Only known profiles are accepted, including at the native boundary.
+        if identity == Some("ghostty") {
+            command.env("TERM_PROGRAM", "ghostty");
+            command.env_remove("TERM_PROGRAM_VERSION");
+        } else {
+            command.env("TERM_PROGRAM", "termlevel");
+            command.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+        }
         let emulator = GhosttyEmulator::try_new(TerminalSize::default(), scrollback)?;
         let pair = native_pty_system()
             .openpty(PtySize::default())
@@ -95,7 +107,6 @@ impl Session {
             .map_err(|e| e.to_string())?;
         drop(pair.slave);
         let pid = child.process_id();
-        let (input, receive) = mpsc::sync_channel::<Vec<u8>>(128);
         let session = Arc::new(Self {
             emulator: Mutex::new(emulator),
             revision: AtomicU64::new(1),
@@ -104,6 +115,7 @@ impl Session {
             input_wait_ns: AtomicU64::new(0),
             input_total_ns: AtomicU64::new(0),
             input_count: AtomicU64::new(0),
+            input: InputQueue::default(),
             info: Mutex::new(SessionInfo {
                 id,
                 cwd,
@@ -111,12 +123,12 @@ impl Session {
                 state: "running".into(),
                 exit_code: None,
                 error: None,
+                input_warning: None,
                 pid,
             }),
             control: Mutex::new(Control {
                 master: Some(pair.master),
                 child,
-                input: Some(input),
             }),
             closed: AtomicBool::new(false),
             workers: Mutex::new(Vec::new()),
@@ -155,12 +167,10 @@ impl Session {
         let write_session = session.clone();
         let write_thread = thread::spawn(move || {
             while !write_session.closed.load(Ordering::Acquire) {
-                let data = match receive.recv_timeout(Duration::from_millis(25)) {
-                    Ok(data) => data,
-                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                let Some(batch) = write_session.input.next() else {
+                    break;
                 };
-                let mut remaining = data.as_slice();
+                let mut remaining = batch.bytes.as_slice();
                 while !remaining.is_empty() && !write_session.closed.load(Ordering::Acquire) {
                     match writer.write(remaining) {
                         Ok(0) => {
@@ -182,6 +192,9 @@ impl Session {
                         }
                     }
                 }
+                if remaining.is_empty() && write_session.input.delivered(&batch) {
+                    write_session.revision.fetch_add(1, Ordering::Release);
+                }
             }
         });
 
@@ -200,7 +213,7 @@ impl Session {
                         if !wait_session.closed.load(Ordering::Acquire) {
                             info.state = "exited".into();
                         }
-                        control.input.take();
+                        wait_session.input.close();
                         wait_session.revision.fetch_add(1, Ordering::Release);
                         break;
                     }
@@ -283,7 +296,9 @@ impl Session {
     }
 
     pub(crate) fn info(&self) -> SessionInfo {
-        self.info.lock().unwrap().clone()
+        let mut info = self.info.lock().unwrap().clone();
+        info.input_warning = self.input.warning();
+        info
     }
 
     pub(crate) fn set_colors(&self, foreground: Option<&str>, background: Option<&str>) {
@@ -313,21 +328,8 @@ impl Session {
         if self.closed.load(Ordering::Acquire) || self.info.lock().unwrap().exit_code.is_some() {
             return;
         }
-        // Bound pending input. A rejected paste is visible instead of silently
-        // truncating data or blocking the engine behind a stalled process.
-        if bytes.len() > 1024 * 1024 {
-            self.fail("Paste exceeds the 1 MiB input limit".into());
-            return;
-        }
-        let result = self
-            .control
-            .lock()
-            .unwrap()
-            .input
-            .as_ref()
-            .map(|input| input.try_send(bytes.to_vec()));
-        if let Some(Err(error)) = result {
-            self.fail(format!("Terminal input unavailable: {error}"));
+        if self.input.push(bytes).is_err() {
+            self.revision.fetch_add(1, Ordering::Release);
         }
     }
 
@@ -516,7 +518,7 @@ impl Session {
         if running {
             let _ = control.child.kill();
         }
-        control.input.take();
+        self.input.close();
         control.master.take();
         self.info.lock().unwrap().state = "closed".into();
         self.revision.fetch_add(1, Ordering::Release);
@@ -569,7 +571,7 @@ impl Default for SessionManager {
 impl SessionManager {
     #[cfg(test)]
     fn open(&mut self, cwd: String, command: CommandBuilder) -> SessionInfo {
-        self.open_with_colors(cwd, command, (None, None))
+        self.open_with_colors(cwd, command, (None, None), None)
     }
 
     fn open_with_colors(
@@ -577,6 +579,7 @@ impl SessionManager {
         cwd: String,
         command: CommandBuilder,
         colors: (Option<&str>, Option<&str>),
+        identity: Option<&str>,
     ) -> SessionInfo {
         static SEQUENCE: AtomicU64 = AtomicU64::new(1);
         let time = SystemTime::now()
@@ -589,7 +592,7 @@ impl SessionManager {
         );
         let scrollback = self.scrollback;
         let entry = match resolve_cwd(&cwd)
-            .and_then(|cwd| Session::start(id.clone(), cwd, command, colors, scrollback))
+            .and_then(|cwd| Session::start(id.clone(), cwd, command, colors, scrollback, identity))
         {
             Ok(session) => Entry::Session(session),
             Err(error) => Entry::Failed(SessionInfo {
@@ -599,6 +602,7 @@ impl SessionManager {
                 state: "error".into(),
                 exit_code: None,
                 error: Some(error),
+                input_warning: None,
                 pid: None,
             }),
         };

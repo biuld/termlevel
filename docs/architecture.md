@@ -77,6 +77,12 @@ reader 直接将原始字节送入同一个 Rust/C parser，保留跨 chunk 的 
 
 同步输出由 mode 2026 的原生回调在确切边界捕获可见屏幕和屏幕身份。已挂载的贴底 surface 可推进到 hold 开始边界保存的完整帧，同一边界复用 Arc；历史窗口保持冻结。初次绑定同样展示 held 帧，不采样事务中的实时屏幕。正常结束、150 ms 超时和 EOF 都会提交输出。真实库测试确认 1.0.1 原生 resize 也会结束 hold，随后发布新尺寸。安全层会让独立 renderer 在回调消费 dirty state 后重新建立快照，避免把一次渲染的状态误当成另一个 renderer 已处理。PTY 与网格 resize 仍在同一个 emulator 锁内完成，防止 SIGWINCH 后的新尺寸输出落入旧尺寸网格。
 
+### 终端身份
+
+Settings → Terminal 的 Terminal identity 默认是 Termlevel，也可显式选择 Ghostty compatibility。应用接线持有该偏好，随工作区文档保存，并在创建工作区前读取，以便启动恢复的新 shell 使用所选身份。旧文档缺少该字段或字段未知时回退 Termlevel，保留 schema v1 和既有布局。
+
+每次 `Sessions.open` 单独传入身份，由 Rust 在 spawn 前白名单映射：两种模式均设置 `TERM=xterm-256color` 和 `COLORTERM=truecolor`；默认设置 `TERM_PROGRAM=termlevel` 与应用版本，兼容模式设置 `TERM_PROGRAM=ghostty` 并移除 `TERM_PROGRAM_VERSION`，不伪造 Ghostty 版本。shell 启动文件仍可能覆盖环境。设置变化不修改已有会话、不创建或重启进程，也不改变 Ghostty 协议解析与原生 renderer。身份覆盖仅供客户端识别兼容，不代表被模拟终端的全部能力或真实 Codex Pets 已通过验收。
+
 ## 生命周期与并发
 
 `SessionManager` 在 Rust 中独立于视图持有会话。只有 `Sessions.open` 创建进程；`SessionTerminal` 只能按 ID 获取已有会话，已关闭或丢失的 ID 返回错误，不会隐式重新创建进程。ID 由 Rust 生成，与标题、排序、分组、选择、PID 和视图位置无关。
@@ -89,7 +95,7 @@ reader 直接将原始字节送入同一个 Rust/C parser，保留跨 chunk 的 
 - 关闭主窗口或退出应用调用 `Sessions.shutdown`。Unix 上结束前台进程组，向 shell 发送 HUP，让它清理普通后台作业；50 ms 后仍未退出则强制结束 shell。主动脱离终端会话的 daemon 不属于可恢复会话模型。
 - child 的检查、终止和回收共用控制锁，避免对已回收并可能复用的 PID 发信号。关闭后 reader/writer 取消，reaper 回收 child；应用退出在 NSH 的 200 ms 清理预算内轮询 `Sessions.settled()`。
 
-reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I/O；reader 以 8 KiB 块解析，writer 的输入队列最多 128 个请求，单次输入上限 1 MiB，拒绝会显示错误，不静默截断。每个会话只有一个 16 ms 帧调度：同一轮最多观察一次输出 revision 与输入代际，并把窗口、悬停、宿主拖选、选区、尺寸、查找 reveal 合并为至多一次采样与发布；事件处理器只登记失效，不直接捕获。亚行滚轮的整数位移与小数余量都保留，报告滚轮不再按单次 32 行截断，而是分块写入且不丢位移。工作区传入低频 visible 属性；隐藏 pane 暂停抓帧、动画推进和查找，恢复可见时立即刷新，非活动但可见的 pane 仍继续绘制。视图刷新计时器随视图销毁，会话工作线程不会随之销毁。
+reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I/O；reader 以 8 KiB 块解析，writer 使用每会话独有的 FIFO 字节队列：总待发送上限 4 MiB（含 writer 持有的未完成块），单次输入上限 1 MiB，相邻小输入合入最多 8 KiB 的写块。生产端只做有界拷贝并唤醒 writer，不等待子进程读取；键盘、粘贴、鼠标与协议回复共享顺序，PTY 短写 / WouldBlock 保留剩余数据。超限整条拒绝，通过独立 inputWarning 提示未发送和重试，不把运行中的会话标为失败。只有在拒绝之后接受的输入成功写入后才清除此提示，拒绝前的在途写入不能误清；真实读写故障仍由 error/state 表达。关闭和进程退出清空队列并唤醒等待线程。每个会话只有一个 16 ms 帧调度：同一轮最多观察一次输出 revision 与输入代际，并把窗口、悬停、宿主拖选、选区、尺寸、查找 reveal 合并为至多一次采样与发布；事件处理器只登记失效，不直接捕获。亚行滚轮的整数位移与小数余量都保留，报告滚轮不再按单次 32 行截断，而是分块写入且不丢位移。工作区传入低频 visible 属性；隐藏 pane 暂停抓帧、动画推进和查找，恢复可见时立即刷新，非活动但可见的 pane 仍继续绘制。视图刷新计时器随视图销毁，会话工作线程不会随之销毁。
 
 `SessionTerminal` 通过 NSH 0.5.0 的 Native Components 公开接口嵌入应用自己的 NSView。src/lib.rs 的 #[native_components(macos)] 同时供开发与打包宿主注册；无需修改框架。测量视图是唯一 PTY resize 输入，格子宽高来自当前 Frame 行列数；剩余像素留在格子外。贴底 origin=line_count-Frame.rows，ED2 保留的历史不能切入屏幕。绘制规则与验收边界见 [终端格网设计](terminal-grid.md)。
 

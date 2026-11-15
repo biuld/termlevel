@@ -107,3 +107,63 @@ test("real terminal find publishes bounded Unicode results and replaces an older
     await closeWindow(app);
   }
 });
+
+test("terminal identity changes apply to new shells while the existing shell survives", async () => {
+  const app = await open("./fixtures/IdentityFixture.tsx", options);
+  let currentId = "";
+  const newestSession = async () => {
+    await app.press("id:read-identities");
+    const ids: string[] = JSON.parse(app.texts().find(text => text.startsWith('["session-')) ?? "[]");
+    currentId = ids[ids.length - 1];
+  };
+  const report = async (marker: string) => {
+    await app.type(`id:terminal-${currentId}`, `printf '${marker}=%s\\n' "$TERM_PROGRAM"`);
+    await app.keyboard.press("enter");
+  };
+  const choose = async (identity: string) => {
+    await app.press("id:settings");
+    await app.press("id:settings-terminal");
+    await app.press(`id:terminal-identity-${identity}`);
+    await app.press("label:Close settings");
+  };
+  try {
+    await app.waitFor("id:empty-new-terminal");
+    await app.press("id:empty-new-terminal");
+    await newestSession();
+    await report("INITIAL");
+    await waitForOutput(app, "INITIAL=termlevel");
+    await choose("ghostty");
+    await report("EXISTING");
+    await waitForOutput(app, "EXISTING=termlevel");
+    await app.keyboard.press("mod+t");
+    await newestSession();
+    await report("COMPAT");
+    await waitForOutput(app, "COMPAT=ghostty");
+    await choose("termlevel");
+    await app.keyboard.press("mod+t");
+    await newestSession();
+    await report("DEFAULT");
+    await waitForOutput(app, "DEFAULT=termlevel");
+  } finally {
+    await closeWindow(app);
+  }
+});
+
+test("restored shells use the saved terminal identity before they start", async () => {
+  const app = await open("./fixtures/IdentityFixture.tsx", {
+    ...options,
+    storage: { workspace: JSON.stringify({
+      version: 1, terminalIdentity: "ghostty",
+      tabs: [{ id: "old-session", title: "Saved", cwd: "/tmp", groupId: null, pinned: false, customTitle: false }],
+      activeTabId: "old-session",
+    }) },
+  });
+  try {
+    await app.waitFor("id:session-path");
+    await app.type("id:session-panel", "printf 'RESTORED=%s\\n' \"$TERM_PROGRAM\"");
+    await app.keyboard.press("enter");
+    await waitForOutput(app, "RESTORED=ghostty");
+  } finally {
+    await closeWindow(app);
+  }
+});

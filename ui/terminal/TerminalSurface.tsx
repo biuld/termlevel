@@ -80,14 +80,14 @@ export function TerminalSurface(props: {
           return;
         }
         store.patchTab(id, {
-          state: info.state, exitCode: info.exitCode, error: info.error,
+          state: info.state, exitCode: info.exitCode, error: info.error, inputWarning: info.inputWarning,
           ...(!tab()?.customTitle && info.title ? { title: info.title } : {}),
         });
       }} />
-    <If when={tab()?.state === "exited" || tab()?.state === "error"}>
+    <If when={tab()?.state === "exited" || tab()?.state === "error" || !!tab()?.inputWarning}>
       <View class="shrink-0 border-t border-border bg-popover px-3 py-2">
         <Text testID={`session-status-${id}`} class="text-(length:--text-label) text-muted-foreground">
-          {tab()?.error ?? `Process exited with code ${tab()?.exitCode ?? "unknown"}. Open a new terminal to continue.`}
+          {tab()?.error ?? tab()?.inputWarning ?? `Process exited with code ${tab()?.exitCode ?? "unknown"}. Open a new terminal to continue.`}
         </Text>
       </View>
     </If>

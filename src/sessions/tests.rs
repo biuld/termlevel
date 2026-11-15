@@ -159,7 +159,12 @@ fn real_pty_color_queries_use_the_ui_theme_before_first_paint() {
     let expected = b"\x1b]11;rgb:1010/2020/3030\x1b\\";
     let mut command = CommandBuilder::new("/bin/sh");
     command.args(["-c", &format!("stty raw -echo; printf '\\033]11;?\\033\\\\'; dd bs=1 count={} 2>/dev/null | od -An -tx1", expected.len())]);
-    let info = manager.open_with_colors("/tmp".into(), command, (Some("#abcdef"), Some("#102030")));
+    let info = manager.open_with_colors(
+        "/tmp".into(),
+        command,
+        (Some("#abcdef"), Some("#102030")),
+        None,
+    );
     let session = manager.get(&info.id).unwrap();
     let bytes = expected
         .iter()
@@ -318,4 +323,82 @@ fn manager_shutdown_terminates_all_owned_processes() {
     wait_for(|| finished(&first) && finished(&second));
     assert_eq!(first.info().state, "closed");
     assert_eq!(second.info().state, "closed");
+}
+
+#[test]
+fn terminal_identity_is_per_session_and_does_not_claim_a_ghostty_version() {
+    let mut manager = SessionManager::default();
+    let open = |manager: &mut SessionManager, identity| {
+        let mut command = CommandBuilder::new("/bin/sh");
+        command.args(["-c", "stty -echo; exec /bin/sh -i"]);
+        command.env("PS1", "");
+        // A launcher's identity must not leak through either profile.
+        command.env("TERM_PROGRAM", "inherited-terminal");
+        command.env("TERM_PROGRAM_VERSION", "999.0");
+        let info = manager.open_with_colors("/tmp".into(), command, (None, None), identity);
+        assert_eq!(info.state, "running", "{:?}", info.error);
+        manager.get(&info.id).unwrap()
+    };
+    let native = open(&mut manager, None);
+    let compatibility = open(&mut manager, Some("ghostty"));
+    let fallback = open(&mut manager, Some("unknown"));
+    let report = b"printf 'IDENTITY=%s;VERSION=%s;TERM=%s;COLOR=%s\\n' \"$TERM_PROGRAM\" \"${TERM_PROGRAM_VERSION-unset}\" \"$TERM\" \"$COLORTERM\"\n";
+    // Report from the old session after opening the compatibility session.
+    native.input(report);
+    compatibility.input(report);
+    fallback.input(report);
+    let native_report = format!(
+        "IDENTITY=termlevel;VERSION={};TERM=xterm-256color;COLOR=truecolor",
+        env!("CARGO_PKG_VERSION")
+    );
+    wait_for(|| output(&native).contains(&native_report));
+    wait_for(|| output(&fallback).contains(&native_report));
+    wait_for(|| {
+        output(&compatibility)
+            .contains("IDENTITY=ghostty;VERSION=unset;TERM=xterm-256color;COLOR=truecolor")
+    });
+    assert_ne!(native.info().id, compatibility.info().id);
+    manager.shutdown();
+    wait_for(|| finished(&native) && finished(&compatibility) && finished(&fallback));
+}
+
+#[test]
+fn reply_storm_survives_a_client_that_reads_only_after_writing_all_queries() {
+    let mut manager = SessionManager::default();
+    let mut command = CommandBuilder::new("/usr/bin/python3");
+    command.arg(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/probes/input_backpressure_probe.py"
+    ));
+    let info = manager.open("/tmp".into(), command);
+    let session = manager.get(&info.id).unwrap();
+    wait_for(|| session.info().exit_code.is_some());
+    assert_eq!(session.info().exit_code, Some(0), "{}", output(&session));
+    wait_for(|| output(&session).contains("INPUT_REPLIES_OK count=20000"));
+    assert_eq!(session.info().error, None);
+    assert_eq!(session.info().input_warning, None);
+    manager.shutdown();
+    wait_for(|| finished(&session));
+}
+
+#[test]
+fn rejected_paste_is_a_warning_and_a_later_delivered_input_clears_it() {
+    let mut manager = SessionManager::default();
+    let session = shell(&mut manager);
+    session.input(&vec![b'x'; input_queue::INPUT_LIMIT + 1]);
+    assert_eq!(session.info().state, "running");
+    assert_eq!(session.info().error, None);
+    assert!(
+        session
+            .info()
+            .input_warning
+            .unwrap()
+            .contains("paste exceeds")
+    );
+    session.input(b"printf 'AFTER_REJECT_%s\\n' OK\n");
+    wait_for(|| output(&session).contains("AFTER_REJECT_OK"));
+    wait_for(|| session.info().input_warning.is_none());
+    assert_eq!(session.info().state, "running");
+    manager.shutdown();
+    wait_for(|| finished(&session));
 }
