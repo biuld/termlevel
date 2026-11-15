@@ -259,6 +259,115 @@ fn synchronized_output_is_atomic_and_has_a_timeout() {
 }
 
 #[test]
+fn synchronized_image_replacement_keeps_the_previous_pixels_until_commit() {
+    let mut term = GhosttyEmulator::new(TerminalSize::new(80, 24), 100);
+    term.resize_cells(TerminalSize::new(80, 24), 8, 16);
+    let mut window = crate::session_view::window::Window::default();
+    term.feed(b"\x1b_Ga=T,f=32,s=1,v=1,c=2,r=2,i=49374;/wAA/w==\x1b\\");
+    let mut previous = term
+        .begin_window(&mut window, false, None)
+        .unwrap()
+        .finish();
+    assert_eq!(previous.images.len(), 1);
+    for n in 0..20 {
+        term.feed(b"\x1b[?2026h");
+        term.feed(b"\x1b_Ga=d,d=I,i=49374,q=2;\x1b\\");
+        let held = term
+            .begin_window(&mut window, false, Some(&previous))
+            .unwrap()
+            .finish();
+        assert_eq!(held.images.len(), 1, "held replacement {n}");
+        assert_eq!(
+            &*held.images[0].pixels.rgba,
+            &*previous.images[0].pixels.rgba
+        );
+        let payload = if n % 2 == 0 { "AP8A/w==" } else { "/wAA/w==" };
+        term.feed(
+            format!("\x1b[H\x1b_Ga=T,f=32,s=1,v=1,c=2,r=2,i=49374;{payload}\x1b\\\x1b[?2026l")
+                .as_bytes(),
+        );
+        previous = term
+            .begin_window(&mut window, false, Some(&held))
+            .unwrap()
+            .finish();
+        assert_eq!(previous.images.len(), 1, "committed replacement {n}");
+        let expected = if n % 2 == 0 {
+            [0, 255, 0, 255]
+        } else {
+            [255, 0, 0, 255]
+        };
+        assert_eq!(
+            &*previous.images[0].pixels.rgba, &expected,
+            "replacement {n}"
+        );
+    }
+}
+
+#[test]
+fn active_chunked_image_transfer_survives_the_initial_sync_deadline() {
+    use crate::session_view::window::Window;
+    let mut term = emulator(20, 3, 0);
+    term.resize_cells(TerminalSize::new(20, 3), 8, 16);
+    term.feed(b"\x1b_Ga=T,f=32,s=1,v=1,c=1,r=1,i=42;/wAA/w==\x1b\\\x1b[H");
+    let mut window = Window::default();
+    let previous = term.capture_window(&mut window, false, None).unwrap();
+    term.feed(b"\x1b[?2026h\x1b[?25l\x1b_Ga=d,d=I,i=42;\x1b\\");
+    let since = term.state.borrow().terminal.render_hold().unwrap().since;
+    let original_deadline = term.sync_deadline().unwrap();
+    // Like Codex, delete the old image and stream the replacement in Kitty
+    // chunks while the cursor is temporarily hidden. The total transfer lasts
+    // longer than 150 ms, but every inter-chunk gap is shorter than that.
+    for (ms, chunk) in [
+        (
+            100,
+            &b"\x1b_Ga=T,f=32,s=1,v=1,c=1,r=1,i=42,m=1;AP8A\x1b\\"[..],
+        ),
+        (200, &b"\x1b_Gm=1;/w==\x1b\\"[..]),
+    ] {
+        let now = since + Duration::from_millis(ms);
+        term.feed_at(chunk, now);
+        assert!(!term.flush_sync(now, false));
+        let held = term
+            .capture_window(&mut window, false, Some(&previous))
+            .unwrap();
+        assert_eq!(&*held.images[0].pixels.rgba, &[255, 0, 0, 255]);
+        assert!(held.frame.cursor.visible);
+    }
+    assert!(term.sync_deadline().unwrap() > original_deadline);
+    term.feed_at(
+        b"\x1b_Gm=0;\x1b\\\x1b[H\x1b[?25h\x1b[?2026l",
+        since + Duration::from_millis(250),
+    );
+    let next = term
+        .capture_window(&mut window, false, Some(&previous))
+        .unwrap();
+    assert_eq!(&*next.images[0].pixels.rgba, &[0, 255, 0, 255]);
+    assert!(next.frame.cursor.visible);
+    assert!(term.sync_deadline().is_none());
+}
+
+#[test]
+fn sync_watchdog_flushes_idle_output_and_bounds_continuous_output() {
+    let mut term = emulator(20, 3, 0);
+    term.feed(b"\x1b[?2026hA");
+    let since = term.state.borrow().terminal.render_hold().unwrap().since;
+    term.feed_at(b"B", since + Duration::from_millis(100));
+    assert!(!term.flush_sync(since + Duration::from_millis(200), false));
+    assert!(term.flush_sync(since + Duration::from_millis(250), false));
+    assert_eq!(term.line(0).text(), "AB");
+
+    term.feed(b"\x1b[?2026h");
+    let since = term.state.borrow().terminal.render_hold().unwrap().since;
+    for ms in (100..=1000).step_by(100) {
+        let now = since + Duration::from_millis(ms);
+        term.feed_at(b"C", now);
+        assert_eq!(term.flush_sync(now, false), ms == 1000);
+    }
+    assert!(!term.render_held());
+    assert!(term.line(0).text().ends_with("CCCCCCCCCC"));
+}
+
+#[test]
 fn synchronized_snapshot_does_not_consume_another_renderers_dirty_rows() {
     let mut term = emulator(20, 3, 10);
     term.feed(b"old");

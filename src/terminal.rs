@@ -170,6 +170,9 @@ struct State {
     background: Rgb,
     /// When the playing Kitty animation next needs a frame. `None` if idle.
     next_image_frame: Option<u64>,
+    /// Last PTY activity, used by the render-hold watchdog. Active chunked
+    /// transfers must not be committed just because their first byte is old.
+    last_output: Instant,
     /// Last OSC 22 shape, used to publish only changes.
     mouse_shape: MouseShape,
     errors: Vec<String>,
@@ -304,6 +307,7 @@ impl GhosttyEmulator {
                     foreground,
                     background,
                     next_image_frame: None,
+                    last_output: Instant::now(),
                     mouse_shape,
                     errors: Vec::new(),
                 }),
@@ -372,12 +376,28 @@ impl GhosttyEmulator {
         events.extend(state.errors.drain(..).map(BackendEvent::Error));
         events
     }
-    pub(crate) fn sync_deadline(&self) -> Option<Instant> {
-        self.state
-            .borrow()
+    fn feed_at(&mut self, bytes: &[u8], now: Instant) {
+        let state = self.state.get_mut();
+        if !bytes.is_empty() {
+            state.last_output = now;
+        }
+        if let Err(error) = state
             .terminal
-            .render_hold()
-            .map(|hold| hold.since + Duration::from_millis(150))
+            .write(bytes)
+            .map_err(|e| e.to_string())
+            .and_then(|_| state.update())
+        {
+            state.errors.push(error);
+        }
+    }
+    pub(crate) fn sync_deadline(&self) -> Option<Instant> {
+        let state = self.state.borrow();
+        state.terminal.render_hold().map(|hold| {
+            // Recover promptly from a missing end marker once output stops,
+            // while bounding even a producer that never stops writing.
+            let idle = state.last_output.max(hold.since) + Duration::from_millis(150);
+            idle.min(hold.since + Duration::from_secs(1))
+        })
     }
     pub(crate) fn flush_sync(&mut self, now: Instant, force: bool) -> bool {
         let Some(deadline) = self.sync_deadline() else {
@@ -964,15 +984,7 @@ fn grid_runs_from(
 }
 impl TerminalEmulator for GhosttyEmulator {
     fn feed(&mut self, bytes: &[u8]) {
-        let state = self.state.get_mut();
-        if let Err(error) = state
-            .terminal
-            .write(bytes)
-            .map_err(|e| e.to_string())
-            .and_then(|_| state.update())
-        {
-            state.errors.push(error);
-        }
+        self.feed_at(bytes, Instant::now());
     }
     fn resize(&mut self, size: TerminalSize) {
         self.resize_cells(size, 0, 0);

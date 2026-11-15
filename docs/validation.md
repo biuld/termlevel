@@ -743,3 +743,17 @@ Rust Session 独有的 InputQueue 改为 FIFO 总字节预算：4 MiB 待发送�
 上一版通知主文使用对话框 title 字级 15 / 20，与普通界面 body 12 / 16 不一致。本次在 NotificationRow 统一主文与上下文为 body，只用字重、颜色和图标表达重点；长内容展开仅切换字重，不改变字号或行高。字体族继续由 Type 读取 interfaceFont，来源 / 时间继续使用现有 caption 字级；不修改全局对话框 title token。
 
 `./scripts/nsh check`、`./scripts/nsh build`、`git diff --check` 通过（日志 `artifacts/notification-type-{check,build}.log`）；通知专项 6/6（`artifacts/notification-type-focused.{log,xml}`）；`./scripts/test-native notifications` 2/2（`artifacts/notification-type-native.log`、`artifacts/notifications-native.xml`）。已重新查看原生深色通知和浅色 360 pt 窄窗口截图，主文与侧栏 / 普通界面文字字级一致。原生宿主仍有既有链接警告；本次未重跑与字级无关的完整 Rust / 工作区套件，上一节 194/194 为此前记录。
+
+## 2026-11-15 · Codex pet 消失与同步刷新看门狗
+
+基于 `4090aa6` 的未提交改动。真实 Codex 0.169.0 的右下角 Kitty pet 先删除旧图，再分块传输新图；旧看门狗从 mode 2026 开始固定计时 150 ms，传输仍在继续也会提交事务中的状态。原生逐帧日志实际捕获 `SYNC_TIMEOUT force=false` 后 `DRAW images=0 frameimages=0`，随后恢复为 1。提前提交也可能暴露事务中临时隐藏的光标。
+
+看门狗改为最后一段非空 PTY 输出后静默 150 ms 才提交，单次 hold 最长 1 s。正常结束标记、EOF、resize 仍按原有通路释放；边界快照和会话生命周期不变。
+
+- 确定性回归：250 ms 分块 Kitty 替换期间保留旧红像素和可见光标，提交后显示绿像素；另验静默释放和持续输出 1 s 上限。将截止时间临时恢复为旧固定 150 ms 后，`active_chunked_image_transfer_survives_the_initial_sync_deadline` 在传输期间失败；恢复修复后通过。旧策略失败日志：`artifacts/pets-watchdog-regression-before.log`。
+- 真实 PTY / 原生自动化：临时原生用例打开生产 `WorkspaceFixture.tsx`，执行 `TERM_PROGRAM=ghostty codex`，空闲观察 20 s；无提交 prompt。临时逐绘制图片数量和超时诊断已移除。修复前 89 个绘制帧中，pet 首次出现后 2 帧图片为空，23 次超时；修复后 110 个绘制帧中没有图片空帧或超时。日志 `artifacts/pets-watchdog-{before,after}-draw.log`、`artifacts/pets-watchdog-native.log`；截图 `artifacts/pets-trace.png`。计数是有界实测，不等于长时间日用验收。
+- `cargo test -p termlevel-native terminal::tests -- --nocapture`：31/31。包括连续换图、分块替换、光标可见性、空闲超时、持续输出上限、相邻同步事务和历史窗口冻结。
+
+安装中的 `/Applications/Termlevel.app` 未替换，用户人工验收仍待进行；正常的光标定时闪烁不作为 pet 消失证据。首轮排查把未设置 cell 像素尺寸的测试误认成 hold 快照丢图，补齐尺寸后排除；最终修复依据为真实原生空帧与超时关联，以及旧看门狗下失败的分块回归。
+
+最终检查：`./scripts/nsh check`、`./scripts/nsh build`、`cargo fmt --all -- --check`、`git diff --check` 通过；`./scripts/nsh test --junit artifacts/pets-watchdog-tests.xml` 在沙箱外运行，197/197（`artifacts/pets-watchdog-tests.log`）。`cargo clippy --workspace --all-targets -- -D warnings` 初次因沙箱网络限制无法下载官方库；设置 `GHOSTTY_VT_ARCHIVE=/tmp/termlevel-ghostty-vt-1.0.1.xcframework.zip CARGO_NET_OFFLINE=true` 后通过（`artifacts/pets-watchdog-clippy.log`）。原生开发宿主保留一条既有链接警告。

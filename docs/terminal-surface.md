@@ -135,7 +135,7 @@ SurfaceController
 3. **release 屏障**：释放前应用挂起的拖选终点；随后按双击 / 单击语义决定是否清空。
 4. **模式变化只影响未来事件**：控制器从不缓存待编码键 / 鼠标 / 滚轮。输出中观察到的模式、屏幕或尺寸变化，只影响之后到达的事件。
 5. **查找 reveal 是展示动作**：只修改 `Window` 并登记 `capture`，不编码输入。
-6. **hold**：贴底窗口允许发布当前事务开始边界的完整 owned Frame，同一 Arc 不重复发布；历史窗口仍冻结。保留脏位直到结束、150 ms 超时、EOF 或原生 resize，以发布最终事务结果。不得依赖 tick 恰好落在两次事务之间。
+6. **hold**：贴底窗口允许发布当前事务开始边界的完整 owned Frame，同一 Arc 不重复发布；历史窗口仍冻结。保留脏位直到结束、静默 150 ms（单次 hold 最长 1 s）、EOF 或原生 resize，以发布最终事务结果。不得依赖 tick 恰好落在两次事务之间。
 
 ## 唯一帧调度
 
@@ -162,7 +162,7 @@ SurfaceController
 | 光标闪烁 | 每控制器 reset 时刻的 500 ms 相位 |
 | 图片动画 | `tick_images` 返回的下一到期时间 |
 | 查找安静期 / 分步 | 150 ms 截止时间 + 每次 ≤64 行或 ≤32 tick |
-| 同步输出 hold | reader 侧 `flush_sync` 的 150 ms 截止时间；UI 只观察 revision |
+| 同步输出 hold | reader 侧 `flush_sync`：非空输出静默 150 ms，单次 hold 最长 1 s；UI 只观察 revision |
 | 原生重画 | AppKit `setNeedsDisplay` 合并 |
 
 不新增第二套兜底定时器。动画与光标不触发终端重新采样；只有 `capture` 位会。
