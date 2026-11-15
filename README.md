@@ -29,6 +29,7 @@
 - 中性灰主题；设置中可切换浅色、深色和跟随系统。
 - 每个终端保留独立 Rust 会话与输出，切换或折叠组保留 session ID；原生视图重新挂载可重新绑定。
 - 标签组、标签顺序、固定状态、分屏布局、选中标签、侧栏宽度、字号、滚动历史、字体和外观持久化；首次启动不自动创建 shell。
+- 本地图片和文件可从 Finder 拖入终端 pane：插入转义后的路径，支持多个文件，不自动回车；远程图片或无文件 URL 的图片数据暂不支持。
 - 真实 shell、中文文本输入与粘贴、resize、Ctrl+C、标题与响铃。Ctrl+D 或退出码 0 会关掉终端；非 0 退出和启动失败留在 pane 里。
 
 | 操作 | macOS 快捷键 |
@@ -69,22 +70,24 @@ macOS 应用包使用 `nsh.json` 中配置的 [图标 PNG](assets/brand/termleve
 
 `nsh check` 默认下载 TypeScript 原生编译器；已有 TypeScript 时可用 `--tsc /path/to/tsc`。网络受限且依赖已缓存时可设置 `CARGO_NET_OFFLINE=true`。验证记录见 [docs/validation.md](docs/validation.md)。headless 测试不能替代实机输入法、选区、拖动和视觉验收。
 
+开发约定与目录归属见 [开发指南](docs/development.md)。
+
 ## 结构与后续
 
 默认后端使用独立的 [libghostty-vt Rust 封装](crates/ghostty-vt/README.md)：sys 层固定官方 1.0.1 C ABI 和经过 SHA256 校验的 macOS 预编译静态库，安全层负责终端状态、渲染快照和输入编码；日常构建不需要 Zig。第一次构建会下载预编译库，离线时可通过 `GHOSTTY_VT_ARCHIVE` 指定官方 zip。独立验证命令：`cargo test -p termlevel-ghostty-vt-sys -p termlevel-ghostty-vt`。
 
 ```text
-App.tsx                       薄的 TSX 挂载入口
-ui/WorkspaceApp.tsx           窗口、菜单、快捷键、对话框及应用接线
-ui/                           侧栏、控件、主题映射、工作区状态
-terminal/TerminalSurface.tsx   真实原生终端的展示与低频状态
-terminal/PreviewTerminal.tsx   显式预览显示与演示 transport
-terminal/*.test.tsx            内核、真实 PTY 和工作区重新绑定测试
-src/lib.rs                    Rust 原生导出注册
-src/sessions.rs               独立会话管理、PTY 与进程生命周期
-src/session_view.rs           Rust 网格视图、光标锚定原生 Input 与组合输入
-src/terminal.rs               Ghostty RenderState 到 NSH 的网格适配
-scripts/                      固定版本工具安装及启动
+App.tsx                                      薄的 TSX 挂载入口
+ui/app/WorkspaceApp.tsx                      窗口、菜单、快捷键、对话框及应用接线
+ui/                                          按 app、workspace、settings、terminal、shared 分工
+ui/terminal/TerminalSurface.tsx              真实原生终端的展示与低频状态
+ui/terminal/PreviewTerminal.tsx              显式预览显示与演示 transport
+tests/terminal/*.test.tsx                    内核、真实 PTY 和工作区重新绑定测试
+src/lib.rs                                   Rust 原生导出注册
+src/sessions.rs                              独立会话管理、PTY 与进程生命周期
+src/session_view.rs                          Rust 网格视图、光标锚定原生 Input 与组合输入
+src/terminal.rs                              Ghostty RenderState 到 NSH 的网格适配
+scripts/                                     固定版本工具安装及启动
 ```
 
 UI 始终以 TSX 编写；真实终端的逐字节输出、解析、输入和高频刷新在 Rust 内完成。TSX 只处理显式会话操作与低频元数据。详见 [架构](docs/architecture.md) 与 [Roadmap](docs/roadmap.md)。

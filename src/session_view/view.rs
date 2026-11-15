@@ -651,6 +651,7 @@ impl Display {
             self.clone(),
             self.clone(),
         );
+        let dropped = self.clone();
         let viewport = self.viewport;
         let cw = self.cell_width;
         let snap = self.surface.snap();
@@ -683,6 +684,18 @@ impl Display {
         let hover = self.hover;
         let first_layout = Cell::new(true);
         view().overflow_hidden()
+            .on_file_drop(move |event: &FileDropEvent| {
+                if !props.visible.get_untracked() || props.input_blocked.get_untracked()
+                    || dropped.composing.get_untracked()
+                    || dropped.session.info().state != "running" {
+                    return;
+                }
+                let Some(text) = super::file_drop::paste_paths(&event.uris) else { return; };
+                cx.emit(super::SessionTerminalEvent::FocusRequest);
+                input.focus();
+                dropped.surface.request_follow();
+                dropped.session.paste(&text);
+            })
             .font_family(move || family(props))
             .text_size(move || Length::from(props.font_size.get()))
             .text_color(move || default_color(props.default_foreground, theme().foreground))

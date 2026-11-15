@@ -4,3 +4,5 @@ target/
 node_modules/
 .DS_Store
 artifacts/
+# NSH may create caches next to fixture entry points.
+**/.nsh/

@@ -1,33 +1,35 @@
 # Architecture
 
+目录归属、依赖规则与验证入口见 [开发指南](development.md)。
+
 ## NSH mixed 项目
 
 `nsh.json` 声明 Rust crate 和主题；`App.tsx` 是默认 TSX 入口。CLI、`nsh-core`、`nsh-base` 均固定 0.5.0。UI 使用 macOS 原生 AppKit 后端，不引入 WebView。
 
 ```text
-App.tsx                          mount 工作区，仅作入口
-  ui/WorkspaceRoot.tsx            先读持久化文档，再挂载工作区
-  ui/WorkspaceApp.tsx             窗口、菜单、快捷键、对话框与会话操作接线
-  ui/workspace-snapshot.ts        工作区文档 schema、校验与会话 ID 还原
-  ui/persistence.ts               NSH Storage 的读取与保存
-  ui/Sidebar.tsx                  vertical tabs、分组与响铃标记
-  ui/GroupEditor.tsx              锚定组头的名称、颜色和组操作
-  ui/workspace.ts                 会话、分组与平铺操作、唯一逻辑焦点
-  ui/tiling.ts                    布局树变换、约束、几何与方向导航
-  ui/TilingCanvas.tsx             按 session ID 稳定挂载、pane 工具栏与分隔拖动
-  ui/theme.ts                    分组标识到主题 token 的映射
-  terminal/TerminalSurface.tsx    真实终端的显示、焦点属性与低频状态
+App.tsx                                      mount 工作区，仅作入口
+  ui/app/WorkspaceRoot.tsx                   先读持久化文档，再挂载工作区
+  ui/app/WorkspaceApp.tsx                    窗口、菜单、快捷键、对话框与会话操作接线
+  ui/workspace/workspace-snapshot.ts         工作区文档 schema、校验与会话 ID 还原
+  ui/workspace/persistence.ts                NSH Storage 的读取与保存
+  ui/workspace/Sidebar.tsx                   vertical tabs、分组与响铃标记
+  ui/workspace/GroupEditor.tsx               锚定组头的名称、颜色和组操作
+  ui/workspace/workspace.ts                  会话、分组与平铺操作、唯一逻辑焦点
+  ui/workspace/tiling.ts                     布局树变换、约束、几何与方向导航
+  ui/workspace/TilingCanvas.tsx              按 session ID 稳定挂载、pane 工具栏与分隔拖动
+  ui/shared/theme.ts                         分组标识到主题 token 的映射
+  ui/terminal/TerminalSurface.tsx            真实终端的显示、焦点属性与低频状态
     native SessionTerminal       绑定已有 Rust 会话
-  terminal/PreviewTerminal.tsx    显式预览模式的 NSH Terminal 与焦点
+  ui/terminal/PreviewTerminal.tsx            显式预览模式的 NSH Terminal 与焦点
     preview-session.ts           确定性演示 transport，不执行命令
 
-src/lib.rs                       注册 termlevel/native 导出与原生 renderer factory
-src/runtime.rs                   版本、启动目录、显式预览开关与原生 cell 测量
-src/dialog_keys.rs               对话框 Escape 与 pane 缩放模式的原生键盘优先级
-src/terminal.rs                  Ghostty 状态 / RenderState 到 NSH 的适配；预览 provider
-src/sessions.rs                  SessionManager、PTY、进程、reader/writer/reaper
+src/lib.rs                                   注册 termlevel/native 导出与原生 renderer factory
+src/runtime.rs                               版本、启动目录、显式预览开关与原生 cell 测量
+src/dialog_keys.rs                           对话框 Escape 与 pane 缩放模式的原生键盘优先级
+src/terminal.rs                              Ghostty 状态 / RenderState 到 NSH 的适配；预览 provider
+src/sessions.rs                              SessionManager、PTY、进程、reader/writer/reaper
   sessions/api.rs                TSX 可调用的显式会话操作
-src/session_view.rs              按 ID 绑定会话、低频状态通知、唯一 16 ms 帧调度
+src/session_view.rs                          按 ID 绑定会话、低频状态通知、唯一 16 ms 帧调度
   session_view/surface.rs         每会话显示控制器：窗口、失效、轮内合并与一次采样
   session_view/view.rs            NSH 绑定：固定格网、原生 Input、事件策略接线
   session_view/window.rs         展示窗口策略；原生内容锚点留在 Ghostty
@@ -117,6 +119,8 @@ reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I
 `platform/macos` 是目前唯一实际实现，内部再区分 NSView 宿主、CoreText 绘制、键盘监听和 debug 探针。其他平台有明确的未实现占位入口，尚不能运行真实 renderer。本次只整理终端 surface 边界；Ghostty 预编译库仍仅支持 macOS，系统剪贴板 helper、工作区原生快捷键和其他平台构建 / 打包也需后续接入。不能从这些钩子推导 Windows / Linux 已可编译或通过验收。
 
 ## 原生交互与工作区 UI
+
+本地文件拖放使用 NSH 原生 `on_file_drop`，由目标 SessionTerminal 接收 file URL，在 Rust `session_view/file_drop.rs` 解码并生成 shell 字面参数（单引号与内部引号转义），经过已有 Session.paste / Ghostty bracketed-paste 路径送入该会话，不发送 Enter。支持图片和其他本地文件的多路径输入，不读取图片或上传附件。隐藏、modal 输入阻断、IME 组合中及已退出会话忽略 drop；可见非活动 pane 先请求工作区焦点再输入。远程 URL 和含控制字符的路径整批拒绝。`inputBlocked` 独立于 `active`，避免把非活动 pane 与对话框阻断混为同一状态。
 
 多 pane 已接入工作区，完整交互和验收边界见 [多终端平铺设计](terminal-tiling.md)。
 

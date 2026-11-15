@@ -1,11 +1,12 @@
 # Termlevel
 
-- UI is TSX on NSH. Use the native macOS backend first; do not introduce a web frontend to approximate it.
+- Read [development.md](docs/development.md) for directory ownership, dependency rules and validation. Read [architecture.md](docs/architecture.md) and [roadmap.md](docs/roadmap.md) before changing ownership boundaries.
+- UI is TSX on NSH with the native macOS backend. Do not introduce a web frontend.
 - Keep the CLI and all `nsh-*` crates on the same pinned version (currently 0.5.0).
-- Read `docs/architecture.md` and `docs/roadmap.md` before changing ownership boundaries.
-- Tab identity is a stable session ID. Collapse, rename, reorder and selection must preserve terminal state.
-- The current preview transport never executes commands. Do not present it as a real shell.
-- Future real PTY sessions belong to Rust, independently of UI mount lifetime.
-- Keep terminal streams and high frequency rendering in Rust; TSX owns workspace UI.
-- Use `./scripts/nsh check`, `./scripts/nsh test`, and `./scripts/nsh build` for validation. Record native GUI acceptance separately.
+- The default transport runs real PTY sessions. Rust owns processes and terminal state independently of UI mount lifetime. Only explicit session operations create or close processes.
+- Session ID is stable within the host process. Collapse, rename, reorder, selection and view remount preserve it and terminal state. Restart restores workspace structure by opening new sessions, not by restoring old processes.
+- Keep terminal streams, grids, parsing and high frequency rendering in Rust; TSX owns workspace UI and low frequency metadata.
+- `TERMLEVEL_PREVIEW=1` is deterministic preview only: it never executes commands or accesses real workspace storage. Do not treat preview evidence as real shell evidence.
+- Theme values belong in `theme.json`; generated `.nsh/types` must not be edited.
+- Use `./scripts/nsh check`, `./scripts/nsh test`, and `./scripts/nsh build` for validation. Record native automation and manual GUI acceptance separately; report existing failures explicitly.
 - Do not commit `.tools/`, `.nsh/`, `target/`, `node_modules/` or local artifacts.

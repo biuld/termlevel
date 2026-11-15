@@ -526,3 +526,43 @@ CARGO_NET_OFFLINE=true
 - 持久化测试使用 headless 测试自己的 NSH Storage，`app.storage()` 可读回保存文档，不触碰用户真实 `storage.json`。
 
 尚未进行真实窗口重启人工验收：需要在原生宿主里确认首次空白页、重建分组后退出再打开时 shell 数量与目录、侧栏宽度 / 外观 / 字体恢复，以及关闭窗口和退出应用时最后一次保存能落盘。headless 证据不等于原生 GUI 验收。
+
+## 2026-11-15：目录结构与开发规范
+
+在 `717918f` 基础上的未提交整理：TSX 生产代码归入 ui/app、workspace、settings、terminal、shared；交互测试与 fixtures 集中到 tests/workspace、tests/terminal，原生 acceptance 放 tests/native，Python 探针放 tests/probes。50 个迁移源文件逐一与 HEAD 比较，差异仅为 import、open 和探针路径字符串。Rust 所有权与实现未变。旧章节的文件路径与命令保留为历史证据，当前路径见 development 和 architecture。
+
+更新 AGENTS 的真实 PTY 与重启恢复说明；新增 development 开发指南；五组原生脚本共享 scripts/test-native，保持原入口、输出报告名及 scroll 的 fps 选项。fixture 邻近 .nsh 缓存纳入忽略范围。
+
+本轮 macOS 验证：
+
+- `./scripts/nsh check`、`./scripts/nsh build`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`git diff --check` 通过。
+- `./scripts/nsh test --junit artifacts/directory-headless.xml`：**128 / 128**；日志 `artifacts/directory-headless.log`。测试发现数量保持 128，包含工作区、持久化、真实会话与重新绑定。此前持久化记录的两个失败本轮未复现，不据此认定间歇性问题已根治。
+- `./scripts/test-native-protocols`：**5 / 5**；日志 `artifacts/directory-native-protocols.log`，报告仍为 `artifacts/protocols-native.xml`。验证新 acceptance / fixture / Python 路径与共享脚本，覆盖 AppKit 键盘、背景、字形、图片、选择、鼠标与 OSC52。初次受限运行无法监听本地 dev server，放开该限制后通过。
+- 所有原生入口通过 shell 语法检查；本轮未运行其他四组原生场景，未进行人工 GUI 验收。
+
+## 2026-11-15：OSC52 中文复制乱码
+
+用户反馈 Claude 中复制中文后粘贴乱码。定位到 SystemClipboard 启动 pbcopy / pbpaste 时继承宿主 locale，而两者按 locale 决定字节编码。Rust / Ghostty 的接口传 UTF-8；C 或无法识别的 locale 会让 pbcopy 将这些字节按旧编码解释。修复为只在 helper 子进程固定 LANG、LC_CTYPE、LC_ALL 为 macOS 支持的 en_US.UTF-8，不更改应用、shell 或用户环境。
+
+新增 tests/probes/clipboard_utf8_probe.py 和原生协议用例：真实 PTY 发送 OSC52，写入中文标点、重音文字、组合字符、emoji 与换行，再查询 OSC52；通过 AppKit NSPasteboard.stringForType 独立核对系统剪贴板的完整 Unicode 字符串，测试前后保存 / 恢复剪贴板。只检查 helper 往返不足以证明正确，因为两端同样用错编码时仍可能还原原字节。
+
+修复前：`LC_ALL=C LANG=C LC_CTYPE=C ./scripts/test-native-protocols` 为 **5/6**；新用例失败，AppKit 实际读到 `Claude ‰∏≠Êñá…`，而 OSC52 往返仍显示 OK。日志 artifacts/clipboard-utf8-before.log。
+
+修复后相同命令 **6/6**，Unicode 字符串逐字匹配且读取权限的既有拒绝 / 允许用例通过；日志 artifacts/clipboard-utf8-after.log。`./scripts/nsh check`、`./scripts/nsh build`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`git diff --check` 通过。
+
+本轮未重新运行完整 headless 套件；上一轮目录整理记录为 128/128。已用相同 OSC52 系统路径复现并验证修复，未直接操作用户当前 Claude 会话，实际 Claude 内复制仍待用户复验。
+
+## 2026-11-15：本地图片与文件拖入终端
+
+SessionTerminal 使用 NSH 0.5.0 的原生 on_file_drop，Rust 解码本地 file URL 并转义为 shell 字面路径，按拖放顺序通过既有 Session.paste 输入，不自动回车、不读取或上传图片。可见非活动 pane 请求焦点后接收输入；隐藏、modal 阻断、组合输入及已退出会话忽略 drop。新增 inputBlocked 属性区分阻断状态与 pane 焦点。远程 URL 和带控制字符的路径整批拒绝。UI 预览未接入文件拖放。
+
+- `./scripts/nsh test tests/terminal/FileDrop.test.tsx --junit artifacts/file-drop-focused.xml`：**2/2**，headless + 真实 /bin/sh，验证中文空格、多文件顺序、单引号与命令替换字符保持字面、无自动提交、非活动 pane 焦点、modal 阻断和远程 URL 忽略。日志 artifacts/file-drop-focused.log。
+- `cargo test -p termlevel-native session_view::file_drop::tests -- --nocapture`：**2/2**，验证 URL 单次解码、顺序、转义与非法混合批次拒绝；日志 artifacts/file-drop-rust.log。
+- `./scripts/nsh check`、`./scripts/nsh build`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`git diff --check` 通过。
+- 本轮未重跑完整套件。NSH 0.5.0 的 macOS 测试驱动明确不支持 dropFiles（只支持 headless / Linux），因此未声称 Finder 原生拖入或 Claude 附件识别已通过验收。人工应检查 Finder 单张 / 多张图片拖入、中文与空格文件名、分屏目标和对话框阻断；无本地 file URL 的浏览器图片、剪贴板位图不在本次实现范围。
+
+## 2026-11-15：macOS 开发宿主磁盘不足恢复
+
+用户 `./scripts/nsh run` 在原生宿主链接阶段失败，致命错误是 `ld: write() failed, errno=28 (No space left on device)`；macOS 最低版本与重复库提示属于警告。现场剩余 341 MiB；target 约 40 GB，其中 target/debug/incremental 约 3.7 GB，另有 .nsh/rust/target 约 4.9 GB。
+
+仅删除这两处可再生成的缓存，保留源码、artifacts、工具与 Ghostty 下载缓存。随后 `CARGO_TARGET_DIR=/Users/biu/Projects/termlevel/target cargo build --manifest-path .nsh/rust/macos-host/Cargo.toml` 成功（含原生宿主链接，约 5 秒）；日志 artifacts/macos-host-disk-recovery.log，完成后约 7.1 GiB 可用。未启动用户工作区或声称 GUI 验收通过，原有链接警告仍在。

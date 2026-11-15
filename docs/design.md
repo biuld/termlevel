@@ -24,7 +24,7 @@
 
 ## 字体
 
-界面文字用 `ui/type.tsx` 的角色，不在组件里另写字号。字号和行高只写在 `theme.json`。字体族由设置选择，默认界面是 `system-ui`，默认等宽是 Menlo。
+界面文字用 `ui/shared/type.tsx` 的角色，不在组件里另写字号。字号和行高只写在 `theme.json`。字体族由设置选择，默认界面是 `system-ui`，默认等宽是 Menlo。
 
 | 角色 | 字号 | 行高 | 字重 | 用途 |
 |---|---|---|---|---|
@@ -108,7 +108,7 @@ TSX 静态样式用语义类：
 </View>
 ```
 
-Canvas 和动态样式读取 `token()`，不复制具体色值。分组数据保存 `purple` / `blue` 等稳定标识，`ui/theme.ts` 将标识映射到主题 token。更换主题后，既有分组也随之更新。
+Canvas 和动态样式读取 `token()`，不复制具体色值。分组数据保存 `purple` / `blue` 等稳定标识，`ui/shared/theme.ts` 将标识映射到主题 token。更换主题后，既有分组也随之更新。
 
 所有居中弹窗在 `Dialog` 的 `class` 中设置 `m-auto`。该属性作用于弹窗本体；NSH 不会自动将固定宽度的弹窗居中。
 

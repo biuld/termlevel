@@ -1,6 +1,7 @@
 //! NSH is a view onto an existing Rust session, never its lifetime owner.
 
 mod diag;
+mod file_drop;
 mod input;
 mod keys;
 mod paint;
@@ -30,6 +31,9 @@ pub struct SessionTerminalProps {
     /// but do not sample frames or record drawings for new output.
     #[prop(default = true)]
     pub visible: Prop<bool>,
+    /// Modal UI blocks external file input independently of pane focus.
+    #[prop(default = false)]
+    pub input_blocked: Prop<bool>,
     /// Monospaced text family.
     pub font_family: Prop<Option<SharedString>>,
     /// Text size in points.

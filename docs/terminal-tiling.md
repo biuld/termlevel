@@ -188,7 +188,7 @@ Shell 以退出码 0 结束时，标签和 pane 一起关闭，与 ⌘W 相同�
 
 ## 状态模型与实现边界
 
-纯布局模块 `ui/tiling.ts` 负责树变换、约束、方向选择及归一化；`ui/workspace.ts` 把会话操作和布局变换组合成一次状态提交。
+纯布局模块 `ui/workspace/tiling.ts` 负责树变换、约束、方向选择及归一化；`ui/workspace/workspace.ts` 把会话操作和布局变换组合成一次状态提交。
 
 ```ts
 type LayoutNode =

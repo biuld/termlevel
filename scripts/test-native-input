@@ -1,10 +1,3 @@
 #!/bin/sh
 set -eu
-project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-# NSH 0.5's driver has no compose(). Keep AppKit-only assertions out of the
-# default headless suite and register a temporary native test at project root.
-runner_base=$(mktemp "$project_dir/.native-input.XXXXXX")
-runner="$runner_base.test.tsx"
-trap 'rm -f "$runner" "$runner_base"' EXIT HUP INT TERM
-cp "$project_dir/terminal/fixtures/Input.acceptance.tsx" "$runner"
-"$project_dir/scripts/nsh" test "$runner" --target macos --junit artifacts/native-ime-tests.xml "$@"
+exec "$(dirname -- "$0")/test-native" input "$@"

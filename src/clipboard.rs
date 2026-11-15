@@ -25,6 +25,12 @@ fn helper(read: bool, text: &str) -> Result<String> {
     } else {
         "/usr/bin/pbcopy"
     })
+    // These helpers interpret bytes using their locale, while our clipboard
+    // contract is always UTF-8. Finder launches and C/legacy parent locales
+    // must not make pbcopy decode UTF-8 as a legacy encoding (or pbpaste emit it).
+    .env("LC_ALL", "en_US.UTF-8")
+    .env("LC_CTYPE", "en_US.UTF-8")
+    .env("LANG", "en_US.UTF-8")
     .stdin(if read { Stdio::null() } else { Stdio::piped() })
     .stdout(if read { Stdio::piped() } else { Stdio::null() })
     .stderr(Stdio::null())
