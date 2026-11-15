@@ -853,8 +853,14 @@ impl Session {
             .join(" · ");
             crate::notifications::record_program(
                 &info.id,
-                &activity.id,
-                activity.version,
+                crate::notifications::ProgramNotice {
+                    record_id: activity.id.clone(),
+                    version: activity.version,
+                    kind: activity.kind.clone(),
+                    app: activity.app.clone(),
+                    title: activity.title.clone(),
+                    message: activity.message.clone(),
+                },
                 if activity.state == "error" {
                     "error"
                 } else {

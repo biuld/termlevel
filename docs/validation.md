@@ -720,3 +720,26 @@ Rust Session 独有的 InputQueue 改为 FIFO 总字节预算：4 MiB 待发送�
 - 原生状态首轮错误查询了仅 headless 可观察的空 Text 诊断节点，现改查实际产品标签并截图；已读语义由 Rust / headless 直接检查，原生截图确认图标保留。原生 OSC 首轮仍查询旧版 working 文案，已同步新可读标签。失败日志分别为 `artifacts/status-redesign-native-fixture-diagnostic.log` 和 `artifacts/status-redesign-native-osc-old-label.log`，没有靠提高超时修复。
 
 未完成的人工验收：真实 cargo / terraform / agent 的持续报告；系统减少动态效果开关、VoiceOver 实听；明暗主题 / 多字号 / 长消息和分组固定标签的完整组合；窗口激活和分屏切换的长期手感；高频进度与多会话长时间负载。本次已做原生截图审查，但未宣称上述日用项目通过。
+
+
+## 2026-11-15 · 通知行图标与内容层级
+
+基于 `efafe22` 的未提交改动。原通知行标题、正文和操作权重接近，本次拆出 `ui/notifications/NotificationRow.tsx`：实际 message / 正文使用 15 pt semibold 主文；任务 / 事件标题为上下文，来源、程序名、类别、时间缩为次级信息。左侧加入 32 pt 淡色底座及语义图标（批准、提问、登录、失败、普通消息），底部单独放来源跳转、展开 / 收起、移除。程序没有图片附件，不虚构应用品牌图标。7501 历史追加经过 Rust 清洗的 kind/app/title/message 元数据，界面不靠解析生成标题来判断任务类别。
+
+长内容提供有界摘要与 Show more / Show less，展开后长主文使用 12 pt 常规字重，完整历史文本保留。历史仍按前三条实测高度确定 viewport，保留分隔线与滚动提示；面板宽度上限为窗口宽减 16 pt，默认宽 420 pt、历史最高 384 pt。打开 / 清空 / 回到来源不改变已有会话所有权或程序状态确认规则。
+
+验证（真实 PTY 为受控 `/bin/sh`；截图里的 128 tests 是测试消息样例，不是本轮测试计数）：
+
+- `./scripts/nsh test --junit artifacts/notification-row-headless.xml`：194/194，日志 `artifacts/notification-row-headless.log`。包含 Rust 对结构化 kind/app/message 的检查、原有状态与工作区回归及通知六项 TSX。随后仅调整长主文展开后的字重 / 字级，相关六项与原生验收单独复验。
+- `./scripts/nsh test tests/terminal/Notifications.test.tsx --junit artifacts/notification-row-focused.xml`：6/6，日志 `artifacts/notification-row-focused.log`。覆盖背景来源跳转、已关闭来源、输入警告、三条以上滚动、退出信息、程序请求主文 / 语义图标、长文本展开 / 滚动 / 收起。初次扩展用例的正文能完整放入 viewport，不应滚动；改用确实超过 viewport 的长正文验证滚动，没有提高超时或放宽产品断言。
+- `./scripts/test-native notifications`：2/2，日志 `artifacts/notification-row-native.log`、报告 `artifacts/notifications-native.xml`。覆盖深色和浅色下的普通消息、任务失败、需要批准、提问、登录；1000×720、640×420、360×420 布局、空态、长正文展开及末尾收起。已查看 artifacts 下的 `native-notifications-{dark,light}.png`、`native-notifications-{dark,light}-compact.png`、`native-notifications-light-narrow.png`、`native-notifications-{dark,light}-empty.png`、`native-notifications-expanded.png`、`native-notifications-expanded-end.png`；实际消息突出，语义图标可辨，窄窗口内面板和操作可用。
+- `./scripts/nsh build`、`./scripts/nsh check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check` 通过。日志 `artifacts/notification-row-{build,check,clippy}.log`；fmt / diff 直接执行。
+
+构建与测试使用已校验的离线库：`GHOSTTY_VT_ARCHIVE=/tmp/termlevel-ghostty-vt-1.0.1.xcframework.zip CARGO_NET_OFFLINE=true`。完整套件在沙箱外运行已有系统 pasteboard 用例；原生宿主仍报告一条既有链接警告，本次未新增 Rust / TSX 检查失败。原生截图审查不等同于 VoiceOver 实听、大号系统字体或真实 agent 日用验收。
+
+
+## 2026-11-15 · 通知字级统一到 Interface body
+
+上一版通知主文使用对话框 title 字级 15 / 20，与普通界面 body 12 / 16 不一致。本次在 NotificationRow 统一主文与上下文为 body，只用字重、颜色和图标表达重点；长内容展开仅切换字重，不改变字号或行高。字体族继续由 Type 读取 interfaceFont，来源 / 时间继续使用现有 caption 字级；不修改全局对话框 title token。
+
+`./scripts/nsh check`、`./scripts/nsh build`、`git diff --check` 通过（日志 `artifacts/notification-type-{check,build}.log`）；通知专项 6/6（`artifacts/notification-type-focused.{log,xml}`）；`./scripts/test-native notifications` 2/2（`artifacts/notification-type-native.log`、`artifacts/notifications-native.xml`）。已重新查看原生深色通知和浅色 360 pt 窄窗口截图，主文与侧栏 / 普通界面文字字级一致。原生宿主仍有既有链接警告；本次未重跑与字级无关的完整 Rust / 工作区套件，上一节 194/194 为此前记录。

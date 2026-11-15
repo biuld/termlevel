@@ -69,6 +69,7 @@ git diff --check
 ./scripts/test-native-protocols
 ./scripts/test-native-ghostty
 ./scripts/test-native status
+./scripts/test-native notifications
 ./scripts/test-native osc
 ```
 

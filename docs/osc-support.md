@@ -230,7 +230,7 @@ tab 无障碍标签与 tooltip 共享已解析状态和真实百分比；暂停 
 
 7501 的通知按记录级状态跃迁决定，不按聚合图标是否变化决定。blocked 和 error 进入时各写历史；相同状态内修改百分比 / 文案不重复写；working、done 和 9;4 不写通知。已有通知模块仍负责容量和短时内容合并。acknowledge 不产生新的通知，也不清空历史。
 
-通知携带 session ID 和记录身份 / 代次以便定位来源；用户文案带终端名、程序名和清洗后的消息。标题使用 `Needs approval / Needs answer / Sign in required / Needs input · <terminal>` 或 `Task failed · <terminal>`。只提供返回已有会话的动作，不根据程序 message 生成批准 / 登录按钮；用户在终端里完成交互。会话关闭后保留历史，禁用来源跳转。
+通知携带 session ID 和记录身份 / 代次以便定位来源；用户文案带终端名、程序名和清洗后的消息。标题使用 `Needs approval / Needs answer / Sign in required / Needs input · <terminal>` 或 `Task failed · <terminal>`。只提供返回已有会话的动作，不根据程序 message 生成批准 / 登录按钮；用户在终端里完成交互。会话关闭后保留历史，禁用来源跳转。通知行以结构化 message（否则任务 title）为主文，kind 对应语义图标；app、类别与时间为次级信息，生成的历史标题仍用于定位和无障碍操作标签。长内容可原地展开，具体层级见 [UI 与主题](design.md#通知内容)。
 
 | 事件 | 动作 |
 |---|---|

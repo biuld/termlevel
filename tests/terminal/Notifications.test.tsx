@@ -48,7 +48,7 @@ test("app input warnings appear only in notifications while terminal input keeps
     await app.waitUntil(() => app.texts().some(text => text.includes("RECOVER_OK")));
     await app.press("id:notifications");
     await app.waitFor("text:Input not sent");
-    expect(app.texts().some(text => text.includes("App · warning"))).toBe(true);
+    expect(app.texts().some(text => text.includes("Termlevel · Warning"))).toBe(true);
     await app.press("label:Dismiss Input not sent notification");
     await app.waitUntil(() => !app.texts().some(text => text === "Input not sent"));
   } finally { await close(app); }
@@ -90,5 +90,45 @@ test("an exited pane keeps its output and offers a new terminal without a bottom
     await app.type("label:Terminal Terminal 2", "printf 'FRESH_%s\\n' SHELL");
     await app.keyboard.press("enter");
     await app.waitUntil(() => app.texts().some(text => text.includes("FRESH_SHELL")));
+  } finally { await close(app); }
+});
+
+
+test("program notifications lead with the request and expose semantic icons", async () => {
+  const app = await open("./fixtures/NotificationFixture.tsx", options);
+  try {
+    await app.type("id:session-panel", "printf '\\033]7501;state=blocked:kind=permission:app=agent:msg=QXBwbHk/\\007'");
+    await app.keyboard.press("enter");
+    await app.waitFor("id:notifications-unread");
+    await app.press("id:notifications");
+    await app.waitFor("label:Needs approval");
+    expect(app.texts()).toContain("Apply?");
+    expect(app.texts()).toContain("Terminal · agent · Needs approval");
+    expect(app.texts().some(text => text.startsWith("Needs approval ·"))).toBe(false);
+    await app.press("label:Open source of Needs approval · Terminal");
+    expect(app.shows("id:notification-panel")).toBe(false);
+    // Opening the source acknowledges the reminder, but does not resolve it.
+    await app.waitFor("label:Terminal 1, Needs approval, agent · Apply?");
+  } finally { await close(app); }
+});
+
+test("long notification content expands in place and remains available after collapse", async () => {
+  const app = await open("./fixtures/NotificationFixture.tsx", options);
+  const message = "Diagnostic detail. ".repeat(80) + "DETAILS_END";
+  try {
+    await app.type("id:session-panel", `printf '\\033]777;notify;Build details;${message}\\007'`);
+    await app.keyboard.press("enter");
+    await app.waitFor("id:notifications-unread");
+    await app.press("id:notifications");
+    await app.waitFor("label:Expand Build details notification");
+    expect(app.shows(`id:notification-panel >> text:${message}`)).toBe(false);
+    await app.press("label:Expand Build details notification");
+    await app.waitFor(`id:notification-panel >> text:${message}`);
+    await app.scroll("id:notifications-history", 2000);
+    await app.press("label:Collapse Build details notification");
+    await app.waitFor("label:Expand Build details notification");
+    expect(app.shows(`id:notification-panel >> text:${message}`)).toBe(false);
+    await app.press("id:notifications-clear");
+    await app.waitFor("id:notifications-empty");
   } finally { await close(app); }
 });

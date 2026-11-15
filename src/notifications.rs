@@ -26,6 +26,10 @@ pub struct Notice {
 pub struct ProgramNotice {
     pub record_id: String,
     pub version: u64,
+    pub kind: Option<String>,
+    pub app: Option<String>,
+    pub title: Option<String>,
+    pub message: Option<String>,
 }
 
 #[derive(Default)]
@@ -128,8 +132,7 @@ pub(crate) fn record(source: &str, level: &str, session_id: Option<&str>, title:
 /// A status transition is keyed by record and generation, not aggregate icon.
 pub(crate) fn record_program(
     session_id: &str,
-    record_id: &str,
-    version: u64,
+    program: ProgramNotice,
     level: &str,
     title: &str,
     body: &str,
@@ -143,10 +146,7 @@ pub(crate) fn record_program(
         title,
         body,
         now,
-        Some(ProgramNotice {
-            record_id: record_id.into(),
-            version,
-        }),
+        Some(program),
     );
 }
 

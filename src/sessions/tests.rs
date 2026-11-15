@@ -689,6 +689,10 @@ fn record_transitions_notify_even_when_aggregate_state_is_unchanged() {
     );
     assert_eq!(session.info().status.pending_count, 1);
     assert_eq!(session.info().status.label, "Needs approval");
+    let program = notices()[0].program.clone().unwrap();
+    assert_eq!(program.kind.as_deref(), Some("permission"));
+    assert_eq!(program.app.as_deref(), Some("agent"));
+    assert_eq!(program.message.as_deref(), Some("Apply?"));
     session.acknowledge(session.info().status_revision);
     session.apply_program_status(report("b", ProgramStatusState::Blocked));
     assert_eq!(notices().len(), 2, "ack + repeated report never renotifies");

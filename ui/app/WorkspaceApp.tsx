@@ -40,6 +40,7 @@ export function WorkspaceApp(props: {
   const settings = signal(false);
   const notifying = signal(false);
   const windowHeight = signal(420);
+  const windowWidth = signal(640);
   let notificationAnchor: ViewRef | undefined;
   const notifications = createNotificationCenter(preview, notifying);
   const finding = signal(false);
@@ -188,7 +189,7 @@ export function WorkspaceApp(props: {
     `${tab.title} ${tab.liveCwd ?? tab.cwd} ${store.groupTitle(tab.groupId)}`.toLowerCase().includes(query().toLowerCase()));
 
   return <TerminalEngine class="relative flex-1 bg-chrome font-sans text-foreground"
-    onLayout={({ bounds }) => { if (windowHeight() !== bounds.size.height) windowHeight.set(bounds.size.height); }}>
+    onLayout={({ bounds }) => { if (windowHeight() !== bounds.size.height) windowHeight.set(bounds.size.height); if (windowWidth() !== bounds.size.width) windowWidth.set(bounds.size.width); }}>
     <View testID="window-toolbar" desktop={{ windowDrag: true }}
       class="relative h-(--height-titlebar) shrink-0 flex-row items-center"
       style={{ paddingLeft: titleBar().left + token("gap-pane"), paddingRight: titleBar().right + token("gap-pane") }}>
@@ -316,7 +317,7 @@ export function WorkspaceApp(props: {
         });
       }} />
     <If when={notifying() ? notificationAnchor : undefined}>{(anchor) =>
-      <NotificationPanel anchor={anchor()} windowHeight={windowHeight()} entries={notifications.entries()} close={() => notifying.set(false)}
+      <NotificationPanel anchor={anchor()} windowHeight={windowHeight()} windowWidth={windowWidth()} entries={notifications.entries()} close={() => notifying.set(false)}
         clear={notifications.clear} dismiss={notifications.dismiss}
         sessionTitle={id => store.tab(id)?.title}
         select={id => { if (store.tab(id)) store.select(id); notifying.set(false); }} />

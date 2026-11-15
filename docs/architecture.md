@@ -99,7 +99,7 @@ Settings → Terminal 的 Terminal identity 默认是 Termlevel，也可显式�
 
 Ghostty safe wrapper 注册官方 desktop notification 回调，复制 owned 标题和正文，再经 terminal BackendEvent 到 Session 写入历史；支持 libghostty-vt 1.0.1 回调覆盖的 OSC 9 和 OSC 777，未声明 OSC 99 或系统桌面通知支持。OSC 7501 每条记录进入 blocked / error 的跃迁会额外写入一条带记录身份和代次的通知，working、done 和 OSC 9;4 进度不进入历史，详见 [OSC 集成与终端状态设计](osc-support.md)。BEL 仍保留原有侧栏标记，同时记录终端响铃。会话启动 / I/O / 编码等错误、输入拒绝警告、非零进程退出与应用文件夹对话框错误以 app 来源进入同一历史。终端底部不再显示状态条；详细错误和输入拒绝仅进入通知面板。清空历史不会清除会话错误或结束进程。
 
-`ui/notifications/notifications.ts` 在应用根生命周期按 250 ms 检查历史 revision，仅变化时读取 bounded 低频数据；不依赖任何 pane 的刷新或事件补发，隐藏会话也可通知。preview 不读取或修改真实通知历史。`NotificationPanel.tsx` 只负责表现与用户操作，通过应用传入的 session ID 回调选中已有标签，不创建会话。打开面板标记已读，支持逐项移除、清空、回到来源；来源已关闭时保留内容并禁用跳转。历史按内容高度展示最多三条，受窗口可用高度限制，更多内容可滚动且有提示与分隔线。面板打开期间阻止终端输入，Escape / 外部点击关闭后恢复。
+`ui/notifications/notifications.ts` 在应用根生命周期按 250 ms 检查历史 revision，仅变化时读取 bounded 低频数据；不依赖任何 pane 的刷新或事件补发，隐藏会话也可通知。preview 不读取或修改真实通知历史。`NotificationPanel.tsx` 负责锚定、前三条实测高度和滚动；`NotificationRow.tsx` 负责消息层级、语义图标、展开与行内操作，通过应用传入的 session ID 回调选中已有标签，不创建会话。7501 历史的 `program` 元数据携带 kind/app/title/message，来自 Rust 已清洗的记录；UI 直接消费实际消息，不从生成的通知标题推断任务类型。打开面板标记已读，支持逐项移除、清空、回到来源；来源已关闭时保留内容并禁用跳转。历史按内容高度展示最多三条，受窗口可用高度限制，更多内容可滚动且有提示与分隔线。面板打开期间阻止终端输入，Escape / 外部点击关闭后恢复。
 
 ## 生命周期与并发
 
