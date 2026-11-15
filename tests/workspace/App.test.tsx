@@ -189,16 +189,18 @@ test("search opens a terminal in a collapsed group and compact sidebar keeps nav
   expect(app.shows("id:tab-colors")).toBe(true);
 });
 
-test("new terminal stays outside groups unless created from a group", async () => {
+test("new terminal follows the current group and stays global outside groups", async () => {
   const app = await open("../../App.tsx", options);
   await app.press("id:tab-prototype");
-  await app.press("id:new-terminal");
+  await app.press("id:titlebar-new-terminal");
   await app.waitFor("id:terminal-tab-1");
   await app.press("id:group-toggle-termlevel");
-  await app.press("id:group-toggle-playground");
-  expect(app.shows("id:tab-tab-1")).toBe(true);
+  expect(app.shows("id:tab-tab-1")).toBe(false);
   expect(app.shows("id:tab-prototype")).toBe(false);
-  expect(app.shows("id:tab-colors")).toBe(false);
+  await app.press("id:tab-home");
+  await app.keyboard.press("mod+t");
+  await app.waitFor("id:terminal-tab-2");
+  expect(app.shows("id:tab-tab-2")).toBe(true);
 });
 
 test("pinning and menu ordering preserve the selected session", async () => {
@@ -298,7 +300,8 @@ test("the overview header changes color and name while keeping terminal output",
 
   await app.press("id:group-termlevel");
   await app.waitFor("id:dashboard");
-  await app.press("id:dashboard-new-terminal");
+  expect(app.shows("id:dashboard-new-terminal")).toBe(false);
+  await app.press("id:titlebar-new-terminal");
   expect(app.shows("id:dashboard")).toBe(false);
   expect(app.shows("id:tab-tab-1")).toBe(true);
   await app.press("id:group-toggle-termlevel");
@@ -391,7 +394,7 @@ test("dragging onto a terminal joins its group, or starts one when it has none",
   expect(app.shows("id:group-group-1 >> text:termlevel")).toBe(true);
   await app.press("id:group-group-1");
   await app.waitFor("id:dashboard");
-  await app.press("id:dashboard-new-terminal");
+  await app.press("id:titlebar-new-terminal");
   expect(app.texts()).toContain("~/Projects/termlevel");
   await app.press("id:group-toggle-group-1");
   expect(app.shows("id:tab-colors")).toBe(false);

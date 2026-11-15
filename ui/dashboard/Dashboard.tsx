@@ -2,7 +2,6 @@ import { signal, token, View } from "nsh";
 import { Button, Input, Popover } from "nsh/base";
 import { Menu } from "nsh/desktop";
 import { DialogKeys, Hint, IconButton } from "../shared/controls";
-import { Icon } from "../shared/icons";
 import { groupColor, groupPalette } from "../shared/theme";
 import { Type } from "../shared/type";
 import type { Workspace } from "../workspace/workspace";
@@ -88,11 +87,6 @@ export function Dashboard(props: {
           </Button>
         </View>
         <View class="flex-row items-center gap-1">
-          <Button testID="dashboard-new-terminal" onPress={() => store.addTab(groupId())}
-            class="h-(--height-action) flex-row items-center gap-1.5 rounded-(--radius-control) border border-sidebar-border px-2.5 hover:bg-control-hover active:bg-control-pressed focus-visible:ring-2 ring-ring">
-            <Icon name="plus" size={12} color={token("icon")} />
-            <Type role="body">New terminal</Type>
-          </Button>
           <IconButton icon="more" label="Group actions" testID="dashboard-group-menu" onPress={groupMenu} />
           <IconButton icon="close" label="Close overview" testID="dashboard-close" onPress={store.closeDashboard} />
         </View>

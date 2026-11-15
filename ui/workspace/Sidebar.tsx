@@ -13,6 +13,7 @@ type SlotRect = { x: number; y: number; width: number; height: number };
 type DropTarget = { groupId: string | null; pinned: boolean; beforeId: string | null; headerId: string | null; combineId: string | null };
 
 export interface SidebarActions {
+  newTerminal(): void;
   renameTab(id: string): void;
   newGroup(): void;
   closeGroup(id: string): void;
@@ -428,7 +429,7 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
 
       <Each of={store.groups().map((g) => g.id)}>{(id) => <GroupRow id={id()} />}</Each>
 
-      <Button testID="new-terminal" accessibilityLabel="New terminal" onPress={() => store.addTab()}
+      <Button testID="new-terminal" accessibilityLabel="New terminal" onPress={actions.newTerminal}
         class="mx-1 mb-2 h-(--height-tab) flex-row items-center gap-2 rounded-(--radius-tab) px-2 hover:bg-sidebar-accent focus-visible:ring-2 ring-sidebar-ring"
         style={{ justifyContent: props.expanded() ? "flex-start" : "center", paddingHorizontal: props.expanded() ? 8 : 0 }}>
         <Icon name="plus" size={13} />

@@ -13,7 +13,7 @@ test("find in the preview terminal counts buffer matches", async () => {
   await app.press("id:find-next");
   await app.press("id:find-close");
   await app.waitUntil(() => !app.shows("id:find-in-terminal"));
-  expect(app.shows("id:titlebar-new-terminal")).toBe(false);
+  expect(app.shows("id:titlebar-new-terminal")).toBe(true);
   await app.press("id:pane-find");
   await app.waitFor("id:find-in-terminal");
 });

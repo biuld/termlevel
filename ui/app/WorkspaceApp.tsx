@@ -141,11 +141,12 @@ export function WorkspaceApp(props: {
     search: () => { query.set(""); searching.set(true); },
     settings: () => settings.set(true),
     toggleSidebar,
+    newTerminal: () => { store.addTab(store.workspaceKey() || null); },
   };
 
   // Application shortcuts use Command on macOS, preserving shell Control keys.
   const shortcuts: Record<string, () => void> = {
-    "mod+t": () => { store.addTab(); },
+    "mod+t": actions.newTerminal,
     "mod+w": () => {
       if (store.dashboardOpen()) { store.closeDashboard(); return; }
       const id = store.activeId(); if (id) store.closeTab(id);
@@ -180,7 +181,7 @@ export function WorkspaceApp(props: {
       { type: "separator" }, { role: "quit" },
     ] },
     { label: "File", submenu: [
-      { label: "New terminal", shortcut: "mod+t", onSelect: () => store.addTab() },
+      { label: "New terminal", shortcut: "mod+t", onSelect: actions.newTerminal },
       { label: "New group…", shortcut: "mod+shift+g", onSelect: actions.newGroup },
       { type: "separator" },
       { label: "Close terminal", shortcut: "mod+w", onSelect: shortcuts["mod+w"] },
@@ -218,6 +219,7 @@ export function WorkspaceApp(props: {
         <Type role="label">{store.dashboardOpen() ? `Overview · ${store.groupTitle(store.workspaceKey() || null)}` : "Termlevel"}</Type>
       </View>
       <View testID="global-actions" desktop={{ windowDrag: false }} class="ml-auto flex-row items-center gap-0.5">
+        <IconButton icon="plus" label="New terminal" testID="titlebar-new-terminal" onPress={actions.newTerminal} />
         <IconButton icon="folder" label="New group" testID="new-group" onPress={actions.newGroup} />
         <IconButton icon="search" label="Find a terminal" testID="find-terminal" onPress={actions.search} />
         <View ref={ref => { notificationAnchor = ref; }} class="relative">

@@ -808,3 +808,9 @@ working 状态原先固定为三段横线呼吸。用户查看候选后认为三
 - 用户验收发现并修正：`45aba59` 的 `docs/architecture.md` patch 不显示，根因是 `patch().trimEnd()` 删掉了 hunk 末尾的空 context 行；History 与 Changes 都改为原样传给 `DiffView`。小窗口放大后 Author 列出现但行内作者为空，根因是列表行没有随分栏宽度重渲染；提交列表改为 `Scroll` + `Each`，列布局变化时重挂载，并在 headless 用例中验证 700 → 1600 后 Author 出现。点击提交后详情更新但行背景不变，改为选中 index 的绝对定位 overlay；Changed files 和 worktree 同样处理。定向复验：`./scripts/nsh check`、`History.test.tsx`、`./scripts/test-native gitlive` 通过；真实仓库截图 `artifacts/dashboard-history-45aba59.png` 确认选中行背景、文件选中和 patch 显示。仍未跑全量。
 
 尚未验证：从 UI 在真实仓库切换 / 删除分支后运行中 shell 的表现、dirty 工作树下的 Git 拒绝提示、从 UI 新建 / 删除 worktree 后的分组与 shell 生命周期、长历史滚动、窄窗口三栏布局、实际输入法与选区回归。删除分支的 Rust 用例与 headless 对话框流程通过，但没有在真实已合并 / 未合并 / 已检出分支上逐项人工验收。预览截图和 headless 交互不能替代这些实机验收。
+
+## 2026-11-16：新建终端入口与分组上下文
+
+基于 `bcf08b7` 的未提交改动。`./scripts/nsh check`、`./scripts/nsh build`、`git diff --check` 通过。`./scripts/nsh test --junit artifacts/headless-tests.xml` 为 217 / 218：`clipboard::tests::osc52_bytes_reach_the_pasteboard_as_unicode` 失败，提示 `pbcopy rejected the sample`；本次分组、未分组及概览入口的 headless 交互通过。JUnit 记录位于 `artifacts/headless-tests.xml`。
+
+原生窗口自动化及人工 GUI 验收未执行；headless 预览不能替代真实窗口交互验收。
