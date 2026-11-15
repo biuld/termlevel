@@ -51,8 +51,10 @@ export function NotificationRow(props: {
   // Program-supplied content leads; the generated event heading is metadata.
   // For ordinary notices too, the actual message leads and the event title
   // stays as context. The host's empty-title placeholder adds no information.
-  const headline = () => program()?.message || program()?.title || props.entry.body || props.entry.title;
-  const body = () => program() ? (program()?.message && program()?.title !== headline() ? program()?.title ?? "" : "")
+  const headline = () => props.entry.source === "app" && props.entry.level === "info" ? props.entry.title
+    : program()?.message || program()?.title || props.entry.body || props.entry.title;
+  const body = () => props.entry.source === "app" && props.entry.level === "info" ? props.entry.body
+    : program() ? (program()?.message && program()?.title !== headline() ? program()?.title ?? "" : "")
     : props.entry.body && props.entry.title !== "Terminal notification" && props.entry.title !== headline() ? props.entry.title : "";
   const canExpand = () => excerpt(headline(), 100) !== headline() || excerpt(body(), 160) !== body();
   const origin = () => [props.entry.source === "app" ? "Termlevel" : "Terminal", program()?.app].filter(Boolean).join(" · ");

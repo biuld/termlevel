@@ -3,7 +3,7 @@ import { expect, open, test } from "nsh/test";
 const options = { platform: "macos" as const, width: 1200, height: 780, colorScheme: "dark" as const, modules: { "termlevel/native": { "Runtime.previewMode": true } } };
 
 test("find in the preview terminal counts buffer matches", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("../workspace/fixtures/PreviewApp.tsx", options);
   await app.press("id:tab-preview");
   await app.keyboard.press("mod+f");
   await app.waitFor("id:find-query");
@@ -19,7 +19,7 @@ test("find in the preview terminal counts buffer matches", async () => {
 });
 
 test("settings changes the scrollback limit and lists the shortcuts", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("../workspace/fixtures/PreviewApp.tsx", options);
   await app.press("id:settings");
   await app.press("id:settings-terminal");
   expect(app.texts().some((text) => text.includes("10,000"))).toBe(true);

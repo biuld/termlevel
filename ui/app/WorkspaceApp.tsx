@@ -3,9 +3,8 @@ import { Button, Input, ResizablePanel, ResizablePanelGroup } from "nsh/base";
 import { Application, currentWindow, Menu, titleBar } from "nsh/desktop";
 import { Runtime, Sessions, TerminalEngine } from "termlevel/native";
 import { TilingCanvas } from "../workspace/TilingCanvas";
-import { nativeGit } from "../dashboard/native-git";
-import { previewGit } from "../dashboard/preview-git";
-import type { GitTransport } from "../dashboard/git-types";
+import { nativeGit } from "../git/native-git";
+import type { GitTransport } from "../git/git-types";
 import { Action, AppDialog, DialogActions, fieldClass, IconButton } from "../shared/controls";
 import { Icon } from "../shared/icons";
 import { GroupPathDialog } from "../workspace/GroupPathDialog";
@@ -16,9 +15,10 @@ import { Sidebar, type SidebarActions } from "../workspace/Sidebar";
 import { Type } from "../shared/type";
 import { applyFonts, interfaceFont, monoFont } from "../shared/fonts";
 import { writeWorkspaceSnapshot } from "../workspace/persistence";
-import { createWorkspace, type Workspace } from "../workspace/workspace";
+import { createWorkspace, type Workspace } from "../workspace/state";
 import type { Appearance, TerminalIdentity, WorkspaceSnapshot } from "../workspace/workspace-snapshot";
 import type { WorkingIndicatorKind } from "../shared/WorkingIndicator";
+import type { PreviewSurface } from "../terminal/TerminalSurface";
 
 type Editor = { title: string; value: string; save: (value: string) => void };
 
@@ -28,11 +28,12 @@ export function WorkspaceApp(props: {
   snapshot?: WorkspaceSnapshot | null;
   /** Persist the workspace document after changes. The app entry opts in. */
   persist?: boolean;
-  /** Git data for the overview. Defaults to the preview or system-CLI transport. */
+  /** Git transport, injectable for isolated tests. */
   git?: GitTransport;
+  previewSurface?: PreviewSurface;
 } = {}) {
   const preview = Runtime.previewMode();
-  const git = props.git ?? (preview ? previewGit : nativeGit);
+  const git = props.git ?? (preview ? undefined : nativeGit);
   const terminalIdentity = signal<TerminalIdentity>(props.snapshot?.terminalIdentity ?? "termlevel");
   const store = props.workspace ?? createWorkspace(preview ? undefined : {
     cwd: Runtime.cwd(), list: Sessions.list,
@@ -100,7 +101,7 @@ export function WorkspaceApp(props: {
   const pathError = signal("");
   const version = Runtime.version();
   effect(() => {
-    const modal = editor() !== null || searching() || settings() || notifying() || closingGroup() !== null || choosingPath() || finding() || store.dashboardOpen();
+    const modal = editor() !== null || searching() || settings() || notifying() || closingGroup() !== null || choosingPath() || finding() || store.canvasBlocked();
     if (modal) { store.resizing.set(false); store.cancelPaneDrag(); }
     store.inputBlocked.set(modal || store.resizing());
   });
@@ -119,8 +120,8 @@ export function WorkspaceApp(props: {
     minSize: { width: 640, height: 420 },
   });
   effect(() => win.set({
-    title: store.dashboardOpen()
-      ? `Overview — ${store.groupTitle(store.workspaceKey() || null)} — Termlevel`
+    title: store.canvasBlocked()
+      ? `${store.dashboardOpen() ? "Group settings" : store.activeGitView() === "changes" ? "Changes" : "History"} — ${store.groupTitle(store.workspaceKey() || null)} — Termlevel`
       : `${store.activeTab()?.title ?? "Termlevel"} — Termlevel`,
   }));
 
@@ -149,6 +150,7 @@ export function WorkspaceApp(props: {
     "mod+t": actions.newTerminal,
     "mod+w": () => {
       if (store.dashboardOpen()) { store.closeDashboard(); return; }
+      const view = store.activeGitView(); if (view) { store.closeGitView(store.workspaceKey(), view); return; }
       const id = store.activeId(); if (id) store.closeTab(id);
     },
     "mod+b": toggleSidebar,
@@ -158,7 +160,7 @@ export function WorkspaceApp(props: {
     "mod+shift+g": actions.newGroup,
     "mod+shift+o": () => { const key = store.workspaceKey(); if (key) store.openDashboard(key); },
     "mod+k": actions.search,
-    "mod+f": () => { if (editor() === null && !searching() && !settings() && closingGroup() === null && !choosingPath() && !store.dashboardOpen()) finding.set(true); },
+    "mod+f": () => { if (editor() === null && !searching() && !settings() && closingGroup() === null && !choosingPath() && !store.canvasBlocked()) finding.set(true); },
     "mod+,": actions.settings,
     "ctrl+tab": () => store.step(1),
     "ctrl+shift+tab": () => store.step(-1),
@@ -189,7 +191,7 @@ export function WorkspaceApp(props: {
     { label: "Edit", submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] },
     { label: "View", submenu: [
       { label: "Toggle sidebar", shortcut: "mod+b", onSelect: shortcuts["mod+b"] },
-      { label: "Group overview", shortcut: "mod+shift+o", onSelect: shortcuts["mod+shift+o"] },
+      { label: "Group settings", shortcut: "mod+shift+o", onSelect: shortcuts["mod+shift+o"] },
       { label: "Find a terminal…", shortcut: "mod+k", onSelect: actions.search },
       { label: "Find in terminal…", shortcut: "mod+f", onSelect: () => finding.set(true) },
       { type: "separator" },
@@ -216,10 +218,20 @@ export function WorkspaceApp(props: {
           testID="toggle-sidebar" onPress={actions.toggleSidebar} />
       </View>
       <View class="absolute inset-0 items-center justify-center" style={{ pointerEvents: "none" }}>
-        <Type role="label">{store.dashboardOpen() ? `Overview · ${store.groupTitle(store.workspaceKey() || null)}` : "Termlevel"}</Type>
+        <Type role="label">{store.canvasBlocked() ? `${store.dashboardOpen() ? "Group settings" : store.activeGitView() === "changes" ? "Changes" : "History"} · ${store.groupTitle(store.workspaceKey() || null)}` : "Termlevel"}</Type>
       </View>
       <View testID="global-actions" desktop={{ windowDrag: false }} class="ml-auto flex-row items-center gap-0.5">
-        <IconButton icon="plus" label="New terminal" testID="titlebar-new-terminal" onPress={actions.newTerminal} />
+        <IconButton icon="plus" label={store.workspaceKey() ? `New terminal in ${store.groupTitle(store.workspaceKey())}` : "New ungrouped terminal"} testID="titlebar-new-terminal" onPress={actions.newTerminal} />
+        <IconButton icon="gitBranch" label="Git" testID="titlebar-git" onPress={() => {
+          if (!store.workspaceKey()) {
+            void Menu.popup([{ label: "Select a tab group to open Git", disabled: true }]);
+            return;
+          }
+          void Menu.popup([
+            { label: "Changes", onSelect: () => store.openGitView("changes") },
+            { label: "History", onSelect: () => store.openGitView("history") },
+          ]);
+        }} />
         <IconButton icon="folder" label="New group" testID="new-group" onPress={actions.newGroup} />
         <IconButton icon="search" label="Find a terminal" testID="find-terminal" onPress={actions.search} />
         <View ref={ref => { notificationAnchor = ref; }} class="relative">
@@ -248,11 +260,23 @@ export function WorkspaceApp(props: {
         <ResizablePanel minSize={320}>
           <View class="h-full min-w-0 flex-1" style={{ paddingLeft: token("gap-pane") / 2 }}>
             <TilingCanvas workspace={store} preview={preview} rename={actions.renameTab} newGroup={actions.newGroup}
-              closeGroup={actions.closeGroup} git={git} finding={finding} findQuery={findQuery} />
+              closeGroup={actions.closeGroup} git={git} previewSurface={props.previewSurface} notify={notifications.publish} finding={finding} findQuery={findQuery} />
           </View>
         </ResizablePanel>
       </ResizablePanelGroup>
     </View>
+
+    <If when={notifications.toast()}>{(notice) =>
+      <View testID="notification-toast" class="absolute flex-row items-start gap-2 rounded-(--radius-overlay) border border-border bg-popover p-3"
+        style={{ top: token("height-titlebar") + token("gap-pane"), right: token("gap-pane"), width: Math.min(360, windowWidth() - 2 * token("gap-pane")), zIndex: 100, boxShadow: [{ x: 0, y: 8, blur: 24, color: token("panel-shadow") }] }}>
+        <Icon name={notice().level === "error" ? "xCircle" : "check"} size={16} color={token(notice().level === "error" ? "destructive" : "notification-info")} />
+        <View class="min-w-0 flex-1 gap-1">
+          <Type role="label" tone="popover-foreground">{notice().title}</Type>
+          <Type role="caption" tone="popover-foreground" lines={3}>{notice().body}</Type>
+        </View>
+        <IconButton icon="close" label="Dismiss notification" testID="toast-dismiss" onPress={notifications.dismissToast} />
+      </View>
+    }</If>
 
     {/* Window-level presentation escapes the narrow panel's native clipping. */}
     <View testID="sidebar-panel" class="absolute"

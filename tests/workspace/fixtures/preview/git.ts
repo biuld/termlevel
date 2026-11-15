@@ -6,7 +6,7 @@ import type {
   GitRepoStatus,
   GitTransport,
   GitWorktree,
-} from "./git-types";
+} from "../../../../ui/git/git-types";
 
 const commits: GitCommit[] = [
   {
@@ -133,13 +133,13 @@ function detail(oid: string): GitCommitDetail {
     commit,
     body: "Preview data for the history panel. No Git command ran.",
     files: [
-      { path: "ui/dashboard/HistoryPanel.tsx", status: "A" },
-      { path: "ui/dashboard/commit-graph.ts", status: "A" },
+      { path: "ui/git/HistoryPanel/panel.tsx", status: "A" },
+      { path: "ui/git/commit-graph.ts", status: "A" },
       { path: "src/git.rs", status: "M" },
     ],
     patch: [
-      "--- a/ui/dashboard/HistoryPanel.tsx",
-      "+++ b/ui/dashboard/HistoryPanel.tsx",
+      "--- a/ui/git/HistoryPanel/panel.tsx",
+      "+++ b/ui/git/HistoryPanel/panel.tsx",
       "@@ -1,3 +1,7 @@",
       " import { View } from \"nsh\";",
       "+import { DataTable } from \"nsh/base\";",
@@ -184,6 +184,8 @@ export const previewGit: GitTransport = {
     error: null,
   }),
   commit: async (_root, oid) => detail(oid),
+  fetch: fail,
+  pull: fail,
   checkout: fail,
   createBranch: fail,
   deleteBranch: fail,

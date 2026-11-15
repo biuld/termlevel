@@ -1,6 +1,6 @@
 import { mount, token, View, Text } from "nsh";
 import { Notifications, Runtime, Sessions } from "termlevel/native";
-import { createWorkspace } from "../../../ui/workspace/workspace";
+import { createWorkspace } from "../../../ui/workspace/state";
 import { WorkspaceApp } from "../../../ui/app/WorkspaceApp";
 
 // A real /bin/sh session exercises OSC 9;4 and OSC 7501 through the same

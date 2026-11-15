@@ -1,10 +1,10 @@
 import { cleanup, effect, signal, token, untracked, View, type Signal } from "nsh";
-import { monoFont } from "../shared/fonts";
+import { monoFont } from "../../../../ui/shared/fonts";
 import { Terminal, type TerminalRef } from "nsh/base";
-import type { Workspace } from "../workspace/workspace";
-import { FindBar, countMatches } from "./FindBar";
-import { PreviewSession } from "./preview-session";
-import { ansiColor } from "../shared/theme";
+import type { Workspace } from "../../../../ui/workspace/state";
+import { FindBar, countMatches } from "../../../../ui/terminal/FindBar";
+import { PreviewSession } from "./session";
+import { ansiColor } from "../../../../ui/shared/theme";
 
 export function PreviewTerminal(props: {
   id: string;

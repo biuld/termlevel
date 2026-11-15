@@ -56,7 +56,7 @@ test("a saved workspace reopens groups, pins and the split in new sessions", asy
       { id: "group-2", title: "Playground", cwd: "/play", color: "blue", collapsed: true },
     ],
     tabs: [
-      { id: "old-a", title: "UI prototype", cwd: "/work", groupId: "group-1", pinned: false, customTitle: true },
+      { id: "old-a", title: "UI prototype", cwd: "/work", groupId: "group-1", pinned: true, customTitle: true },
       { id: "old-b", title: "Build & preview", cwd: "/work", groupId: "group-1", pinned: false, customTitle: true },
       { id: "old-c", title: "Color test", cwd: "/play", groupId: "group-2", pinned: false, customTitle: true },
       { id: "old-pin", title: "Pinned", cwd: "~", groupId: null, pinned: true, customTitle: true },
@@ -107,6 +107,8 @@ test("a saved workspace reopens groups, pins and the split in new sessions", asy
   });
   const saved = JSON.parse(app.storage().workspace);
   expect(saved.tabs.map((tab: { id: string }) => tab.id)).toEqual(["session-1", "session-2", "session-3", "session-4"]);
+  expect(saved.tabs[0].groupId).toBe("group-1");
+  expect(saved.tabs[0].pinned).toBe(true);
   expect(saved.sidebarWidth).toBe(240);
   expect(saved.fontSize).toBe(18);
   expect(saved.scrollback).toBe(20000);
@@ -215,7 +217,7 @@ test("the working indicator is saved and restored through settings", async () =>
   }
 });
 
-test("a saved group overview reopens over the group and closes to its terminal", async () => {
+test("a saved group overview migrates to a Changes tab and returns to its terminal", async () => {
   const stored = {
     version: 1,
     groups: [{ id: "group-1", title: "termlevel", cwd: "/work", color: "purple", collapsed: false }],
@@ -235,11 +237,64 @@ test("a saved group overview reopens over the group and closes to its terminal",
   const app = await open("./fixtures/RestoreFixture.tsx", {
     ...options, storage: { workspace: JSON.stringify(stored) },
   });
-  await app.waitFor("id:dashboard");
-  expect(app.shows("id:dashboard")).toBe(true);
+  await app.waitFor("id:git-view");
+  expect(app.shows("id:git-tab-group-1-changes")).toBe(true);
   expect(app.shows("id:terminal-session-1")).toBe(false);
-  await app.keyboard.press("escape");
-  expect(app.shows("id:dashboard")).toBe(false);
+  await app.keyboard.press("mod+w");
+  expect(app.shows("id:git-view")).toBe(false);
   expect(app.shows("id:terminal-session-1")).toBe(true);
+  app.dispose();
+});
+
+test("Git tabs and their selected group restore without creating terminal sessions", async () => {
+  const stored = {
+    version: 1,
+    groups: [{ id: "group-1", title: "project", cwd: "/work", color: "purple", collapsed: false }],
+    tabs: [{ id: "old-a", title: "Shell", cwd: "/work", groupId: "group-1", pinned: false, customTitle: false }],
+    layouts: { "group-1": { root: { kind: "pane", id: "pane-1", sessionId: "old-a" }, focusedPaneId: "pane-1", zoomed: false } },
+    activeTabId: "old-a", workspaceKey: "group-1", dashboards: [],
+    gitViews: { "group-1": { open: ["changes", "history"], selected: "history" } },
+  };
+  const app = await open("./fixtures/RestoreFixture.tsx", { ...options, storage: { workspace: JSON.stringify(stored) } });
+  await app.waitFor("id:history-panel");
+  expect(app.shows("id:git-tab-group-1-changes")).toBe(true);
+  expect(app.shows("id:git-tab-group-1-history")).toBe(true);
+  expect(app.count("id:terminal-session-1")).toBe(0);
+  await app.press("id:tab-session-1");
+  await app.waitFor("id:terminal-session-1");
+  expect(app.shows("id:terminal-session-2")).toBe(false);
+  app.dispose();
+});
+
+test("deleting a group with only a Git view clears its context", async () => {
+  const stored = {
+    version: 1, groups: [{ id: "group-1", title: "project", cwd: "/work", color: "purple", collapsed: false }],
+    tabs: [], layouts: {}, activeTabId: null, workspaceKey: "group-1", dashboards: [],
+    gitViews: { "group-1": { open: ["changes"], selected: "changes" } },
+  };
+  const app = await open("./fixtures/RestoreFixture.tsx", { ...options, storage: { workspace: JSON.stringify(stored) } });
+  await app.waitFor("id:git-view");
+  await app.rightClick("id:group-group-1");
+  await app.chooseMenuItem("Delete group…");
+  await app.press("id:confirm-close-group");
+  await app.waitFor("id:empty-state");
+  await app.press("id:titlebar-new-terminal");
+  await app.waitFor("id:terminal-session-1");
+  await app.waitUntil(() => JSON.parse(app.storage().workspace).workspaceKey === "");
+  app.dispose();
+});
+
+test("restoring an empty Ungrouped workspace preserves its selected context", async () => {
+  const stored = {
+    version: 1, groups: [{ id: "group-1", title: "project", cwd: "/work", color: "purple", collapsed: false }],
+    tabs: [{ id: "old-a", title: "Shell", cwd: "/work", groupId: "group-1", pinned: false, customTitle: false }],
+    layouts: { "group-1": { root: { kind: "pane", id: "pane-1", sessionId: "old-a" }, focusedPaneId: "pane-1", zoomed: false } },
+    activeTabId: null, workspaceKey: "", dashboards: [],
+  };
+  const app = await open("./fixtures/RestoreFixture.tsx", { ...options, storage: { workspace: JSON.stringify(stored) } });
+  await app.waitFor("id:empty-state");
+  await app.press("id:titlebar-new-terminal");
+  await app.waitFor("id:terminal-session-2");
+  await app.waitUntil(() => JSON.parse(app.storage().workspace).tabs.some((tab: { id: string; groupId: string | null }) => tab.id === "session-2" && tab.groupId === null));
   app.dispose();
 });

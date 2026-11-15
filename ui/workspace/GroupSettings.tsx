@@ -4,23 +4,17 @@ import { Menu } from "nsh/desktop";
 import { DialogKeys, Hint, IconButton } from "../shared/controls";
 import { groupColor, groupPalette } from "../shared/theme";
 import { Type } from "../shared/type";
-import type { Workspace } from "../workspace/workspace";
-import { GitPanel } from "./GitPanel";
-import { HistoryPanel } from "./HistoryPanel";
-import type { GitTransport } from "./git-types";
+import type { Workspace } from "./state";
 
-/** A group's full-canvas overview. Sessions stay mounted behind it. */
-export function Dashboard(props: {
+/** Group metadata and actions, independent of its terminal and Git views. */
+export function GroupSettings(props: {
   workspace: Workspace;
-  preview: boolean;
   closeGroup: (id: string) => void;
-  git: GitTransport;
 }) {
   const store = props.workspace;
   const groupId = () => store.workspaceKey();
   const group = () => store.group(groupId());
   const colorOpen = signal(false);
-  const view = signal<"changes" | "history">("changes");
 
   function groupMenu() {
     void Menu.popup([
@@ -34,7 +28,6 @@ export function Dashboard(props: {
     style={{ zIndex: 30 }}>
     <DialogKeys dismiss={store.closeDashboard} />
 
-    {/* The group's settings live in the overview header, not a separate card. */}
     <View class="shrink-0 border-b border-border">
       <View class="h-[56px] flex-row items-center gap-3 px-3">
         <Popover open={colorOpen()} onOpenChange={({ open }) => colorOpen.set(open)}
@@ -72,32 +65,12 @@ export function Dashboard(props: {
             class="h-(--height-tab) w-[220px] rounded-(--radius-control) bg-transparent px-1 text-(length:--text-title) font-semibold hover:bg-control-hover focus:bg-control-hover" />
           <Type role="body" family="mono" tone="muted-foreground" class="min-w-0 px-1" lines={1}>{group()?.cwd ?? ""}</Type>
         </View>
-        <View class="flex-row rounded-(--radius-tab) bg-chrome p-0.5">
-          <Button testID="dashboard-view-changes" selected={view() === "changes"}
-            onPress={() => view.set("changes")}
-            class="h-(--height-control) items-center justify-center rounded-(--radius-control) px-2.5 focus-visible:ring-2 ring-sidebar-ring"
-            classList={{ "bg-sidebar": view() === "changes" }}>
-            <Type role="label" tone={view() === "changes" ? "foreground" : "muted-foreground"}>Changes</Type>
-          </Button>
-          <Button testID="dashboard-view-history" selected={view() === "history"}
-            onPress={() => view.set("history")}
-            class="h-(--height-control) items-center justify-center rounded-(--radius-control) px-2.5 focus-visible:ring-2 ring-sidebar-ring"
-            classList={{ "bg-sidebar": view() === "history" }}>
-            <Type role="label" tone={view() === "history" ? "foreground" : "muted-foreground"}>History</Type>
-          </Button>
-        </View>
         <View class="flex-row items-center gap-1">
           <IconButton icon="more" label="Group actions" testID="dashboard-group-menu" onPress={groupMenu} />
-          <IconButton icon="close" label="Close overview" testID="dashboard-close" onPress={store.closeDashboard} />
+          <IconButton icon="close" label="Close group settings" testID="dashboard-close" onPress={store.closeDashboard} />
         </View>
       </View>
     </View>
 
-    <If when={view() === "changes"}>
-      <GitPanel workspace={store} git={props.git} preview={props.preview} />
-    </If>
-    <If when={view() === "history"}>
-      <HistoryPanel workspace={store} git={props.git} preview={props.preview} />
-    </If>
   </View>;
 }

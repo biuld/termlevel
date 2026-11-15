@@ -28,6 +28,9 @@ test("native tiled terminals keep geometry, IME ownership and state across pane 
   }
   try {
     const left = (await sessions())[0];
+    await app.rightClick(`id:tab-${left.id}`);
+    await app.chooseMenuItem("Pin terminal");
+    await app.screenshot("artifacts/ungrouped-pin-native.png");
     await app.type(`id:terminal-${left.id}`, "printf 'LEFT_%s\\n' ACTIVE"); await app.keyboard.press("enter");
     await waitForOutput(app, "LEFT_ACTIVE");
     await app.press("id:split-right");

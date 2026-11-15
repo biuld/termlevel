@@ -49,6 +49,8 @@ export interface WorkspaceSnapshot {
   workspaceKey: string;
   /** Groups whose overview is their remembered view. */
   dashboards: string[];
+  /** Open Git views and last selected view for each group. */
+  gitViews?: Record<string, { open: GitView[]; selected: GitView | null }>;
   expanded: boolean;
   sidebarWidth: number | null;
   fontSize: number | null;
@@ -60,6 +62,8 @@ export interface WorkspaceSnapshot {
   monoFont: string | null;
   workingIndicator: WorkingIndicatorKind;
 }
+
+export type GitView = "changes" | "history";
 
 const appearances: readonly string[] = ["system", "light", "dark"];
 const workingIndicators: readonly string[] = ["bars", "vinyl", "wave", "beat"];
@@ -163,7 +167,7 @@ export function parseSnapshot(raw: string): WorkspaceSnapshot | null {
         title: typeof tab.title === "string" && tab.title.trim() ? tab.title : "Terminal",
         cwd: nonEmpty(tab.cwd) ?? "~",
         groupId: grouped ? groupId : null,
-        pinned: grouped ? false : tab.pinned === true,
+        pinned: tab.pinned === true,
         customTitle: tab.customTitle === true,
       });
     }
@@ -186,6 +190,21 @@ export function parseSnapshot(raw: string): WorkspaceSnapshot | null {
     }
   }
 
+  const gitViews: NonNullable<WorkspaceSnapshot["gitViews"]> = {};
+  const storedGitViews = object(document.gitViews);
+  if (storedGitViews) for (const [id, entry] of Object.entries(storedGitViews)) {
+    const state = object(entry);
+    if (!groupIds.has(id) || !state) continue;
+    const open: GitView[] = [];
+    if (Array.isArray(state.open)) for (const kind of state.open) {
+      if ((kind === "changes" || kind === "history") && !open.includes(kind)) open.push(kind);
+    }
+    const selected = state.selected === "changes" || state.selected === "history" ? state.selected : null;
+    gitViews[id] = { open, selected: selected && open.includes(selected) ? selected : null };
+  }
+  // An old overview showed Changes by default; preserve that open view on upgrade.
+  if (!storedGitViews) for (const id of dashboards) gitViews[id] = { open: ["changes"], selected: "changes" };
+
   return {
     version: SNAPSHOT_VERSION,
     groups,
@@ -194,6 +213,7 @@ export function parseSnapshot(raw: string): WorkspaceSnapshot | null {
     activeTabId: nonEmpty(document.activeTabId),
     workspaceKey: typeof document.workspaceKey === "string" ? document.workspaceKey : "",
     dashboards,
+    gitViews,
     expanded: document.expanded !== false,
     sidebarWidth: finite(document.sidebarWidth),
     fontSize: finite(document.fontSize),

@@ -19,10 +19,10 @@
 ## 工作区功能
 
 - 独立 pane 布局：统一窗口栏，可调整宽度、可收起的单行垂直标签，终端使用带间距与圆角的面板。
-- 创建、关闭、重命名、固定终端；右键菜单排序及跨组移动。
+- 创建、关闭、重命名终端；固定终端在所属分组或 Ungrouped 内置顶，右键菜单支持排序及跨组移动。
 - 分组创建、折叠、重命名、颜色、取消分组与关闭组确认。
-- 点击组头进入组概览：头部直接编辑组名、颜色、路径与组操作；下方是变更文件树和单文件 diff。Git 数据由系统 `git` CLI 只读提供，需要 Git 2.20+；版本不满足时在概览中提示。
-- 概览可在 Changes 与 History 之间切换：History 按分支 scope 显示提交车道、提交详情；变更文件列表可点击，右侧只显示选中文件的 patch，默认第一个文件。左栏管理 Local / Remote / Tags 与 worktree，可 checkout、新建 / 删除分支、新建 worktree、把 worktree 打开为新分组、删除或锁定 worktree。合并、rebase 与冲突解决尚未接入。
+- 侧栏的 Ungrouped 入口切换到未分组工作区；标题栏 `+` 在当前工作区创建 terminal，提示文字显示创建目标。标题栏 Git 菜单按当前分组打开 Changes 或 History tab；每组每种视图最多一个，关闭不会结束终端。打开状态与选中视图随工作区恢复。组头右键提供组设置和操作。Git 数据由系统 `git` CLI 提供，需要 Git 2.20+。
+- Changes 展示变更文件树和单文件 diff。History 按分支 scope 显示提交车道、提交详情；变更文件列表可点击，右侧只显示选中文件的 patch，默认第一个文件。工具栏可 Fetch 或 fast-forward Pull 当前分支；左栏管理 Local / Remote / Tags 与 worktree，可 checkout、新建 / 删除分支、新建 worktree、把 worktree 打开为新分组、删除或锁定 worktree。合并、rebase 与冲突解决尚未接入。
 - Firefox 风格分组编辑浮层：右键组头或点更多，直接改名称、选择九种颜色；新建组直接进入编辑。
 - 查找终端、字体大小调整、系统菜单与快捷键。
 - 多终端定向分屏、方向焦点与位置交换；拖动侧栏标签或 pane 标题安排已有会话。
@@ -83,7 +83,7 @@ App.tsx                                      薄的 TSX 挂载入口
 ui/app/WorkspaceApp.tsx                      窗口、菜单、快捷键、对话框及应用接线
 ui/                                          按 app、workspace、settings、terminal、shared 分工
 ui/terminal/TerminalSurface.tsx              真实原生终端的展示与低频状态
-ui/terminal/PreviewTerminal.tsx              显式预览显示与演示 transport
+ui/git/                                      Git 变更、历史和操作界面
 tests/terminal/*.test.tsx                    内核、真实 PTY 和工作区重新绑定测试
 src/lib.rs                                   Rust 原生导出注册
 src/sessions.rs                              独立会话管理、PTY 与进程生命周期
@@ -102,6 +102,6 @@ NSH 当前视图的鼠标报告、完整功能键/修饰键、现代键盘协议
 TERMLEVEL_PREVIEW=1 ./scripts/nsh run --window-size 1200x780
 ```
 
-此模式保留演示标签和 `help`、`echo`、`pwd`、`colors`、`clear`，**不启动 shell、不执行系统命令**。预览与真实会话采用不同 transport，不能把预览测试当作真实 PTY 证据。
+此模式显示确定性的工作区界面，但 Git 和终端会话不可用；**不启动 shell、不执行系统命令、不访问真实工作区存储**。测试夹具可注入模拟数据，预览测试不能作为真实 PTY 证据。
 
 修改视觉从 [theme.json](theme.json) 开始，token 分工及使用规则见 [UI 与主题](docs/design.md)。组件不直接保存配色，分组颜色也由当前主题解析。

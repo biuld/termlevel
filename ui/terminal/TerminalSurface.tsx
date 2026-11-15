@@ -1,9 +1,11 @@
-import { effect, signal, token, View, type Signal, type ViewStyle } from "nsh";
+import { effect, signal, token, View, type JSX, type Signal, type ViewStyle } from "nsh";
 import { SessionTerminal, type SessionTerminalRef } from "termlevel/native";
 import { monoFont } from "../shared/fonts";
-import type { Workspace } from "../workspace/workspace";
+import type { Workspace } from "../workspace/state";
 import { FindBar } from "./FindBar";
-import { PreviewTerminal } from "./PreviewTerminal";
+import { Type } from "../shared/type";
+
+export type PreviewSurface = (props: { id: string; workspace: Workspace; finding: Signal<boolean>; findQuery: Signal<string> }) => JSX.Element;
 
 export function TerminalSurface(props: {
   id: string;
@@ -11,8 +13,15 @@ export function TerminalSurface(props: {
   preview: boolean;
   finding: Signal<boolean>;
   findQuery: Signal<string>;
+  previewSurface?: PreviewSurface;
 }) {
-  if (props.preview) return <PreviewTerminal id={props.id} workspace={props.workspace} finding={props.finding} findQuery={props.findQuery} />;
+  if (props.preview) {
+    const Surface = props.previewSurface;
+    if (Surface) return <Surface id={props.id} workspace={props.workspace} finding={props.finding} findQuery={props.findQuery} />;
+    return <View testID={`terminal-${props.id}`} class="flex-1 items-center justify-center bg-terminal-background">
+      <Type role="body" tone="muted-foreground">Terminal sessions are unavailable in preview.</Type>
+    </View>;
+  }
   const store = props.workspace;
   const id = props.id;
   const tab = () => store.tab(id);

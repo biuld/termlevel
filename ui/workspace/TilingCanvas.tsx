@@ -3,13 +3,16 @@ import { Menu } from "nsh/desktop";
 import { ResizeKeys, TerminalMetrics } from "termlevel/native";
 import { monoFont } from "../shared/fonts";
 import { TerminalSurface } from "../terminal/TerminalSurface";
+import type { PreviewSurface } from "../terminal/TerminalSurface";
 import { Action, DialogKeys, Hint, IconButton } from "../shared/controls";
 import { Icon } from "../shared/icons";
 import { Type } from "../shared/type";
 import { groupColor } from "../shared/theme";
-import { Dashboard } from "../dashboard/Dashboard";
-import type { GitTransport } from "../dashboard/git-types";
-import type { Workspace } from "./workspace";
+import { GroupSettings } from "./GroupSettings";
+import { GitPanel } from "../git/GitPanel";
+import { HistoryPanel } from "../git/HistoryPanel";
+import type { GitTransport } from "../git/git-types";
+import type { Workspace } from "./state";
 import type { Divider, Direction, Rect } from "./tiling";
 
 export function TilingCanvas(props: {
@@ -18,7 +21,9 @@ export function TilingCanvas(props: {
   rename: (id: string) => void;
   newGroup: () => void;
   closeGroup: (id: string) => void;
-  git: GitTransport;
+  git?: GitTransport;
+  previewSurface?: PreviewSurface;
+  notify: (level: "info" | "error", title: string, body: string) => void;
   finding: Signal<boolean>;
   findQuery: Signal<string>;
 }) {
@@ -73,7 +78,7 @@ export function TilingCanvas(props: {
     const id = row.id;
     const tab = () => store.tab(id);
     const focused = () => store.activeId() === id;
-    const shown = () => !store.dashboardOpen() && !!store.frameForSession(id);
+    const shown = () => !store.canvasBlocked() && !!store.frameForSession(id);
     let lastFrame: Rect = { x: 0, y: 0, width: 640, height: 400 };
     const frame = () => { const next = store.frameForSession(id); if (next) lastFrame = next; return lastFrame; };
     const showPath = () => store.paneList().length === 1 && frame().width >= 520;
@@ -131,7 +136,7 @@ export function TilingCanvas(props: {
           <IconButton icon="more" label="Terminal actions" testID={focused() ? "terminal-actions" : `terminal-actions-${id}`} onPress={() => menu(id)} />
         </View>
       </View>
-      <View class="relative min-h-0 flex-1"><TerminalSurface id={id} workspace={store} preview={props.preview} finding={props.finding} findQuery={props.findQuery} /></View>
+      <View class="relative min-h-0 flex-1"><TerminalSurface id={id} workspace={store} preview={props.preview} previewSurface={props.previewSurface} finding={props.finding} findQuery={props.findQuery} /></View>
       <If when={focused() && store.paneList().length > 1}>
         <View testID="focused-pane-ring" class="absolute inset-0 rounded-(--radius-panel) border border-ring" style={{ pointerEvents: "none" }} />
       </If>
@@ -173,7 +178,7 @@ export function TilingCanvas(props: {
         style={{ width: divider().axis === "row" ? 2 : "100%", height: divider().axis === "row" ? "100%" : 2 }} />
     </View>;
   }
-  const hint = () => store.dashboardOpen() ? ""
+  const hint = () => store.canvasBlocked() ? ""
     : store.resizing() ? "Resize panes with arrow keys · Enter or Escape to finish"
     : store.constrained() ? "Window too small · Showing the focused terminal" : store.layoutMessage();
   return <View testID="session-panel" class="relative min-h-0 min-w-0 flex-1"
@@ -182,16 +187,16 @@ export function TilingCanvas(props: {
     <TerminalMetrics fontFamily={monoFont()} fontSize={store.fontSize()} onChange={({ width }) => { if (store.cellWidth() !== width) store.cellWidth.set(width); }} />
     {/* A single keyed native surface per session survives every tree operation. */}
     <Each of={store.tabs().map(tab => tab.id)}>{id => <SessionPane id={id()} />}</Each>
-    <If when={!store.tiling().zoomed && !store.constrained() && !store.dashboardOpen()}>
+    <If when={!store.tiling().zoomed && !store.constrained() && !store.canvasBlocked()}>
       <Each of={store.fullGeometry().dividers.map(d => d.id)}>{id => <ResizeHandle id={id()} />}</Each>
     </If>
-    <If when={store.tabs().length === 0 && !store.dashboardOpen()}>
+    <If when={store.paneList().length === 0 && !store.canvasBlocked()}>
       <View testID="empty-state" class="flex-1 items-center justify-center gap-3 rounded-(--radius-panel) bg-terminal-background">
         <View class="h-10 w-10 items-center justify-center rounded-(--radius-panel) border border-border bg-muted"><Icon name="terminal" size={20} /></View>
         <Type role="heading">Room for something new.</Type>
-        <Type role="body" tone="muted-foreground">Open a terminal in your home folder, or create a group for a project.</Type>
+        <Type role="body" tone="muted-foreground">{store.workspaceKey() ? "Open a terminal in this group." : "Open a terminal in your home folder, or create a group for a project."}</Type>
         <View class="flex-row items-center gap-2">
-          <Action primary onPress={() => store.addTab()} testID="empty-new-terminal">Open terminal in Home</Action>
+          <Action primary onPress={() => store.addTab(store.workspaceKey() || null)} testID="empty-new-terminal">{store.workspaceKey() ? "Open terminal" : "Open terminal in Home"}</Action>
           <Action onPress={() => props.newGroup()} testID="empty-new-group">New group…</Action>
         </View>
       </View>
@@ -206,7 +211,7 @@ export function TilingCanvas(props: {
         </If>
       </View>
     </If>
-    <If when={store.paneDrag()?.targetId != null && store.dropPreview() != null && !store.dashboardOpen()}>
+    <If when={store.paneDrag()?.targetId != null && store.dropPreview() != null && !store.canvasBlocked()}>
       <View testID="pane-drop-preview" class="absolute items-center justify-center rounded-(--radius-panel) border-2 bg-primary/15"
         style={{ left: store.dropPreview()!.x, top: store.dropPreview()!.y, width: store.dropPreview()!.width, height: store.dropPreview()!.height,
           borderColor: token(store.paneDrag()!.allowed ? "ring" : "destructive"), pointerEvents: "none", zIndex: 20 }}>
@@ -217,8 +222,17 @@ export function TilingCanvas(props: {
           : "Cannot place terminal here"}</Type>
       </View>
     </If>
+    <If when={!store.dashboardOpen() && store.activeGitView() !== null}>
+      <View testID="git-view" class="absolute inset-0 overflow-hidden rounded-(--radius-panel) bg-terminal-background">
+        <If when={props.git}>{(git) => <>
+          <If when={store.activeGitView() === "changes"}><GitPanel workspace={store} preview={props.preview} git={git()} /></If>
+          <If when={store.activeGitView() === "history"}><HistoryPanel workspace={store} preview={props.preview} git={git()} notify={props.notify} /></If>
+        </>}</If>
+        <If when={!props.git}><View class="flex-1 items-center justify-center"><Type role="body" tone="muted-foreground">Git is unavailable in preview.</Type></View></If>
+      </View>
+    </If>
     <If when={store.dashboardOpen()}>
-      <Dashboard workspace={store} preview={props.preview} closeGroup={props.closeGroup} git={props.git} />
+      <GroupSettings workspace={store} closeGroup={props.closeGroup} />
     </If>
   </View>;
 }

@@ -2,8 +2,96 @@ import { expect, open, test } from "nsh/test";
 
 const options = { platform: "macos" as const, width: 1200, height: 780, colorScheme: "dark" as const, modules: { "termlevel/native": { "Runtime.previewMode": true } } };
 
+test("Ungrouped switches context even without an ungrouped terminal", async () => {
+  const app = await open("./fixtures/PreviewApp.tsx", options);
+  await app.press("id:tab-home");
+  await app.keyboard.press("mod+w");
+  await app.press("id:tab-prototype");
+  await app.press("id:titlebar-git");
+  await app.chooseMenuItem("Changes");
+  await app.press("id:toggle-sidebar");
+  await app.press("id:workspace-ungrouped");
+  await app.waitFor("id:empty-state");
+  await app.press("id:titlebar-new-terminal");
+  await app.waitFor("id:terminal-tab-1");
+  await app.press("id:toggle-sidebar");
+  await app.press("id:group-toggle-termlevel");
+  expect(app.shows("id:tab-tab-1")).toBe(true);
+  await app.press("id:group-toggle-termlevel");
+  await app.press("id:group-termlevel");
+  await app.waitFor("id:git-view");
+  app.dispose();
+});
+
+test("Git menu opens one view per group and returns to the preserved terminal", async () => {
+  const app = await open("./fixtures/PreviewApp.tsx", options);
+  await app.type("id:terminal-prototype", "echo git-keeps-session");
+  await app.keyboard.press("enter");
+  await app.press("id:titlebar-git");
+  await app.chooseMenuItem("Changes");
+  await app.waitFor("id:git-tab-termlevel-changes");
+  await app.press("id:titlebar-git");
+  await app.chooseMenuItem("Changes");
+  expect(app.count("id:git-tab-termlevel-changes")).toBe(1);
+  await app.press("id:titlebar-git");
+  await app.chooseMenuItem("History");
+  await app.waitFor("id:git-tab-termlevel-history");
+  await app.press("id:tab-colors");
+  await app.press("id:titlebar-git");
+  await app.chooseMenuItem("Changes");
+  await app.waitFor("id:git-tab-playground-changes");
+  await app.press("id:group-termlevel");
+  expect(app.shows("id:git-view")).toBe(true);
+  await app.press("id:close-git-termlevel-history");
+  expect(app.shows("id:git-tab-termlevel-history")).toBe(false);
+  await app.waitFor("text:git-keeps-session");
+  await app.press("id:git-tab-termlevel-changes");
+  await app.press("id:titlebar-new-terminal");
+  await app.waitFor("id:terminal-tab-1");
+  await app.press("id:group-toggle-termlevel");
+  expect(app.shows("id:tab-tab-1")).toBe(false);
+  app.dispose();
+});
+
+test("compact sidebar keeps open Git tabs accessible and counts them in a folded group", async () => {
+  const app = await open("./fixtures/PreviewApp.tsx", options);
+  await app.press("id:titlebar-git");
+  await app.chooseMenuItem("Changes");
+  await app.press("id:titlebar-git");
+  await app.chooseMenuItem("History");
+  await app.press("id:tab-prototype");
+  await app.press("id:toggle-sidebar");
+  expect(app.shows("id:git-tab-termlevel-changes")).toBe(true);
+  expect(app.shows("id:git-tab-termlevel-history")).toBe(true);
+  await app.press("id:git-tab-termlevel-changes");
+  await app.waitFor("id:git-view");
+  await app.press("id:toggle-sidebar");
+  await app.press("id:group-toggle-termlevel");
+  await app.press("id:toggle-sidebar");
+  expect(app.shows("id:group-toggle-termlevel")).toBe(false);
+  expect(app.shows("id:git-tab-termlevel-changes")).toBe(true);
+  expect(app.shows("id:git-tab-termlevel-history")).toBe(false);
+  expect(app.texts()).toContain("+3");
+  await app.press("id:group-hidden-termlevel");
+  expect(app.shows("id:git-tab-termlevel-history")).toBe(true);
+  await app.press("id:git-tab-termlevel-history");
+  await app.waitFor("id:history-panel");
+  app.dispose();
+});
+
+test("the compact sidebar removes the Sessions heading and restores it on expand", async () => {
+  const app = await open("./fixtures/PreviewApp.tsx", options);
+  expect(app.shows("id:sidebar-heading")).toBe(true);
+  await app.press("id:toggle-sidebar");
+  expect(app.shows("id:sidebar-heading")).toBe(false);
+  expect(app.shows("id:workspace-ungrouped")).toBe(true);
+  await app.press("id:toggle-sidebar");
+  expect(app.shows("id:sidebar-heading")).toBe(true);
+  app.dispose();
+});
+
 test("the compact sidebar divider cannot resize or change the saved width", async () => {
-  const app = await open("../../App.tsx", { ...options, width: 800 });
+  const app = await open("./fixtures/PreviewApp.tsx", { ...options, width: 800 });
   await app.press("id:toggle-sidebar");
   await app.drag("label:Resize terminal sidebar", { x: 200 });
   expect(app.shows("id:session-path")).toBe(true);
@@ -18,7 +106,7 @@ test("the compact sidebar divider cannot resize or change the saved width", asyn
 });
 
 test("resizing updates the layout before release and hover still opens the sidebar", async () => {
-  const app = await open("../../App.tsx", { ...options, width: 800 });
+  const app = await open("./fixtures/PreviewApp.tsx", { ...options, width: 800 });
   await app.type("id:terminal-prototype", "echo resize-overlay-output");
   await app.keyboard.press("enter");
   expect(app.shows("id:session-path")).toBe(true);
@@ -30,16 +118,14 @@ test("resizing updates the layout before release and hover still opens the sideb
   await app.hover("id:sidebar-panel");
   await app.hover("id:group-termlevel");
   await app.press("id:group-termlevel");
-  await app.waitFor("id:dashboard");
-  await app.keyboard.press("escape");
   await app.hover("id:session-toolbar");
   expect(app.shows("id:dashboard")).toBe(false);
   await app.waitFor("text:resize-overlay-output");
   expect(app.count("id:terminal-prototype")).toBe(1);
 });
 
-test("the compact rail opens the group overview and keeps terminal output", async () => {
-  const app = await open("../../App.tsx", { ...options, width: 640, height: 480 });
+test("the compact rail opens Git and keeps terminal output", async () => {
+  const app = await open("./fixtures/PreviewApp.tsx", { ...options, width: 640, height: 480 });
   await app.type("id:terminal-prototype", "echo hover-retains-output");
   await app.keyboard.press("enter");
   await app.press("id:toggle-sidebar");
@@ -47,12 +133,12 @@ test("the compact rail opens the group overview and keeps terminal output", asyn
   expect(app.shows("id:group-termlevel")).toBe(true);
   await app.hover("id:sidebar-panel");
   await app.press("id:group-termlevel");
-  await app.waitFor("id:dashboard");
-  await app.hover("id:dashboard");
-  expect(app.shows("id:dashboard")).toBe(true);
+  await app.press("id:titlebar-git");
+  await app.chooseMenuItem("Changes");
+  await app.waitFor("id:git-view");
   expect(app.shows("id:session-path")).toBe(false);
-  await app.keyboard.press("escape");
-  expect(app.shows("id:dashboard")).toBe(false);
+  await app.keyboard.press("mod+w");
+  expect(app.shows("id:git-view")).toBe(false);
   await app.hover("id:session-toolbar");
   await app.waitFor("text:hover-retains-output");
   expect(app.count("id:terminal-prototype")).toBe(1);
@@ -61,7 +147,7 @@ test("the compact rail opens the group overview and keeps terminal output", asyn
 });
 
 test("the group chevron toggles the group without opening the overview", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.press("id:group-toggle-termlevel");
   expect(app.shows("id:dashboard")).toBe(false);
   expect(app.shows("id:tab-prototype")).toBe(false);
@@ -70,11 +156,12 @@ test("the group chevron toggles the group without opening the overview", async (
 });
 
 test("a folded group in the compact rail keeps its active tab and counts hidden tabs", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.type("id:terminal-prototype", "echo folded-output");
   await app.keyboard.press("enter");
-  await app.press("id:toggle-sidebar");
   await app.press("id:group-toggle-termlevel");
+  await app.press("id:toggle-sidebar");
+  expect(app.shows("id:group-toggle-termlevel")).toBe(false);
   expect(app.shows("id:tab-prototype")).toBe(true);
   expect(app.shows("id:tab-preview")).toBe(false);
   expect(app.texts()).toContain("+1");
@@ -92,7 +179,7 @@ test("a folded group in the compact rail keeps its active tab and counts hidden 
 });
 
 test("switching tabs and collapsing groups preserve terminal output", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.type("id:terminal-prototype", "echo retained-output");
   await app.keyboard.press("enter");
   await app.waitFor("text:retained-output");
@@ -106,7 +193,7 @@ test("switching tabs and collapsing groups preserve terminal output", async () =
 });
 
 test("creates a group and renames its terminal without resetting it", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.press("id:new-group");
   await app.waitFor("id:new-group-path");
   expect(app.shows("id:dashboard")).toBe(false);
@@ -132,14 +219,12 @@ test("creates a group and renames its terminal without resetting it", async () =
 });
 
 test("moves a terminal between groups and removes a group without closing terminals", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.rightClick("id:tab-preview");
   await app.chooseMenuItem("Move to group > Playground");
   await app.press("id:group-toggle-termlevel");
   expect(app.shows("id:tab-preview")).toBe(true);
-  await app.press("id:group-playground");
-  await app.waitFor("id:dashboard");
-  await app.press("id:dashboard-group-menu");
+  await app.rightClick("id:group-playground");
   await app.chooseMenuItem("Ungroup terminals");
   expect(app.shows("id:group-playground")).toBe(false);
   expect(app.shows("id:tab-preview")).toBe(true);
@@ -150,10 +235,8 @@ test("moves a terminal between groups and removes a group without closing termin
 });
 
 test("closing an active group selects a remaining terminal and an empty workspace can recover", async () => {
-  const app = await open("../../App.tsx", options);
-  await app.press("id:group-termlevel");
-  await app.waitFor("id:dashboard");
-  await app.press("id:dashboard-group-menu");
+  const app = await open("./fixtures/PreviewApp.tsx", options);
+  await app.rightClick("id:group-termlevel");
   await app.chooseMenuItem("Delete group…");
   await app.press("id:confirm-close-group");
   expect(app.shows("id:group-termlevel")).toBe(false);
@@ -171,7 +254,7 @@ test("closing an active group selects a remaining terminal and an empty workspac
 });
 
 test("search opens a terminal in a collapsed group and compact sidebar keeps navigation", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.press("id:group-toggle-playground");
   await app.keyboard.press("mod+k");
   await app.type("id:terminal-search", "Color test");
@@ -190,7 +273,7 @@ test("search opens a terminal in a collapsed group and compact sidebar keeps nav
 });
 
 test("new terminal follows the current group and stays global outside groups", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.press("id:tab-prototype");
   await app.press("id:titlebar-new-terminal");
   await app.waitFor("id:terminal-tab-1");
@@ -203,21 +286,43 @@ test("new terminal follows the current group and stays global outside groups", a
   expect(app.shows("id:tab-tab-2")).toBe(true);
 });
 
-test("pinning and menu ordering preserve the selected session", async () => {
-  const app = await open("../../App.tsx", options);
+test("pinned terminals sort ahead of ordinary terminals within their group", async () => {
+  const app = await open("./fixtures/PreviewApp.tsx", options);
+  const position = (title: string) => app.texts().indexOf(title);
+  expect(position("UI prototype") < position("Build & preview")).toBe(true);
+  await app.rightClick("id:tab-preview");
+  await app.chooseMenuItem("Pin terminal");
+  expect(position("Build & preview") < position("UI prototype")).toBe(true);
+  await app.rightClick("id:tab-preview");
+  await app.chooseMenuItem("Unpin terminal");
+  await app.rightClick("id:tab-preview");
+  await app.chooseMenuItem("Pin terminal");
+  expect(position("Build & preview") < position("UI prototype")).toBe(true);
+  app.dispose();
+});
+
+test("pinning stays in the group and follows a terminal moved between groups", async () => {
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.type("id:terminal-prototype", "echo identity");
   await app.keyboard.press("enter");
   await app.rightClick("id:tab-prototype");
   await app.chooseMenuItem("Pin terminal");
   await app.press("id:group-toggle-termlevel");
-  expect(app.shows("id:tab-prototype")).toBe(true);
+  expect(app.shows("id:tab-prototype")).toBe(false);
+  await app.press("id:group-toggle-termlevel");
   await app.rightClick("id:tab-prototype");
-  await app.chooseMenuItem("Move up");
+  await app.chooseMenuItem("Move to group > Playground");
+  await app.waitFor("id:tab-prototype");
+  await app.rightClick("id:tab-prototype");
+  await app.chooseMenuItem("Unpin terminal");
   await app.waitFor("text:identity");
+  await app.press("id:group-toggle-playground");
+  expect(app.shows("id:tab-prototype")).toBe(false);
+  app.dispose();
 });
 
 test("appearance updates theme tokens without recreating the terminal", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.type("id:terminal-prototype", "echo theme-keeps-output");
   await app.keyboard.press("enter");
   const darkText = app.spanStyle("id:tab-prototype >> text:UI prototype").color;
@@ -250,7 +355,7 @@ test("appearance updates theme tokens without recreating the terminal", async ()
 });
 
 test("the session toolbar adapts to narrow windows while keeping its actions accessible", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.type("id:terminal-prototype", "echo rail-retains-output");
   await app.keyboard.press("enter");
   expect(app.shows("id:session-path")).toBe(true);
@@ -276,11 +381,12 @@ test("the session toolbar adapts to narrow windows while keeping its actions acc
 
 
 test("the overview header changes color and name while keeping terminal output", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.type("id:terminal-prototype", "echo group-editor-retains-output");
   await app.keyboard.press("enter");
   const before = app.spanStyle("id:group-termlevel >> text:termlevel").color;
   await app.rightClick("id:group-termlevel");
+  await app.chooseMenuItem("Group settings…");
   await app.waitFor("id:dashboard");
   expect(app.value("id:group-name-input")).toBe("termlevel");
   await app.press("id:group-color-trigger");
@@ -299,7 +405,6 @@ test("the overview header changes color and name while keeping terminal output",
   await app.waitFor("text:group-editor-retains-output");
 
   await app.press("id:group-termlevel");
-  await app.waitFor("id:dashboard");
   expect(app.shows("id:dashboard-new-terminal")).toBe(false);
   await app.press("id:titlebar-new-terminal");
   expect(app.shows("id:dashboard")).toBe(false);
@@ -313,9 +418,10 @@ test("the overview header changes color and name while keeping terminal output",
 });
 
 test("the group overview opens from the compact rail and closes with Escape", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.press("id:toggle-sidebar");
   await app.rightClick("id:group-termlevel");
+  await app.chooseMenuItem("Group settings…");
   await app.waitFor("id:dashboard");
   await app.press("id:group-color-trigger");
   await app.press("id:group-color-gray");
@@ -323,15 +429,13 @@ test("the group overview opens from the compact rail and closes with Escape", as
   await app.keyboard.press("escape");
   expect(app.shows("id:dashboard")).toBe(false);
   await app.press("id:group-termlevel");
-  await app.waitFor("id:dashboard");
-  await app.keyboard.press("escape");
   expect(app.shows("id:dashboard")).toBe(false);
   await app.press("id:toggle-sidebar");
   expect(app.count("id:terminal-prototype")).toBe(1);
 });
 
 test("dragging a terminal onto a group keeps its session and shows the drop target", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.press("id:tab-colors");
   await app.type("id:terminal-colors", "echo dragged-into-group");
   await app.keyboard.press("enter");
@@ -351,7 +455,7 @@ test("dragging a terminal onto a group keeps its session and shows the drop targ
 });
 
 test("dragging onto a collapsed group opens it there and a sideways drag does not move the terminal", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.type("id:terminal-prototype", "echo stayed-put");
   await app.keyboard.press("enter");
   await app.drag("id:tab-prototype", { x: 280 });
@@ -368,7 +472,7 @@ test("dragging onto a collapsed group opens it there and a sideways drag does no
 });
 
 test("dragging onto a terminal joins its group, or starts one when it has none", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.press("id:tab-colors");
   await app.type("id:terminal-colors", "echo grouped-session");
   await app.keyboard.press("enter");
@@ -393,7 +497,6 @@ test("dragging onto a terminal joins its group, or starts one when it has none",
   expect(app.shows("id:dashboard")).toBe(false);
   expect(app.shows("id:group-group-1 >> text:termlevel")).toBe(true);
   await app.press("id:group-group-1");
-  await app.waitFor("id:dashboard");
   await app.press("id:titlebar-new-terminal");
   expect(app.texts()).toContain("~/Projects/termlevel");
   await app.press("id:group-toggle-group-1");
@@ -406,7 +509,7 @@ test("dragging onto a terminal joins its group, or starts one when it has none",
 });
 
 test("preview notifications stay empty and the global entry survives sidebar collapse", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   try {
     await app.press("id:toggle-sidebar");
     await app.press("id:notifications");

@@ -1,6 +1,6 @@
 import { mount, token } from "nsh";
 import { Notifications, Runtime, Sessions } from "termlevel/native";
-import { createWorkspace } from "../../../ui/workspace/workspace";
+import { createWorkspace } from "../../../ui/workspace/state";
 import { WorkspaceApp } from "../../../ui/app/WorkspaceApp";
 
 // Real shell with production persistence, for OSC 7 live-directory tests.

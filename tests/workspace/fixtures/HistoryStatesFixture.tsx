@@ -1,6 +1,6 @@
 import { mount, View } from "nsh";
-import { createWorkspace } from "../../../ui/workspace/workspace";
-import { Dashboard } from "../../../ui/dashboard/Dashboard";
+import { createWorkspace } from "../../../ui/workspace/state";
+import { GitPanelHarness } from "./GitPanelHarness";
 import type {
   GitBranch,
   GitCommit,
@@ -8,7 +8,7 @@ import type {
   GitRepoStatus,
   GitTransport,
   GitWorktree,
-} from "../../../ui/dashboard/git-types";
+} from "../../../ui/git/git-types";
 
 const root = "/Users/test/project";
 
@@ -87,12 +87,12 @@ function detail(oid: string): GitCommitDetail {
     commit,
     body: `History panel fixture for ${commit.short}.`,
     files: [
-      { path: "ui/dashboard/HistoryPanel.tsx", status: "A" },
+      { path: "ui/git/HistoryPanel/panel.tsx", status: "A" },
       { path: "src/git.rs", status: "M" },
     ],
     patch: [
-      "--- a/ui/dashboard/HistoryPanel.tsx",
-      "+++ b/ui/dashboard/HistoryPanel.tsx",
+      "--- a/ui/git/HistoryPanel/panel.tsx",
+      "+++ b/ui/git/HistoryPanel/panel.tsx",
       "@@ -1,1 +1,2 @@",
       " import { View } from \"nsh\";",
       "+import { DataTable } from \"nsh/base\";",
@@ -106,13 +106,27 @@ mount(() => {
   const workspace = createWorkspace();
   let branchList: GitBranch[] = [...branches];
   let worktreeList: GitWorktree[] = [...worktrees];
+  let behind = 0;
+  let pullAttempts = 0;
   const git: GitTransport = {
-    status: async () => ({ ...status }),
+    status: async () => ({ ...status, behind }),
     diff: async () => "",
     branches: async () => ({ branches: branchList, error: null }),
     worktrees: async () => ({ worktrees: worktreeList, error: null }),
-    log: async () => ({ commits, hasMore: false, truncated: false, error: null }),
+    log: async (_root, scope, _limit, skip) => {
+      if (scope === "refs/remotes/origin/main") await new Promise<void>((resolve) => setTimeout(resolve, 400));
+      return skip === 0
+        ? ({ commits, hasMore: true, truncated: false, error: null })
+        : ({ commits: [{ ...commits[3], oid: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", short: "eeeeeee", subject: "Older match" }], hasMore: false, truncated: false, error: null });
+    },
     commit: async (_root, oid) => detail(oid),
+    fetch: async () => { behind = 2; return "Fetch complete."; },
+    pull: async () => {
+      pullAttempts++;
+      if (pullAttempts === 1) { behind = 3; throw new Error("Cannot fast-forward divergent branches."); }
+      behind = 0;
+      return "Pull complete (fast-forward only).";
+    },
     checkout: async () => "",
     createBranch: async (_root, name, _start, checkout) => {
       if (checkout) branchList = branchList.map((branch) => branch.kind === "local" ? { ...branch, current: false } : branch);
@@ -153,6 +167,6 @@ mount(() => {
     pruneWorktrees: async () => "",
   };
   return <View class="relative flex-1" onLayout={({ bounds }) => workspace.setCanvasSize(bounds.size)}>
-    <Dashboard workspace={workspace} preview={false} closeGroup={() => {}} git={git} />
+    <GitPanelHarness workspace={workspace} git={git} />
   </View>;
 });

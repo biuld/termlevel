@@ -1,8 +1,8 @@
 import { mount, signal, View } from "nsh";
-import { createWorkspace } from "../../../ui/workspace/workspace";
-import { Dashboard } from "../../../ui/dashboard/Dashboard";
+import { createWorkspace } from "../../../ui/workspace/state";
+import { GitPanelHarness } from "./GitPanelHarness";
 import { Action } from "../../../ui/shared/controls";
-import type { GitRepoStatus, GitTransport } from "../../../ui/dashboard/git-types";
+import type { GitRepoStatus, GitTransport } from "../../../ui/git/git-types";
 
 type Mode = "changes" | "clean" | "norepo" | "old";
 
@@ -43,6 +43,8 @@ mount(() => {
     worktrees: async () => ({ worktrees: [], error: null }),
     log: async () => ({ commits: [], hasMore: false, truncated: false, error: null }),
     commit: async () => { throw new Error("No history in this fixture."); },
+    fetch: async () => "Fetched.",
+    pull: async () => "Pulled.",
     checkout: async () => "",
     createBranch: async () => "",
     deleteBranch: async () => "",
@@ -60,7 +62,7 @@ mount(() => {
       <Action testID="mode-old" onPress={() => mode.set("old")}>Old Git</Action>
     </View>
     <View class="relative min-h-0 flex-1">
-      <Dashboard workspace={workspace} preview={false} closeGroup={() => {}} git={git} />
+      <GitPanelHarness workspace={workspace} git={git} />
     </View>
   </View>;
 });

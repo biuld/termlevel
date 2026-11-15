@@ -1,6 +1,6 @@
 import { expect, test } from "nsh/test";
-import { layoutCommits } from "../../ui/dashboard/commit-graph";
-import type { GitCommit } from "../../ui/dashboard/git-types";
+import { layoutCommits } from "../../ui/git/commit-graph";
+import type { GitCommit } from "../../ui/git/git-types";
 
 function commit(oid: string, parents: string[], refs: string[] = []): GitCommit {
   return {

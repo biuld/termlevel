@@ -23,26 +23,29 @@ fn cf_utf8_encoding() -> String {
     format!("0x{uid:X}:0x8000100:0x8000100")
 }
 fn helper(read: bool, text: &str) -> Result<String> {
-    if text.len() > LIMIT {
-        return Err(rejected());
-    }
-    let mut child = Command::new(if read {
+    let command = Command::new(if read {
         "/usr/bin/pbpaste"
     } else {
         "/usr/bin/pbcopy"
-    })
-    // These helpers interpret stdin and stdout with the process text encoding.
-    // A GUI launch often has no UTF-8 locale, and CoreFoundation then treats
-    // the bytes as MacRoman (`中` becomes `‰∏≠`). OSC 52 always gives us UTF-8.
-    .env("LC_ALL", "en_US.UTF-8")
-    .env("LC_CTYPE", "en_US.UTF-8")
-    .env("LANG", "en_US.UTF-8")
-    .env("__CF_USER_TEXT_ENCODING", cf_utf8_encoding())
-    .stdin(if read { Stdio::null() } else { Stdio::piped() })
-    .stdout(if read { Stdio::piped() } else { Stdio::null() })
-    .stderr(Stdio::null())
-    .spawn()
-    .map_err(|_| rejected())?;
+    });
+    run_helper(command, read, text)
+}
+
+fn run_helper(mut command: Command, read: bool, text: &str) -> Result<String> {
+    if text.len() > LIMIT {
+        return Err(rejected());
+    }
+    // OSC 52 provides UTF-8 even when a GUI launch inherits a legacy locale.
+    let mut child = command
+        .env("LC_ALL", "en_US.UTF-8")
+        .env("LC_CTYPE", "en_US.UTF-8")
+        .env("LANG", "en_US.UTF-8")
+        .env("__CF_USER_TEXT_ENCODING", cf_utf8_encoding())
+        .stdin(if read { Stdio::null() } else { Stdio::piped() })
+        .stdout(if read { Stdio::piped() } else { Stdio::null() })
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| rejected())?;
     let pipe = if read {
         let output = child.stdout.take().unwrap();
         std::thread::spawn(move || {
@@ -79,47 +82,54 @@ fn helper(read: bool, text: &str) -> Result<String> {
     }
     String::from_utf8(bytes).map_err(|_| rejected())
 }
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 mod tests {
-    #[test]
-    fn osc52_bytes_reach_the_pasteboard_as_unicode() {
-        let sample = "Grok 中文复制：你好，世界！";
-        let previous = std::process::Command::new("/usr/bin/pbpaste")
-            .output()
-            .expect("save clipboard")
-            .stdout;
-        let saved = String::from_utf8_lossy(&previous).into_owned();
-        let restore = || {
-            let _ = std::process::Command::new("/usr/bin/pbcopy")
-                .env("LC_ALL", "en_US.UTF-8")
-                .stdin(std::process::Stdio::piped())
-                .spawn()
-                .and_then(|mut child| {
-                    use std::io::Write;
-                    child.stdin.as_mut().unwrap().write_all(saved.as_bytes())?;
-                    child.wait()
-                });
-        };
-        let written = super::helper(false, sample);
-        if written.is_err() {
-            restore();
-            panic!("pbcopy rejected the sample");
+    use std::{path::PathBuf, process::Command};
+
+    struct TempClipboard(PathBuf);
+
+    impl Drop for TempClipboard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
         }
-        let script = r#"use framework "AppKit"
-set pb to current application's NSPasteboard's generalPasteboard()
-set s to pb's stringForType:"public.utf8-plain-text"
-if s is missing value then return "MISSING"
-return s as text"#;
-        let out = std::process::Command::new("/usr/bin/osascript")
-            .arg("-e")
-            .arg(script)
-            .output()
-            .expect("read pasteboard");
-        let got = String::from_utf8_lossy(&out.stdout);
-        let got = got.trim_end_matches(['\n', '\r']);
-        restore();
-        assert!(out.status.success(), "osascript failed");
-        assert_eq!(got, sample);
+    }
+
+    #[test]
+    fn helper_preserves_utf8_and_configures_encoding() {
+        let path = TempClipboard(
+            std::env::temp_dir().join(format!("termlevel-clipboard-test-{}", std::process::id())),
+        );
+        let sample = "Claude 中文复制：你好，世界！ café e\u{301} 😀\n第二行";
+        let mut write = Command::new("/bin/sh");
+        write.args([
+            "-c",
+            "test \"$LC_ALL\" = en_US.UTF-8 && test \"$LC_CTYPE\" = en_US.UTF-8 && test \"$LANG\" = en_US.UTF-8 && test \"$__CF_USER_TEXT_ENCODING\" = \"$2\" && cat > \"$1\"",
+            "clipboard-test",
+        ]).arg(&path.0).arg(super::cf_utf8_encoding());
+        super::run_helper(write, false, sample).expect("write UTF-8 bytes");
+        assert_eq!(
+            std::fs::read(&path.0).expect("read sample"),
+            sample.as_bytes()
+        );
+
+        let mut read = Command::new("/bin/cat");
+        read.arg(&path.0);
+        assert_eq!(super::run_helper(read, true, "").unwrap(), sample);
+    }
+
+    #[test]
+    fn helper_rejects_oversized_and_invalid_utf8() {
+        assert!(
+            super::run_helper(
+                Command::new("/bin/cat"),
+                false,
+                &"x".repeat(super::LIMIT + 1)
+            )
+            .is_err()
+        );
+        let mut invalid = Command::new("/bin/sh");
+        invalid.args(["-c", "printf '\\377'"]);
+        assert!(super::run_helper(invalid, true, "").is_err());
     }
 }
 

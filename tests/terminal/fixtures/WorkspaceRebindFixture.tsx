@@ -1,7 +1,7 @@
 import { cleanup, mount, signal, Text, token, View } from "nsh";
 import { Button } from "nsh/base";
 import { Runtime, Sessions } from "termlevel/native";
-import { createWorkspace, type Workspace } from "../../../ui/workspace/workspace";
+import { createWorkspace, type Workspace } from "../../../ui/workspace/state";
 import { WorkspaceApp } from "../../../ui/app/WorkspaceApp";
 
 function WorkspaceRebindFixture(props: { workspace: Workspace }) {

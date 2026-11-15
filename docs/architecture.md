@@ -13,27 +13,32 @@ App.tsx                                      mount 工作区，仅作入口
   ui/workspace/workspace-snapshot.ts         工作区文档 schema、校验与会话 ID 还原
   ui/workspace/persistence.ts                NSH Storage 的读取与保存
   ui/workspace/Sidebar.tsx                   vertical tabs、分组与响铃标记
-  ui/workspace/workspace.ts                  会话、分组、概览模式与平铺操作、唯一逻辑焦点
+  ui/workspace/state/index.ts            会话、Git 视图选择与平铺操作、唯一逻辑焦点
+  ui/workspace/state/groups.ts           分组、移动与组内固定操作
+  ui/workspace/state/initial.ts          工作区与布局恢复
   ui/workspace/tiling.ts                     布局树变换、约束、几何与方向导航
   ui/workspace/TilingCanvas.tsx              按 session ID 稳定挂载、pane 工具栏与分隔拖动
-  ui/dashboard/Dashboard.tsx                 组概览外壳：头部组设置与关闭
-  ui/dashboard/GitPanel.tsx                  变更文件树、单文件 diff、刷新与状态
-  ui/dashboard/HistoryPanel.tsx              分支 / worktree、提交车道、详情与 patch
-  ui/dashboard/commit-graph.ts               由提交父关系计算稳定车道的纯函数
-  ui/dashboard/git-types.ts                  TSX 侧的 Git 快照契约与 transport 接口
-  ui/dashboard/native-git.ts                 经 termlevel/native 调用系统 git CLI
-  ui/dashboard/preview-git.ts                显式预览的确定性仓库状态，不执行命令
+  ui/workspace/GroupSettings.tsx             组设置界面：组名、颜色和组操作
+  ui/git/GitPanel.tsx                  变更文件树、单文件 diff、刷新与状态
+  ui/git/HistoryPanel/index.ts         History 公共导出
+  ui/git/HistoryPanel/panel.tsx        History 界面与组合入口
+  ui/git/HistoryPanel/state.ts         视图状态及派生数据
+  ui/git/HistoryPanel/data.ts          Git 数据读取、刷新与订阅
+  ui/git/HistoryPanel/actions.ts       Git 操作及对话框动作
+  ui/git/HistoryPanel/views.tsx       分支、提交和详情视图
+  ui/git/HistoryPanel/common.tsx      绘图和格式化工具
+  ui/git/commit-graph.ts               由提交父关系计算稳定车道的纯函数
+  ui/git/git-types.ts                  TSX 侧的 Git 快照契约与 transport 接口
+  ui/git/native-git.ts                 经 termlevel/native 调用系统 git CLI
   ui/shared/theme.ts                         分组标识到主题 token 的映射
   ui/terminal/TerminalSurface.tsx            真实终端的显示、焦点属性与低频状态
     native SessionTerminal       绑定已有 Rust 会话
-  ui/terminal/PreviewTerminal.tsx            显式预览模式的 NSH Terminal 与焦点
-    preview-session.ts           确定性演示 transport，不执行命令
 
 src/lib.rs                                   注册 termlevel/native 导出与原生 renderer factory
 src/runtime.rs                               版本、启动目录、显式预览开关与原生 cell 测量
 src/dialog_keys.rs                           对话框 Escape 与 pane 缩放模式的原生键盘优先级
 src/git.rs                                   只读 Git CLI：status、refs、worktree、log、diff、版本检查
-src/git_ops.rs                               显式 Git 操作：checkout、建分支、worktree add/remove/lock/prune
+src/git_ops.rs                               显式 Git 操作：fetch、fast-forward pull、checkout、建分支、worktree add/remove/lock/prune
 src/terminal.rs                              Ghostty 状态 / RenderState 到 NSH 的适配；预览 provider
 src/sessions.rs                              SessionManager、PTY、进程、reader/writer/reaper
   sessions/api.rs                TSX 可调用的显式会话操作
@@ -81,7 +86,7 @@ OSC 逐项盘点、状态业务规则与 UI / UX 统一见 [OSC 集成与终端�
 
 reader 直接将原始字节送入同一个 Rust/C parser，保留跨 chunk 的 UTF-8 和转义状态。活动屏幕按需生成拥有独立内存的 RenderState 帧；固定格网只复制当前窗口的行，历史锚点由 Ghostty tracked reference 随重排和淘汰维护，不在每个输出 chunk 复制整份历史。宽字符与组合字符保留列坐标，ASCII 同样式 run 合并。所有终端字节、网格、历史与匹配都留在 Rust。
 
-⌘F 的 ASCII 查询使用 Ghostty 分步 feed/tick，保留原生软换行匹配；Unicode 使用分批复制行、锁外小写匹配。每次最多处理一批，输出变化后等待 150 ms 安静期重扫，不在绘制快照锁里全量查找。低频 SearchChange 只发送 query、计数、索引与 searching；查找栏显示 Searching…，异步完成不覆盖别的 query。新输出不强制跳到命中。预览仍使用 terminal.text() 计次。⌘K 仍按标题、目录和分组查找会话。
+⌘F 的 ASCII 查询使用 Ghostty 分步 feed/tick，保留原生软换行匹配；Unicode 使用分批复制行、锁外小写匹配。每次最多处理一批，输出变化后等待 150 ms 安静期重扫，不在绘制快照锁里全量查找。低频 SearchChange 只发送 query、计数、索引与 searching；查找栏显示 Searching…，异步完成不覆盖别的 query。新输出不强制跳到命中。产品预览不创建终端会话。⌘K 仍按标题、目录和分组查找会话。
 
 程序指定的 ANSI / 256 色 / truecolor 与 OSC 调色板覆盖保留语义；未指定的颜色跟随主题。NSH 的基础 256 色写入 Ghostty 的默认 palette，主题写入默认前景 / 背景，程序覆盖不会被主题变更清掉。颜色、光标和设备协议回复直接经 Rust 回到 writer。字符尺寸查询有实际 rows / cols；NSH 此处只有 point 测量，没有设备像素尺寸，像素回复仍为 0。
 
@@ -93,9 +98,9 @@ Settings → Terminal 的 Terminal identity 默认是 Termlevel，也可显式�
 
 每次 `Sessions.open` 单独传入身份，由 Rust 在 spawn 前白名单映射：两种模式均设置 `TERM=xterm-256color` 和 `COLORTERM=truecolor`；默认设置 `TERM_PROGRAM=termlevel` 与应用版本，兼容模式设置 `TERM_PROGRAM=ghostty` 并移除 `TERM_PROGRAM_VERSION`，不伪造 Ghostty 版本。继承的 `LC_ALL` / `LC_CTYPE` / `LANG` 都不是 UTF-8 时，补上 `en_US.UTF-8`，避免会话里的 `pbcopy` 把 OSC 52 同期写入的中文按 MacRoman 存盘。shell 启动文件仍可能覆盖环境。设置变化不修改已有会话、不创建或重启进程，也不改变 Ghostty 协议解析与原生 renderer。身份覆盖仅供客户端识别兼容，不代表被模拟终端的全部能力或真实 Codex Pets 已通过验收。
 
-## 概览的 Git 数据通路
+## Git 视图数据通路
 
-组概览由系统 `git` CLI 提供数据，应用不内嵌 Git 实现。最低版本为 Git 2.20；版本过低、找不到 git 或仓库不可读时返回带说明的错误，由 UI 显示提示。读取集中在 `src/git.rs`，显式写操作集中在 `src/git_ops.rs`。
+Git 视图由系统 `git` CLI 提供数据，应用不内嵌 Git 实现。最低版本为 Git 2.20；版本过低、找不到 git 或仓库不可读时返回带说明的错误，由 UI 显示提示。读取集中在 `src/git.rs`，显式写操作集中在 `src/git_ops.rs`。
 
 ```text
 TSX GitPanel      ── status / diff ───────────────────────┐
@@ -106,7 +111,7 @@ TSX HistoryPanel  ── branches / worktrees / log / commit ──┤ Rust Git�
                                     RepoStatus / RepoBranches / RepoWorktrees
                                     RepoLog / RepoCommitDetail / unified patch
 
-TSX HistoryPanel  ── checkout / createBranch / worktree* ── Rust GitOps
+TSX HistoryPanel  ── fetch / pull / checkout / createBranch / worktree* ── Rust GitOps
                                                            │ 显式操作，60 秒超时
                                                            ▼
                                     git checkout / branch / worktree ...
@@ -122,12 +127,12 @@ TSX HistoryPanel  ── checkout / createBranch / worktree* ── Rust GitOps
 - 分支名先经 `git check-ref-format --branch`，起点先经 `git rev-parse --verify <start>^{commit}`；worktree 删除、锁定只接受 `git worktree list` 中的路径。写操作不使用 `--force`。
 - 先在 group 路径找仓库根，再以仓库根运行命令，因此路径是仓库根相对路径；group 路径是仓库子目录时，worktree `current` 仍匹配所属工作树。
 - 操作进行中通过 worktree 的 git dir 标记检测 merge / rebase / cherry-pick / revert / bisect，只读查询不执行 hooks。
-- 概览读取保持只读；History 的显式动作只有 checkout、新建/删除分支和 worktree 管理。删除分支使用 `git branch -d`，不 force；Git 拒绝当前分支、未合并分支或已在 worktree 中检出的分支。不 stage、unstage、commit、merge、rebase、cherry-pick、reset、stash，也不解决冲突。
-- 预览模式使用 `preview-git.ts` 的确定性仓库、分支、worktree、提交和 patch，不启动 git，也不接受写操作。
+- Git 查询保持只读；History 的显式动作包括 fetch、fast-forward-only pull、checkout、新建/删除分支和 worktree 管理。Fetch 使用 Git 配置的默认远端；Pull 更新当前 worktree 的当前分支，分叉时 Git 拒绝，操作失败后仍刷新远端引用。网络操作使用系统 Git 和已配置的凭据助手；终端交互式提示被禁用。删除分支使用 `git branch -d`，不 force；Git 拒绝当前分支、未合并分支或已在 worktree 中检出的分支。不 stage、unstage、commit、创建 merge commit、rebase、cherry-pick、reset、stash，也不解决冲突。
+- 产品预览不提供 Git 数据，也不启动 git；测试夹具可注入确定性 Git 替身。
 
 ### History 视图
 
-组概览头部在 Changes 与 History 之间切换。`HistoryPanel` 左栏用 `Tree` 展示 Local / Remote / Tags 并限定提交 scope，用 `Scroll` + `Each` 展示 worktree；中栏用 `Scroll` + `Each` 渲染提交行（每页 200 条，底部 Load more），首列由 `Canvas` 绘制车道，表头与行按实际分栏宽度计算并让 Commit 列吃掉剩余空间，所以拖动分栏或缩放窗口时列宽和可见列都会跟着变化；列集合变化时重挂载提交列表，避免行沿用旧宽度。右栏是提交信息、变更路径和 `DiffView` patch。画布宽度 ≥1000 pt 时为左中右三栏；更窄时隐藏右栏，把提交信息 / 变更文件与 patch 放到提交列表下方的可调分栏，避免三栏被压到不可用。提交行整行是可点击的按钮，hover 使用 native 的 tab-selected 底色；选中行由内容层按选中 index 绝对定位一层 primary overlay 绘制，不依赖行组件随选中信号重渲染，因此滚动和行复用不会让背景留在旧行。Changed files 也用 `Scroll` + `Each`，同样有选中 overlay 和 hover；选中文件后右侧只显示该文件的 patch，默认选中第一个文件，patch 由提交 diff 按文件段切分。`DiffView` 的 patch 不再 `trimEnd`，否则末尾的空 context 行被删掉会让 hunk 计数不完整而不显示。`commit-graph.ts` 只根据 `GitCommit.parents` 计算每行的 lane、穿行车道和父边：第一个父提交延续当前 lane，其余父提交新建或并入另一条 lane；两条车道预期同一提交时合并到第一条，避免同一段历史画两条线。车道宽度随可见历史的最大 lane 数变化，只绘制视口内的行。提交列表同样虚拟化并按页加载，搜索只在已加载的提交上过滤。History 每 5 秒只轻量刷新 status / branches / worktrees；当前 HEAD 目标变化或 scope 失效时才重新加载提交，避免在输入、滚动或查看 patch 时重置列表。分支切换是显式动作：Git 自己拒绝 dirty 冲突，Termlevel 不自动 stash、不 force；删除分支同样交给 `git branch -d` 判断是否已合并。worktree 的 “Open in new group” 走 `Workspace.addGroup`，为该路径创建新分组和新 shell，不移动现有分组。
+Changes 与 History 是按需打开的分组视图，标题栏 Git 菜单创建或选择当前组中的唯一对应 tab；侧栏关闭它们不影响终端或分屏。工作区快照记录每组打开的视图和所选视图，旧概览状态迁移为 Changes。未选择组时菜单提示先选择组。`HistoryPanel` 左栏用 `Tree` 展示 Local / Remote / Tags 并限定提交 scope，用 `Scroll` + `Each` 展示 worktree；中栏用 `Scroll` + `Each` 渲染提交行（每页 200 条，底部 Load more），首列由 `Canvas` 绘制车道，表头与行按实际分栏宽度计算并让 Commit 列吃掉剩余空间，所以拖动分栏或缩放窗口时列宽和可见列都会跟着变化；列集合变化时重挂载提交列表，避免行沿用旧宽度。右栏是提交信息、变更路径和 `DiffView` patch。画布宽度 ≥1000 pt 时为左中右三栏；更窄时隐藏右栏，把提交信息 / 变更文件与 patch 放到提交列表下方的可调分栏，避免三栏被压到不可用。提交行整行是可点击的按钮，hover 使用 native 的 tab-selected 底色；选中行由内容层按选中 index 绝对定位一层 primary overlay 绘制，不依赖行组件随选中信号重渲染，因此滚动和行复用不会让背景留在旧行。Changed files 也用 `Scroll` + `Each`，同样有选中 overlay 和 hover；选中文件后右侧只显示该文件的 patch，默认选中第一个文件，patch 由提交 diff 按文件段切分。`DiffView` 的 patch 不再 `trimEnd`，否则末尾的空 context 行被删掉会让 hunk 计数不完整而不显示。`commit-graph.ts` 只根据 `GitCommit.parents` 计算每行的 lane、穿行车道和父边：第一个父提交延续当前 lane，其余父提交新建或并入另一条 lane；两条车道预期同一提交时合并到第一条，避免同一段历史画两条线。车道宽度随可见历史的最大 lane 数变化，只绘制视口内的行。提交列表同样虚拟化并按页加载，搜索按钮按需展开输入框，显示已加载提交内的匹配数；关闭或 Escape 清除筛选，搜索只在已加载的提交上过滤。History 每 5 秒只轻量刷新 status / branches / worktrees；当前 HEAD 目标变化或 scope 失效时才重新加载提交，避免在输入、滚动或查看 patch 时重置列表。分支切换是显式动作：Git 自己拒绝 dirty 冲突，Termlevel 不自动 stash、不 force；删除分支同样交给 `git branch -d` 判断是否已合并。worktree 的 “Open in new group” 走 `Workspace.addGroup`，为该路径创建新分组和新 shell，不移动现有分组。
 
 ## 历史滚动与跨屏拖选
 
@@ -143,7 +148,7 @@ TSX HistoryPanel  ── checkout / createBranch / worktree* ── Rust GitOps
 
 Ghostty safe wrapper 注册官方 desktop notification 回调，复制 owned 标题和正文，再经 terminal BackendEvent 到 Session 写入历史；支持 libghostty-vt 1.0.1 回调覆盖的 OSC 9 和 OSC 777，未声明 OSC 99 或系统桌面通知支持。OSC 7501 每条记录进入 blocked / error 的跃迁会额外写入一条带记录身份和代次的通知，working、done 和 OSC 9;4 进度不进入历史，详见 [OSC 集成与终端状态设计](osc-support.md)。BEL 仍保留原有侧栏标记，同时记录终端响铃。会话启动 / I/O / 编码等错误、输入拒绝警告、非零进程退出与应用文件夹对话框错误以 app 来源进入同一历史。终端底部不再显示状态条；详细错误和输入拒绝仅进入通知面板。清空历史不会清除会话错误或结束进程。
 
-`ui/notifications/notifications.ts` 在应用根生命周期按 250 ms 检查历史 revision，仅变化时读取 bounded 低频数据；不依赖任何 pane 的刷新或事件补发，隐藏会话也可通知。preview 不读取或修改真实通知历史。`NotificationPanel.tsx` 负责锚定、前三条实测高度和滚动；`NotificationRow.tsx` 负责消息层级、语义图标、展开与行内操作，通过应用传入的 session ID 回调选中已有标签，不创建会话。7501 历史的 `program` 元数据携带 kind/app/title/message，来自 Rust 已清洗的记录；UI 直接消费实际消息，不从生成的通知标题推断任务类型。打开面板标记已读，支持逐项移除、清空、回到来源；来源已关闭时保留内容并禁用跳转。历史按内容高度展示最多三条，受窗口可用高度限制，更多内容可滚动且有提示与分隔线。面板打开期间阻止终端输入，Escape / 外部点击关闭后恢复。
+Fetch / Pull 结束后由应用级通知中心写入成功或失败记录，并在窗口右上角显示 5 秒 toast；操作期间切换视图不会丢失结果，关闭 toast 不移除历史。`ui/notifications/notifications.ts` 在应用根生命周期按 250 ms 检查历史 revision，仅变化时读取 bounded 低频数据；不依赖任何 pane 的刷新或事件补发，隐藏会话也可通知。preview 不读取或修改真实通知历史。`NotificationPanel.tsx` 负责锚定、前三条实测高度和滚动；`NotificationRow.tsx` 负责消息层级、语义图标、展开与行内操作，通过应用传入的 session ID 回调选中已有标签，不创建会话。7501 历史的 `program` 元数据携带 kind/app/title/message，来自 Rust 已清洗的记录；UI 直接消费实际消息，不从生成的通知标题推断任务类型。打开面板标记已读，支持逐项移除、清空、回到来源；来源已关闭时保留内容并禁用跳转。历史按内容高度展示最多三条，受窗口可用高度限制，更多内容可滚动且有提示与分隔线。面板打开期间阻止终端输入，Escape / 外部点击关闭后恢复。
 
 ## 生命周期与并发
 
@@ -163,7 +168,7 @@ reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I
 
 快照分成锁内复制 Frame/历史 cells/图片、锁外合并 run 与可访问文本两阶段。Rust 引擎以 Arc<Scene> 发布完整场景，主线程只短暂锁住场景槽以克隆最新 Arc，随后在无 emulator 锁时绘制；跨 NSH 属性只有槽 ID 与 revision。槽注册表保存 Weak，发布者和原生组件随挂载释放，不拥有会话。字体、CTLine 与 CGImage 留在主线程 renderer。
 
-原生 NSView 按图片层 0、单元格背景、图片层 1、搜索和字形、图片层 2 绘制。字体与字形排版有界缓存，图片按 owned 像素身份复用。run 按 Ghostty 列坐标锚定并独立裁剪，主字体基线一致，关闭可选连字。复杂 fallback、emoji 与细粒度 AX 仍需验收。一个无绘图操作的 Canvas Drawing 仅提供非空可见行 CanvasNode 语义给 NSH 测试模型；原生容器同时有整个窗口文本标签，不挂逐行视图。光标独立，闪烁不重绘字形。预览 TerminalEngine 仍是视图独享模拟器。
+原生 NSView 按图片层 0、单元格背景、图片层 1、搜索和字形、图片层 2 绘制。字体与字形排版有界缓存，图片按 owned 像素身份复用。run 按 Ghostty 列坐标锚定并独立裁剪，主字体基线一致，关闭可选连字。复杂 fallback、emoji 与细粒度 AX 仍需验收。一个无绘图操作的 Canvas Drawing 仅提供非空可见行 CanvasNode 语义给 NSH 测试模型；原生容器同时有整个窗口文本标签，不挂逐行视图。光标独立，闪烁不重绘字形。测试夹具可注入独立的终端模拟器。
 
 唯一原生 Input 与格子同一原点，位置来自展示快照的 input_cursor，y 夹在格子内；组合时显示 marked text 和系统输入法交互，平时文字透明。开始输入/组合请求贴底，hold 期间延后到下一次发布。DECTCEM 隐藏输出光标不移除输入锚点。
 
@@ -237,4 +242,4 @@ reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I
 
 `theme.json` 是配色、字体、尺寸与圆角的唯一设计入口。组件使用语义类和 `token()`。侧栏和浮层均为实色，通过低对比分界、细边框和轻阴影表达层级；不设置玻璃或背景模糊。主题不拥有会话生命周期。详情见 [design.md](design.md)。
 
-`TERMLEVEL_PREVIEW=1` 显式启用确定性 UI 预览，仍不执行系统命令。预览测试通过替换 `Runtime.previewMode` 进入该模式；真实会话测试使用单独的原生绑定与工作区 fixture，以及默认入口的原生 fish 验收。
+`TERMLEVEL_PREVIEW=1` 显式启用确定性 UI 预览，不执行系统命令、不访问真实工作区存储；Git 和终端会话显示不可用提示。预览测试通过替换 `Runtime.previewMode` 进入该模式；真实会话测试使用单独的原生绑定与工作区 fixture，以及默认入口的原生 fish 验收。

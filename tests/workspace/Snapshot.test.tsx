@@ -47,7 +47,7 @@ test("a stored document is accepted, deduplicated and normalized", () => {
   expect(snapshot!.tabs.length).toBe(2);
   // A pinned tab that names a group belongs to that group.
   expect(snapshot!.tabs[0].groupId).toBe("group-1");
-  expect(snapshot!.tabs[0].pinned).toBe(false);
+  expect(snapshot!.tabs[0].pinned).toBe(true);
   // An unknown group is not a pin: the tab returns to the ungrouped section.
   expect(snapshot!.tabs[1].groupId).toBe(null);
   expect(snapshot!.tabs[1].pinned).toBe(true);

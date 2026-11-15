@@ -1,6 +1,6 @@
 import { mount, token } from "nsh";
 import { Runtime, Sessions } from "termlevel/native";
-import { createWorkspace } from "../../../ui/workspace/workspace";
+import { createWorkspace } from "../../../ui/workspace/state";
 import { WorkspaceApp } from "../../../ui/app/WorkspaceApp";
 
 // Exercise the production workspace with a deterministic real shell. User

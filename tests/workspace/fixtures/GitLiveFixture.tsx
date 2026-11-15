@@ -1,8 +1,8 @@
 import { mount, View } from "nsh";
 import { Runtime } from "termlevel/native";
 import { WorkspaceApp } from "../../../ui/app/WorkspaceApp";
-import { nativeGit } from "../../../ui/dashboard/native-git";
-import { createWorkspace } from "../../../ui/workspace/workspace";
+import { nativeGit } from "../../../ui/git/native-git";
+import { createWorkspace } from "../../../ui/workspace/state";
 import type { WorkspaceSnapshot } from "../../../ui/workspace/workspace-snapshot";
 
 mount(() => {
@@ -25,7 +25,7 @@ mount(() => {
     workingIndicator: "bars",
   };
   const workspace = createWorkspace(undefined, { snapshot });
-  workspace.openDashboard("group-1");
+  workspace.openGitView("changes", "group-1");
   return <View class="flex-1">
     <WorkspaceApp workspace={workspace} snapshot={snapshot} git={nativeGit} />
   </View>;

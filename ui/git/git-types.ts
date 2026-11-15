@@ -101,7 +101,7 @@ export interface GitCommitDetail {
   error?: string | null;
 }
 
-/** Git data for the overview. The native transport runs the system CLI; the preview transport is deterministic. */
+/** Git data for group views. The native transport runs the system CLI; the preview transport is deterministic. */
 export interface GitTransport {
   status(root: string): Promise<GitRepoStatus>;
   diff(root: string, path: string, mode: GitDiffMode): Promise<string>;
@@ -110,6 +110,8 @@ export interface GitTransport {
   /** `scope` is a full ref, or empty for every ref. */
   log(root: string, scope: string, limit: number, skip: number): Promise<GitLog>;
   commit(root: string, oid: string): Promise<GitCommitDetail>;
+  fetch(root: string): Promise<string>;
+  pull(root: string): Promise<string>;
   checkout(root: string, branch: string): Promise<string>;
   createBranch(root: string, name: string, start: string, checkout: boolean): Promise<string>;
   deleteBranch(root: string, name: string): Promise<string>;

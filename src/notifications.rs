@@ -189,6 +189,10 @@ impl Notifications {
     pub fn report(title: String, body: String) {
         record("app", "error", None, &title, &body);
     }
+    /// App operations can also publish successful informational notices.
+    pub fn report_info(title: String, body: String) {
+        record("app", "info", None, &title, &body);
+    }
 }
 
 #[cfg(test)]

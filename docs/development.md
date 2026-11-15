@@ -12,14 +12,14 @@ validation 按日期保留验证证据，不作为当前模块路径索引。带
 App.tsx                     NSH 默认挂载入口
 ui/app/                     启动恢复、窗口、菜单、快捷键和应用接线
 ui/workspace/               工作区状态、快照、存储、侧栏、分组和平铺
-ui/dashboard/               分组概览、Git 变更 / diff、History、分支 / worktree 与提交车道
+ui/git/                     Git 变更 / diff、History、分支 / worktree 与提交车道
 ui/settings/                设置界面
 ui/notifications/           通知历史订阅与标题栏面板
-ui/terminal/                原生终端展示、查找和显式预览
+ui/terminal/                原生终端展示和查找
 ui/shared/                  通用控件、图标、字体、文字和主题映射
 src/                        Rust 应用 crate
   git.rs                    只读 Git 查询：status、refs、worktree、log、commit、diff
-  git_ops.rs                显式 Git 操作：checkout、建分支、worktree 管理
+  git_ops.rs                显式 Git 操作：fetch、fast-forward pull、checkout、建分支、worktree 管理
   sessions/                 显式会话 API 与进程生命周期测试
   terminal/                 Ghostty 应用适配测试
   session_view/             显示控制、输入策略、场景与平台后端
@@ -37,7 +37,7 @@ app 可以组合 workspace、settings、notifications、terminal 和 shared。wo
 
 Rust 的 lib.rs 只做导出注册。SessionManager 拥有 PTY、进程与工作线程；terminal 负责 Ghostty 到应用的适配；session_view 负责显示与交互；平台对象只放 platform 下。两个 Ghostty crate 不依赖 NSH、PTY 或应用。跨线程传 owned 数据，句柄同步和回调约束见 crates/ghostty-vt/THREADING.md。
 
-新增模块按职责归属；共享机制应有唯一所有者。移动文件与行为修改分开评审，不为每个组件增加 crate，也不按文件行数机械拆分。
+新增模块按职责归属；共享机制应有唯一所有者。源代码文件最多 500 行，超过时按职责拆分：Rust 使用目录和 `mod.rs`，TypeScript / TSX 使用目录和 `index.ts`；保持公开入口清晰，不为每个组件增加 crate。
 
 ## 测试与验证
 
@@ -78,7 +78,7 @@ git diff --check
 ./scripts/test-native history
 ```
 
-这些入口保持兼容，也可用 `./scripts/test-native <类别>`。完整 headless 发现不得与 scripts/test-native 并行：后者在仓库根目录生成临时 *.test.tsx，会被前者误发现。原生测试需要前台窗口，不能由类型检查或 headless 成功替代。系统输入法候选窗、拖动手感、选区和长期负载的人工验收另记。
+这些入口保持兼容，也可用 `./scripts/test-native <类别>`。完整 headless 发现不得与 scripts/test-native 并行：后者在仓库根目录生成临时 *.test.tsx，会被前者误发现。原生测试需要前台窗口，不能由类型检查或 headless 成功替代。剪贴板 helper 的编码与管道由 Rust 单元测试验证；系统剪贴板 Unicode 和 OSC 52 使用 `./scripts/test-native protocols --filter 'OSC52 preserves Chinese'` 验证，该原生用例保存并恢复剪贴板。系统输入法候选窗、拖动手感、选区和长期负载的人工验收另记。
 
 验证记录注明 revision 或未提交状态、命令、结果、日志以及未覆盖项。预览、真实 PTY、headless、原生自动化、人工验收分别说明。遇到已有失败先保留具体失败与历史基线，不通过改断言或超时来掩盖。持久化提交曾记录 126/128；本次目录整理复验为 128/128。历史失败仍保留在 validation 对应章节，不推断间歇性问题已根治。
 

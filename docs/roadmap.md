@@ -13,7 +13,7 @@
 
 ## M1 · 工作区 UI（已实现基础交互）
 
-工作区交互仍以显式确定性预览回归；默认应用已在 M2 接入真实 PTY。预览 transport 不创建 OS 进程。
+工作区交互仍以显式确定性预览回归；默认应用已在 M2 接入真实 PTY。产品预览不创建 OS 进程；交互回归使用测试替身。
 
 - [x] Firefox 风格暗色窗口、可调整宽度及可收起的侧栏。
 - [x] 垂直标签创建、切换、关闭、重命名、固定。
@@ -21,7 +21,7 @@
 - [x] 菜单移动标签到组、菜单排序。
 - [x] 查找会话、常用快捷键、基础字体大小设置。
 - [x] 按稳定 ID 保留终端组件；标签切换和分组变更不重建终端。
-- [x] 演示输入、历史、清屏、颜色，以及明确的预览状态。
+- [x] 明确的预览状态；演示输入由测试夹具提供。
 - [x] 语义主题 token、中性灰 UI、浅色 / 深色 / 跟随系统切换。
 - [x] 采用「统一窗口栏 + 独立 pane」布局：带间距和圆角的侧栏与终端、单行标签、pane 内会话工具栏。
 - [x] Firefox 风格分组编辑浮层：九色选择、直接改名、组内新建、取消分组与删除确认。
@@ -47,7 +47,7 @@
 - [x] 最初以 Alacritty 接入内核，现已切换官方 Ghostty 1.0.1；通过 Rust `TerminalEmulatorFactory` 替换默认模拟器；保留确定性预览，单独验证内核与原生绑定。
 - [x] Rust `SessionManager` 创建和持有 PTY、子进程、reader / writer / reaper、退出状态。
 - [x] 使用 `portable-pty` 0.9.0，连接用户默认 shell；配置 cwd、TERM/COLORTERM/TERM_PROGRAM。
-- [x] 默认入口使用真实会话；reader 的原始字节在 Rust 内送入持久 Ghostty parser，保留跨 chunk 的 UTF-8 与转义状态，以及同步输出的结束/超时/EOF；演示 transport 只在显式预览模式启用。
+- [x] 默认入口使用真实会话；reader 的原始字节在 Rust 内送入持久 Ghostty parser，保留跨 chunk 的 UTF-8 与转义状态，以及同步输出的结束/超时/EOF；模拟 transport 仅供测试夹具使用。
 - [x] 尺寸变化与网格同步到 PTY，处理基础输入、粘贴、标题、响铃、EOF、退出码和启动失败；默认色/调色板查询直接在 Rust 回复。
 - [x] 显式关闭标签/组结束会话；关闭主窗口或退出应用结束全部会话，含前台任务、shell HUP 清理与回收。
 - [x] 视图卸载不结束 Rust 会话；UI 工作区重建从 `Sessions.list` 按同一 ID 绑定，已退出会话保留输出与退出状态。
@@ -95,8 +95,8 @@
 - [x] 多终端定向平铺：稳定 session surface、右 / 下分屏、已有会话放入、方向焦点与交换、收起 / 关闭、放大还原、尺寸约束与窄窗口恢复。
 - [x] pane 间隙缩放、键盘缩放、均分；侧栏 / pane 标题拖放与取消。设计和实现边界见 [多终端平铺设计](terminal-tiling.md)。
 - [ ] 多终端日用人工验收：实际系统输入法候选列表、选区复制、持续输出负载和拖动跟手；headless 与原生自动化证据分别记录。
-- [x] 组概览与只读 Git 状态 / diff：系统 `git` CLI、Git 2.20+、头部整合组设置；预览使用确定性干净仓库状态。
-- [x] 组概览 History：提交车道、提交详情与 patch、分支 scope；Branches / Worktrees 列表与切换、checkout、新建 / 删除分支、worktree 新建 / 打开为分组 / 删除 / 锁定。合并、rebase、cherry-pick、stash 与冲突解决不在本项。
+- [x] Git Changes tab 与只读状态 / diff：系统 `git` CLI、Git 2.20+、组设置独立入口；产品预览不访问 Git 仓库。
+- [x] Git History tab：提交车道、提交详情与 patch、分支 scope；Branches / Worktrees 列表与切换、fetch、fast-forward pull、checkout、新建 / 删除分支、worktree 新建 / 打开为分组 / 删除 / 锁定。合并、rebase、cherry-pick、stash 与冲突解决不在本项。
 - [ ] History 人工验收：真实分支切换、dirty 工作树拒绝、worktree 新建 / 删除后的分组与 shell 生命周期、长历史滚动和窄窗口。
 - 配置错误、shell 启动失败、崩溃恢复、运行中关闭提示。
 - 区分恢复工作区结构、重开 shell 与恢复活着的会话；若需要后者，再决定后台进程模型。

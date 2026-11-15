@@ -4,7 +4,7 @@ import { Hint, IconButton } from "../shared/controls";
 import { interfaceFont, monoFont } from "../shared/fonts";
 import { Icon } from "../shared/icons";
 import { Type } from "../shared/type";
-import type { Workspace } from "../workspace/workspace";
+import type { Workspace } from "../workspace/state";
 import type { GitChange, GitDiffMode, GitRepoStatus, GitTransport } from "./git-types";
 
 interface TreeNode {
@@ -21,7 +21,7 @@ interface ChangeTree {
   changes: Map<string, GitChange>;
 }
 
-/** Groups changed paths into the directory tree the overview shows. */
+/** Groups changed paths into a directory tree. */
 function buildTree(changes: GitChange[]): ChangeTree {
   const root = new Map<string, TreeNode>();
   for (const change of changes) {
@@ -105,7 +105,7 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; previ
   const refreshing = signal(false);
   const epoch = signal(0);
   const diffEpoch = signal(0);
-  const selected = signal<string | null>("file:ui/dashboard/Dashboard.tsx");
+  const selected = signal<string | null>(null);
   const expanded = signal<string[]>([]);
   const scope = signal<GitDiffMode>("unstaged");
   const patch = signal("");

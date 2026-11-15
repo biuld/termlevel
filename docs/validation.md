@@ -814,3 +814,73 @@ working 状态原先固定为三段横线呼吸。用户查看候选后认为三
 基于 `bcf08b7` 的未提交改动。`./scripts/nsh check`、`./scripts/nsh build`、`git diff --check` 通过。`./scripts/nsh test --junit artifacts/headless-tests.xml` 为 217 / 218：`clipboard::tests::osc52_bytes_reach_the_pasteboard_as_unicode` 失败，提示 `pbcopy rejected the sample`；本次分组、未分组及概览入口的 headless 交互通过。JUnit 记录位于 `artifacts/headless-tests.xml`。
 
 原生窗口自动化及人工 GUI 验收未执行；headless 预览不能替代真实窗口交互验收。
+
+## 2026-11-16：Git 分组标签
+
+基于 `7dd7c8c` 的未提交改动。`./scripts/nsh check`、`./scripts/nsh build`、`git diff --check` 通过。全量 `./scripts/nsh test --junit artifacts/headless-tests.xml` 为 218 / 221：剪贴板测试因 `pbcopy rejected the sample` 失败；History 测试夹具按钮没有布局尺寸、分屏测试仍按旧概览导航操作，修正后分别用 `./scripts/nsh test tests/workspace/History.test.tsx` 和 `./scripts/nsh test tests/workspace/Tiling.test.tsx --filter 'each tab group keeps'` 复验通过。全量运行期间加入空分组删除边界修复及测试；修正后未重跑全量。
+
+原生自动化：`./scripts/test-native gitlive`、`./scripts/test-native history` 各 1 / 1，通过真实仓库查询和菜单切换，并产生 `artifacts/dashboard-git-live.png` 等截图；前者首次在沙箱中启动开发服务器被拒，随后在允许的环境运行通过。预览、headless 和原生自动化不等于人工 GUI 验收；人工验收未执行。
+
+同一未提交改动后续修正 Git tab hover：`./scripts/nsh check`、`./scripts/nsh build`、`git diff --check` 及 `./scripts/nsh test tests/workspace/App.test.tsx --filter 'Git menu opens'` 通过；`./scripts/test-native gitlive` 1 / 1，原生窗口截图 `artifacts/git-tab-hover-title.png` 和 `artifacts/git-tab-hover-close.png` 已检查。未重跑全量测试，人工 GUI 验收未执行。
+
+随后 Git tab 图标改用所属组的主题颜色：`./scripts/nsh check`、`./scripts/nsh build`、`git diff --check`、Git 菜单定向 headless 用例及 `./scripts/test-native gitlive` 通过。检查了深色主题下紫色组的原生截图 `artifacts/git-tab-hover-title.png`；浅色主题及其他组颜色未作原生人工验收。
+
+紧凑侧栏 Git tab 可见性修正：`./scripts/nsh check`、`./scripts/nsh build`、`git diff --check` 通过；`./scripts/nsh test tests/workspace/App.test.tsx --filter 'compact'` 为 6 / 6，覆盖 Git tab 切换及折叠组隐藏数量；`./scripts/test-native gitlive` 为 1 / 1，收起侧栏后的 Changes / History 切换通过，截图 `artifacts/git-tabs-compact.png` 已检查。未重跑全量测试，人工 GUI 验收未执行。
+
+Ungrouped 工作区入口（基于 `7dd7c8c` 的未提交改动）：`./scripts/nsh check`、`./scripts/nsh build`、`git diff --check` 通过；`./scripts/nsh test tests/workspace/App.test.tsx` 23 / 23，`./scripts/nsh test tests/workspace/Persistence.test.tsx` 11 / 11，覆盖无未分组终端时切换、标题栏新建以及重启恢复。`./scripts/test-native gitlive` 1 / 1，验证紧凑侧栏入口与组视图切换，截图 `artifacts/ungrouped-compact.png` 已检查；截图后移除紧凑侧栏标题的重复装饰图标，并重新通过 check / build。未重跑全量测试，人工 GUI 验收未执行。
+
+## 2026-11-16：History Fetch / Pull
+
+基于 `7dd7c8c` 的未提交改动（包含此前 Git tab / Ungrouped 工作）。`./scripts/nsh check`、`./scripts/nsh build`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`git diff --check` 通过。`./scripts/nsh test --junit artifacts/headless-tests.xml`：225 / 226；唯一失败为 `clipboard::tests::osc52_bytes_reach_the_pasteboard_as_unicode`，提示 `pbcopy rejected the sample`，与此前记录一致。全量期间扩充了远端测试的 dirty 工作树断言，随后定向复验通过。
+
+`cargo test --lib git_ops::tests::fetch_and_fast_forward_pull_use_the_current_worktree_upstream` 使用本地临时 bare remote 和两个工作树，验证 fetch 只更新远端引用、pull 快进、冲突的未提交文件不丢失及分叉时 HEAD 不变；History headless 测试验证成功、失败与失败后刷新。`./scripts/test-native history` 1 / 1，通过模拟 transport 验证按钮与反馈；检查窄窗口截图 `artifacts/history-fetch-pull-narrow.png`。没有在真实网络远端或需要交互式认证的远端进行验收；人工 GUI 验收未执行。
+
+## 2026-11-16：History 工具栏与 Git 通知
+
+基于 `7dd7c8c` 的未提交改动。Fetch / Pull 使用图标按钮，提交搜索按需展开并标明已加载数据的匹配数量，无匹配时仍可加载更多。Git 操作结果写入宿主通知历史，应用右上角显示 5 秒 toast；切换离开 History 后仍可收到结果。
+
+`./scripts/nsh check`、`./scripts/nsh build`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`git diff --check` 通过。`./scripts/nsh test --junit artifacts/headless-tests.xml` 为 227 / 228，唯一失败仍是 `clipboard::tests::osc52_bytes_reach_the_pasteboard_as_unicode` 的 `pbcopy rejected the sample`。全量期间补充了搜索无匹配时加载更多及应用信息通知的展示；随后 `History.test.tsx` 3 / 3、`GitActions.test.tsx` 1 / 1 定向复验通过。`./scripts/test-native history` 2 / 2，原生截图 `artifacts/history-git-toast.png`、`artifacts/history-search-open.png`、`artifacts/history-search-compact.png` 已检查；最后的无匹配提示与通知行展示调整未重跑原生自动化。未进行人工 GUI 验收或真实网络远端认证验收。
+
+同一未提交改动后续调整 terminal tab 图标：有分组的普通终端图标在选中和未选中时均使用 group 主题色；运行、完成、阻塞和错误状态仍使用原有状态颜色。`./scripts/nsh check`、`./scripts/nsh build`、`git diff --check` 及工作区 appearance 定向测试 1 / 1 通过；未重跑全量测试或原生窗口验收。
+
+## 2026-11-16：Ungrouped 区域与 History 模块拆分
+
+基于 `7dd7c8c` 的未提交工作。Ungrouped 与普通 group 以独立区域及分隔线区分；History 分支操作栏使用同一 `IconButton` 样式且保持固定高度。History 原 1410 行文件拆为 `HistoryPanel/` 下 7 个文件（1–389 行），公开入口为 `index.ts`。`AGENTS.md` 及开发指南增加源文件 500 行硬限制与模块拆分约定；仓库此前仍有 13 个非生成的 Rust / TS 源或测试文件超过 500 行，本次未重构这些既有文件。
+
+`./scripts/nsh check`、`./scripts/nsh build`、`git diff --check` 通过；`./scripts/nsh test --junit artifacts/headless-tests.xml` 为 227 / 229，失败为既有 `pbcopy rejected the sample` 和新增测试选择器 `text:main` 命中两处。修正选择器后，`./scripts/nsh test tests/workspace/History.test.tsx` 4 / 4。运行期间将 History 公共入口从 `index.tsx` 调整为 `index.ts` 并完成定向复验，未重跑全量。`./scripts/test-native history` 2 / 2，检查了 `artifacts/history-branch-actions-all.png` 和 `artifacts/history-branch-actions-remote.png`；`./scripts/test-native gitlive` 首次报 `no context menu is open`，重跑 1 / 1，检查了展开与收起侧栏截图。人工 GUI 验收未执行。
+
+## 2026-11-16：History 分栏手柄脱离边界
+
+基于 `7dd7c8c` 的未提交改动。NSH 0.5.0 的 `ResizableState::resize_panel_at_handle` 在缩小前一面板时直接增加后一面板尺寸，没有按后一面板的 `maxSize` 截断；实际 flex 布局受上限约束，手柄模型却继续移动。原生复现中手柄位于截图 x=2044，详情面板边界在 x=2104（2× 截图，错开 30 pt）。移除 History 宽布局右侧详情和窄布局下方详情面板的上限，保留各面板最小尺寸，避免触发该上游缺陷；拖动范围因此不再受原 540 / 480 pt 上限限制。
+
+`./scripts/nsh check`、`./scripts/nsh build`、`git diff --check` 及 `./scripts/nsh test tests/workspace/History.test.tsx` 4 / 4 通过。`./scripts/test-native history --filter 'history pane divider'` 1 / 1，真实 macOS 窗口拖动并拍摄了普通位置、左右极限及窄布局；深色截图 `artifacts/history-divider-drop.png`、`artifacts/history-divider-limit-left.png`、`artifacts/history-divider-limit-right.png` 用像素扫描确认仅有两条面板边界线，窄布局截图 `artifacts/history-divider-narrow.png` 经目视检查。NSH 的 macOS 测试目标不支持 `dragAndHold`，所以未取得按住拖动中途的原生截图；全量测试和人工 GUI 验收未重跑。
+
+### Git 目录整理、预览隔离与 History 加载状态（2026-11-16，未提交工作区）
+
+- `./scripts/nsh check`、`./scripts/nsh build` 通过。
+- `./scripts/nsh test --junit artifacts/headless-tests.xml`：230/231 通过；已有 `clipboard::tests::osc52_bytes_reach_the_pasteboard_as_unicode` 因 `pbcopy rejected the sample` 失败。History 加载状态与产品预览隔离定向测试通过。
+- 原生自动化：`./scripts/test-native gitlive` 1/1、`./scripts/test-native history` 3/3 通过；前者验证真实仓库和收起侧栏。已检查展开和收起侧栏的原生截图。
+- 人工 GUI 操作验收未执行。产品预览不启动 Git、shell 或真实工作区存储；模拟 Git 和终端仅供测试夹具注入。
+
+### 组内固定终端与状态模块整理（2026-11-16，未提交工作区）
+
+- `./scripts/nsh check`、`./scripts/nsh build` 通过。组内固定、跨组移动、分屏保持及快照恢复的定向测试通过。
+- 原生自动化：`./scripts/test-native tiling` 1/1，覆盖真实 PTY 和分屏操作；人工 GUI 操作验收未执行。
+- 完整 `./scripts/nsh test --junit artifacts/headless-tests.xml`：232/234；已有剪贴板测试因 `pbcopy rejected the sample` 失败，`sessions::tests::closing_allows_shell_to_hang_up_background_jobs` 报后台任务仍在运行。后者使用 `./scripts/nsh test --filter closing_allows_shell_to_hang_up_background_jobs` 单独复验通过，不能据此断定问题根治。
+
+### 收起侧栏的分组按钮（2026-11-16，未提交工作区）
+
+- `./scripts/nsh check`、`./scripts/nsh build` 通过；侧栏交互定向测试 25/25 通过。
+- `./scripts/nsh test --junit artifacts/headless-tests.xml`：233/234，已有剪贴板测试因 `pbcopy rejected the sample` 失败。
+- 原生自动化 `./scripts/test-native gitlive` 1/1 通过，已检查收起侧栏截图；人工 GUI 操作验收未执行。
+
+### Ungrouped 固定终端分界（2026-11-16，未提交工作区）
+
+- `./scripts/nsh check`、`./scripts/nsh build` 通过；完整测试 233/234，已有剪贴板测试因 `pbcopy rejected the sample` 失败。
+- 原生自动化 `./scripts/test-native tiling` 1/1 通过，已检查固定终端截图；人工 GUI 操作验收未执行。
+
+### 剪贴板测试边界（2026-11-16，未提交工作区）
+
+- Rust 剪贴板 helper 定向测试 2/2，通过替身进程验证 UTF-8 字节、子进程编码环境、大小限制和无效 UTF-8 拒绝；不访问系统剪贴板。
+- 原生自动化：`./scripts/test-native protocols --filter 'OSC52 preserves Chinese'` 1/1；以 `LC_ALL=C LANG=C LC_CTYPE=C` 重跑 1/1，通过 AppKit 核对真实剪贴板 Unicode，保存并恢复剪贴板。人工 GUI 验收未执行。
+- `./scripts/nsh check`、`./scripts/nsh build` 通过。完整 headless 回归按用户要求中止，未取得最终结果。

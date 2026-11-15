@@ -1,5 +1,7 @@
+import { PreviewTerminal } from "./preview/Terminal";
+import { previewGit } from "./preview/git";
 import { mount, signal, View } from "nsh";
-import { createWorkspace } from "../../../ui/workspace/workspace";
+import { createWorkspace } from "../../../ui/workspace/state";
 import { WorkspaceApp } from "../../../ui/app/WorkspaceApp";
 import { loadWorkspaceSnapshot } from "../../../ui/workspace/persistence";
 import type { WorkspaceSnapshot } from "../../../ui/workspace/workspace-snapshot";
@@ -22,7 +24,7 @@ const transport = {
 
 function RestoredWorkspace(props: { snapshot: WorkspaceSnapshot | null }) {
   const workspace = createWorkspace(transport, { snapshot: props.snapshot });
-  return <WorkspaceApp workspace={workspace} snapshot={props.snapshot} persist />;
+  return <WorkspaceApp workspace={workspace} snapshot={props.snapshot} git={previewGit} previewSurface={PreviewTerminal} persist />;
 }
 
 mount(() => {

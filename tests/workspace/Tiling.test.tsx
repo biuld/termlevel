@@ -24,7 +24,7 @@ test("nested tiling geometry clamps sizes, normalizes removals and finds directi
 });
 
 test("split panes retain output, replace only focused slots, maximize, hide and restore at narrow widths", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.type("id:terminal-prototype", "echo LEFT_KEPT"); await app.keyboard.press("enter");
   await app.press("id:split-right");
   await app.waitFor("id:terminal-tab-1");
@@ -58,7 +58,7 @@ test("split panes retain output, replace only focused slots, maximize, hide and 
 });
 
 test("directional focus, swap, live divider resize and resize-mode keys preserve terminals", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.press("id:split-right");
   await app.type("id:terminal-tab-1", "echo SWAP_KEPT"); await app.keyboard.press("enter");
   await app.keyboard.press("mod+alt+left");
@@ -75,6 +75,20 @@ test("directional focus, swap, live divider resize and resize-mode keys preserve
   await app.type("id:terminal-prototype", "echo KEYS_RELEASED"); await app.keyboard.press("enter");
   await app.waitFor("text:KEYS_RELEASED");
   expect(app.count("id:terminal-tab-1")).toBe(1);
+});
+
+test("pinning a split terminal preserves the group and the pane layout", async () => {
+  const app = await open("./fixtures/TilingStateFixture.tsx", options);
+  await app.press("id:split-right");
+  await app.waitFor("id:split-unit-termlevel >> id:tab-prototype");
+  const before = JSON.stringify(state(app).tiling);
+  await app.rightClick("id:tab-prototype");
+  await app.chooseMenuItem("Pin terminal");
+  expect(JSON.stringify(state(app).tiling)).toBe(before);
+  expect(app.shows("id:split-unit-termlevel >> id:tab-prototype")).toBe(true);
+  expect(app.shows("id:terminal-prototype")).toBe(true);
+  expect(app.shows("id:terminal-tab-1")).toBe(true);
+  app.dispose();
 });
 
 test("sidebar dragging to a pane creates a split and cancellation does not change sessions", async () => {
@@ -99,7 +113,7 @@ test("sidebar dragging to a pane creates a split and cancellation does not chang
 });
 
 test("too-small split is rejected without starting a terminal", async () => {
-  const app = await open("../../App.tsx", { ...options, width: 640, height: 480 });
+  const app = await open("./fixtures/PreviewApp.tsx", { ...options, width: 640, height: 480 });
   await app.keyboard.press("mod+d");
   expect(app.shows("id:tab-tab-1")).toBe(false);
   expect(app.shows("id:terminal-tab-1")).toBe(false);
@@ -107,7 +121,7 @@ test("too-small split is rejected without starting a terminal", async () => {
 });
 
 test("each tab group keeps its own tiling layout", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   expect(app.shows("id:group-workspace-termlevel")).toBe(true);
   await app.press("id:split-right");
   await app.press("id:tab-colors");
@@ -119,7 +133,7 @@ test("each tab group keeps its own tiling layout", async () => {
   expect(app.shows("id:terminal-prototype")).toBe(true);
   expect(app.shows("id:terminal-tab-1")).toBe(true);
   expect(app.shows("id:terminal-colors")).toBe(false);
-  await app.press("id:group-termlevel"); await app.waitFor("id:dashboard"); await app.press("id:dashboard-group-menu"); await app.chooseMenuItem("Delete group…"); await app.press("id:confirm-close-group");
+  await app.rightClick("id:group-termlevel"); await app.chooseMenuItem("Delete group…"); await app.press("id:confirm-close-group");
   expect(app.shows("id:terminal-prototype")).toBe(false);
   expect(app.shows("id:terminal-tab-1")).toBe(false);
   expect(app.shows("id:terminal-colors")).toBe(true);
@@ -131,7 +145,7 @@ test("each tab group keeps its own tiling layout", async () => {
 });
 
 test("a split is its own sidebar unit and can move into a tab group", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.press("id:tab-home");
   await app.press("id:split-right");
   await app.waitFor("id:split-unit");
@@ -155,7 +169,7 @@ test("a split is its own sidebar unit and can move into a tab group", async () =
 });
 
 test("a sidebar choice outside the split replaces the whole canvas", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.press("id:split-right");
   await app.press("id:tab-preview");
   expect(app.shows("id:terminal-preview")).toBe(true);
@@ -170,7 +184,7 @@ test("a sidebar choice outside the split replaces the whole canvas", async () =>
 });
 
 test("ctrl+d closes a clean shell and a failed exit keeps the terminal", async () => {
-  const app = await open("../../App.tsx", options);
+  const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.press("id:split-right");
   await app.type("id:terminal-tab-1", "exit 1");
   await app.keyboard.press("enter");

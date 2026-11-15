@@ -1,207 +1,25 @@
 import { batch, computed, effect, signal, token } from "nsh";
 import { Runtime, Sessions } from "termlevel/native";
-import { dropPosition, equalize, geometry, insertPane, minimum, neighbor, nodeIds, panes, removePane, siblings, updateNode, type Direction, type DropPosition, type LayoutNode, type Pane, type Rect, type Size, type TilingState } from "./tiling";
-import { groupPalette, type GroupColor } from "../shared/theme";
-import { SNAPSHOT_VERSION, type SnapshotPreferences, type WorkspaceSnapshot } from "./workspace-snapshot";
-
-/** Rust owns protocol facts, aggregation and presentation semantics. */
-export type TabProgress = import("termlevel/native").ProgressInfo;
-export type TabActivity = import("termlevel/native").ActivityInfo;
-export type TabStatus = import("termlevel/native").TerminalStatusInfo;
-
-export interface Tab {
-  id: string;
-  title: string;
-  groupId: string | null;
-  pinned: boolean;
-  cwd: string;
-  state?: string;
-  exitCode?: number | null;
-  error?: string | null;
-  inputWarning?: string | null;
-  customTitle?: boolean;
-  bell?: boolean;
-  progress?: TabProgress | null;
-  activity?: TabActivity | null;
-  status?: TabStatus;
-  statusRevision?: number;
-  shellPhase?: string;
-  /** Latest OSC 7 / ConEmu / iTerm2 working directory. Runtime-only. */
-  liveCwd?: string;
-  /** OSC 22 pointer shape. Runtime-only. */
-  mouseShape?: string;
-  /** OSC 133 semantic-prompt state. Runtime-only. */
-  atPrompt?: boolean;
-}
-
-export interface SessionTransport {
-  cwd: string;
-  list(): Array<{
-    id: string; cwd: string; title: string; state: string; exitCode?: number | null;
-    error?: string | null; progress?: TabProgress | null; activity?: TabActivity | null;
-    currentCwd?: string | null; mouseShape?: string; atPrompt?: boolean;
-    status?: TabStatus; statusRevision?: number; shellPhase?: string;
-  }>;
-  open(cwd: string): ReturnType<SessionTransport["list"]>[number];
-  close(id: string): void;
-}
-
-export interface TabGroup {
-  id: string;
-  title: string;
-  cwd: string;
-  color: GroupColor;
-  collapsed: boolean;
-}
-
-/** The directory's own name, which a new group uses as its title. */
-function pathName(cwd: string) {
-  const trimmed = cwd.trim().replace(/[\\/]+$/, "");
-  if (!trimmed) return "未命名分组";
-  const cut = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
-  return (cut >= 0 ? trimmed.slice(cut + 1) : trimmed) || trimmed;
-}
-
-/** The home folder reads better as "Home" than as the user's short name. */
-function groupName(cwd: string) {
-  return cwd === "~" || cwd === Runtime.home() ? "Home" : pathName(cwd);
-}
-
-export interface WorkspaceOptions {
-  /** The document restored from storage. Null or omitted on a first launch. */
-  snapshot?: WorkspaceSnapshot | null;
-}
-
-const DEMO_ACTIVE = "prototype";
-const DEMO_TABS: Tab[] = [
-  { id: "home", title: "Terminal", groupId: null, pinned: true, cwd: "~" },
-  { id: "prototype", title: "UI prototype", groupId: "termlevel", pinned: false, cwd: "~/Projects/termlevel" },
-  { id: "preview", title: "Build & preview", groupId: "termlevel", pinned: false, cwd: "~/Projects/termlevel" },
-  { id: "colors", title: "Color test", groupId: "playground", pinned: false, cwd: "~/Playground" },
-];
-const DEMO_GROUPS: TabGroup[] = [
-  { id: "termlevel", title: "termlevel", cwd: "~/Projects/termlevel", color: "purple", collapsed: false },
-  { id: "playground", title: "Playground", cwd: "~/Playground", color: "blue", collapsed: false },
-];
-
-/** Trailing number of a generated id, so restored ids never collide with new ones. */
-function idSuffix(id: string) {
-  const match = /^(?:group|tab|pane|split)-(\d+)$/.exec(id);
-  return match ? Number(match[1]) : 0;
-}
-
-/** Reopens a saved tab in its directory; one that disappeared falls back to home. */
-function openRestored(transport: SessionTransport, cwd: string): ReturnType<SessionTransport["open"]> {
-  const requested = cwd || "~";
-  const opened = transport.open(requested);
-  if (opened.state !== "error" || requested === "~") return opened;
-  // The failed entry owns no process; close it so the fallback is the only tab.
-  transport.close(opened.id);
-  return transport.open("~");
-}
+import { dropPosition, equalize, geometry, insertPane, minimum, neighbor, panes, removePane, siblings, updateNode, type Direction, type DropPosition, type LayoutNode, type Pane, type Rect, type Size, type TilingState } from "../tiling";
+import { SNAPSHOT_VERSION, type GitView, type SnapshotPreferences, type WorkspaceSnapshot } from "../workspace-snapshot";
+import { initialWorkspace } from "./initial";
+import { groupOperations } from "./groups";
+import type { SessionTransport, Tab, TabGroup, WorkspaceOptions } from "./types";
+export type { SessionTransport, Tab, TabActivity, TabGroup, TabProgress, TabStatus, WorkspaceOptions } from "./types";
 
 export function createWorkspace(transport?: SessionTransport, options: WorkspaceOptions = {}) {
-  const snapshot = options.snapshot ?? null;
-  // The preview workspace is a deterministic demo; the real app starts empty.
-  const demo = !transport && !snapshot;
-  const live = transport?.list() ?? [];
-  const groups = signal<TabGroup[]>(demo ? DEMO_GROUPS.map((item) => ({ ...item })) : (snapshot?.groups ?? []).map((item) => ({ ...item })));
-  const groupIds = new Set(groups().map((item) => item.id));
-
-  // Saved tabs are reopened under new session ids; the old id only keys the layout.
-  const remap = new Map<string, string>();
-  const initialTabs: Tab[] = [];
-  if (snapshot) {
-    for (const saved of snapshot.tabs) {
-      const existing = live.find((session) => session.id === saved.id);
-      const session = existing ?? (transport ? openRestored(transport, saved.cwd) : undefined);
-      const id = session?.id ?? saved.id;
-      remap.set(saved.id, id);
-      const groupId = saved.groupId && groupIds.has(saved.groupId) ? saved.groupId : null;
-      initialTabs.push({
-        id,
-        title: saved.customTitle ? saved.title : session?.title || saved.title,
-        cwd: session?.cwd ?? saved.cwd,
-        groupId,
-        pinned: groupId ? false : saved.pinned,
-        customTitle: saved.customTitle,
-        state: session?.state,
-        exitCode: session?.exitCode,
-        error: session?.error,
-        progress: session?.progress,
-        activity: session?.activity,
-        status: session?.status, statusRevision: session?.statusRevision, shellPhase: session?.shellPhase,
-        liveCwd: session?.currentCwd ?? undefined,
-        mouseShape: session?.mouseShape,
-        atPrompt: session?.atPrompt,
-      });
-    }
-  } else if (demo) {
-    initialTabs.push(...DEMO_TABS.map((item) => ({ ...item })));
-  }
-  // A live session the document does not know about (UI hot reload) keeps its tab.
-  const known = new Set(initialTabs.map((tab) => tab.id));
-  for (const session of live) {
-    if (known.has(session.id)) continue;
-    known.add(session.id);
-    initialTabs.push({ ...session, liveCwd: session.currentCwd ?? undefined, title: session.title || `Terminal ${initialTabs.length + 1}`, groupId: null, pinned: false });
-  }
-  // IDs, not tab objects or their positions, own the terminal surfaces.
-  const tabs = signal<Tab[]>(initialTabs);
-
-  let layoutSequence = 1;
-  let sequence = 0;
-  if (snapshot) {
-    for (const id of [...snapshot.groups.map((item) => item.id), ...snapshot.tabs.map((item) => item.id)]) {
-      sequence = Math.max(sequence, idSuffix(id));
-    }
-    for (const state of Object.values(snapshot.layouts)) {
-      for (const id of nodeIds(state.root)) layoutSequence = Math.max(layoutSequence, idSuffix(id));
-    }
-  }
-  // Each tab group is one tiling workspace. Ungrouped and pinned tabs share the "" workspace.
-  // The canvas shows only the active workspace, so a layout never mixes groups.
-  const NO_LAYOUT: TilingState = { root: null, focusedPaneId: null, zoomed: false };
-  const layoutKey = (groupId: string | null | undefined) => groupId ?? "";
-  const savedLayouts: Record<string, TilingState> = {};
-  if (snapshot) {
-    const tabById = new Map(tabs().map((tab) => [tab.id, tab]));
-    const remapNode = (node: LayoutNode | null, key: string): LayoutNode | null => {
-      if (!node) return null;
-      if (node.kind === "pane") {
-        const sessionId = remap.get(node.sessionId);
-        return sessionId && layoutKey(tabById.get(sessionId)?.groupId) === key ? { ...node, sessionId } : null;
-      }
-      const first = remapNode(node.first, key), second = remapNode(node.second, key);
-      if (!first) return second;
-      if (!second) return first;
-      return { ...node, first, second };
-    };
-    for (const [key, state] of Object.entries(snapshot.layouts)) {
-      const root = remapNode(state.root, key);
-      if (!root) continue;
-      const open = panes(root);
-      savedLayouts[key] = {
-        root,
-        focusedPaneId: open.find((pane) => pane.id === state.focusedPaneId)?.id ?? open[0]?.id ?? null,
-        zoomed: state.zoomed && open.length > 1,
-      };
-    }
-  }
-  const layouts = signal<Record<string, TilingState>>(savedLayouts);
-  const activeFromSnapshot = snapshot?.activeTabId ? remap.get(snapshot.activeTabId) : undefined;
-  const initialActiveId = snapshot
-    ? (activeFromSnapshot && tabs().some((tab) => tab.id === activeFromSnapshot) ? activeFromSnapshot : tabs()[0]?.id ?? null)
-    : demo
-      ? (tabs().some((tab) => tab.id === DEMO_ACTIVE) ? DEMO_ACTIVE : tabs()[0]?.id ?? null)
-      : tabs()[0]?.id ?? null;
-  const workspaceKey = signal(layoutKey(tabs().find((tab) => tab.id === initialActiveId)?.groupId));
+  const { snapshot, groups, tabs, NO_LAYOUT, layoutKey, layouts, initialActiveId, workspaceKey, ...counters } = initialWorkspace(transport, options);
+  let { sequence, layoutSequence } = counters;
   // A group's overview replaces the canvas without touching its sessions or layout.
   const dashboardGroups = signal<string[]>(snapshot?.dashboards ?? []);
   const dashboardOpen = computed(() => {
     const key = workspaceKey();
     return key !== "" && dashboardGroups().includes(key);
   });
+  const savedGitViews = snapshot?.gitViews ?? Object.fromEntries((snapshot?.dashboards ?? []).map(id => [id, { open: ["changes" as const], selected: "changes" as const }]));
+  const gitViews = signal<Record<string, { open: GitView[]; selected: GitView | null }>>(savedGitViews);
+  const activeGitView = computed(() => gitViews()[workspaceKey()]?.selected ?? null);
+  const canvasBlocked = computed(() => dashboardOpen() || activeGitView() !== null);
   // A sidebar choice outside the current split fills the canvas alone. The split tree stays put.
   const foreground = signal<string | null>(null);
   const tiling = computed(() => {
@@ -325,12 +143,55 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
     if (key) closeDashboardFor(key);
   }
 
+  function selectGroup(id: string) {
+    if (!group(id)) return;
+    batch(() => {
+      dashboardGroups.set([]);
+      workspaceKey.set(id);
+      patchGroup(id, { collapsed: false });
+      if (!gitViews()[id]?.selected && !layoutOf(id).root) {
+        const first = tabs().find(item => item.groupId === id);
+        if (first) select(first.id);
+      }
+    });
+  }
+
+  function selectUngrouped() {
+    batch(() => {
+      dashboardGroups.set([]);
+      workspaceKey.set("");
+      if (!layoutOf("").root) {
+        const first = tabs().find(item => !item.groupId);
+        if (first) select(first.id);
+      }
+    });
+  }
+
+  function openGitView(kind: GitView, id = workspaceKey()) {
+    if (!group(id)) return;
+    batch(() => {
+      selectGroup(id);
+      gitViews.update(all => {
+        const old = all[id] ?? { open: [], selected: null };
+        return { ...all, [id]: { open: old.open.includes(kind) ? old.open : [...old.open, kind], selected: kind } };
+      });
+    });
+  }
+
+  function closeGitView(id: string, kind: GitView) {
+    const old = gitViews()[id];
+    if (!old || !old.open.includes(kind)) return;
+    const open = old.open.filter(view => view !== kind);
+    gitViews.update(all => ({ ...all, [id]: { open, selected: old.selected === kind ? null : old.selected } }));
+  }
+
   function select(id: string, acknowledge = true) {
     if (!tab(id)) return;
     const observedRevision = tab(id)?.statusRevision;
     batch(() => {
       closeDashboardFor(tab(id)?.groupId);
       const key = layoutKey(tab(id)?.groupId);
+      if (key && gitViews()[key]?.selected) gitViews.update(all => ({ ...all, [key]: { ...all[key], selected: null } }));
       if (workspaceKey() !== key) workspaceKey.set(key);
       const state = layoutOf(key);
       const open = panes(state.root);
@@ -430,7 +291,7 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
     }
     const viewing = workspaceKey() === fromKey;
     batch(() => {
-      tabs.update(all => all.map(t => ids.includes(t.id) ? { ...t, groupId: to, pinned: to ? false : t.pinned } : t));
+      tabs.update(all => all.map(t => ids.includes(t.id) ? { ...t, groupId: to } : t));
       layouts.update(all => {
         const copy: Record<string, TilingState> = { ...all, [toKey]: state };
         delete copy[fromKey];
@@ -450,6 +311,8 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
       const keys = new Set(valid.map(id => layoutKey(tab(id)?.groupId)));
       tabs.update(all => all.filter(t => !closing.has(t.id)));
       for (const key of keys) pruneLayout(key, closing);
+      // A background shell exiting must not replace the selected Git view.
+      if (activeGitView()) return;
       const active = layoutOf(workspaceKey());
       const still = panes(active.root);
       if (still.length) {
@@ -538,7 +401,7 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
       batch(() => {
         if (joins) {
           const groupId = workspaceKey() || null;
-          patchTab(sessionId, { groupId, pinned: groupId ? false : tab(sessionId)?.pinned });
+          patchTab(sessionId, { groupId });
           forgetSession(sessionId);
         }
         if (!persistLayout({ root, focusedPaneId: focus, zoomed: false })) return;
@@ -569,176 +432,11 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
   }
   function cancelPaneDrag() { paneDrag.set(null); dropPreview.set(null); }
 
-  /** A palette color not already on a group, or any color once all nine are used. */
-  function nextGroupColor(): GroupColor {
-    const used = new Set(groups().map((item) => item.color));
-    const open = groupPalette.filter((item) => !used.has(item.id));
-    const pool = open.length > 0 ? open : [...groupPalette];
-    return pool[Math.floor(Math.random() * pool.length)].id;
-  }
-
-  function addGroup(cwd: string) {
-    const directory = cwd.trim() || "~";
-    const id = `group-${++sequence}`;
-    const color = nextGroupColor();
-    batch(() => {
-      groups.update((all) => [...all, {
-        id, title: groupName(directory), cwd: directory, color, collapsed: false,
-      }]);
-      expanded.set(true);
-    });
-    addTab(id);
-    return id;
-  }
-
-  function ungroup(id: string) {
-    const members = tabs().filter(t => t.groupId === id);
-    const viewing = workspaceKey() === id;
-    const groupLayout = layoutOf(id);
-    const loose = layoutOf("");
-    const kept = panes(groupLayout.root).find(p => p.id === groupLayout.focusedPaneId)?.sessionId ?? members[0]?.id;
-    batch(() => {
-      closeDashboardFor(id);
-      tabs.update((all) => all.map((t) => t.groupId === id ? { ...t, groupId: null } : t));
-      groups.update((all) => all.filter((g) => g.id !== id));
-      // An empty ungrouped workspace inherits the group's arrangement. A workspace
-      // that already has panes keeps it; the terminal on screen is placed into it.
-      const adopted = !loose.root && groupLayout.root ? groupLayout : loose;
-      layouts.update(all => {
-        const copy: Record<string, TilingState> = { ...all, "": adopted };
-        delete copy[id];
-        return copy;
-      });
-      if (viewing && kept) {
-        workspaceKey.set("");
-        select(kept);
-      }
-    });
-  }
-
-  function closeGroup(id: string) {
-    batch(() => {
-      closeDashboardFor(id);
-      closeTabs(tabs().filter(t => t.groupId === id).map(t => t.id));
-      groups.update((all) => all.filter((g) => g.id !== id));
-      layouts.update(all => {
-        if (!(id in all)) return all;
-        const copy = { ...all };
-        delete copy[id];
-        return copy;
-      });
-    });
-  }
-
-  /** Moves `id` into a section without changing its session id.
-   * `beforeId` is the tab it should precede; null appends to that section.
-   * A group destination expands the group and clears the pin. */
-  function placeTab(id: string, destination: { groupId: string | null; pinned: boolean; beforeId: string | null }) {
-    const current = tab(id);
-    if (!current) return;
-    if (destination.beforeId === id && destination.groupId === current.groupId && destination.pinned === current.pinned) return;
-    if (destination.groupId && !group(destination.groupId)) return;
-    const pinned = destination.groupId ? false : destination.pinned;
-    const groupId = pinned ? null : destination.groupId;
-    const from = tabs().findIndex((t) => t.id === id);
-    const next = tabs().filter((t) => t.id !== id);
-    let index = next.length;
-    if (destination.beforeId && destination.beforeId !== id) {
-      const at = next.findIndex((t) => t.id === destination.beforeId);
-      if (at < 0) return;
-      index = at;
-    } else {
-      let last = -1;
-      next.forEach((t, i) => {
-        if (t.groupId === groupId && t.pinned === pinned) last = i;
-      });
-      if (last >= 0) index = last + 1;
-    }
-    if (current.groupId === groupId && current.pinned === pinned && from === index) return;
-    next.splice(index, 0, { ...current, groupId, pinned });
-    const previousKey = layoutKey(current.groupId);
-    const nextKey = layoutKey(groupId);
-    const follow = activeId() === id;
-    batch(() => {
-      tabs.set(next);
-      if (groupId) patchGroup(groupId, { collapsed: false });
-      if (previousKey !== nextKey) {
-        forgetSession(id);
-        if (follow) select(id);
-      }
-    });
-  }
-
-  function inSplit(id: string) {
-    const current = tab(id);
-    if (!current) return false;
-    const ids = layoutSessions(current.groupId);
-    return ids.length >= 2 && ids.includes(id);
-  }
-  function moveTab(id: string, destination: string | null) {
-    const current = tab(id);
-    if (current && inSplit(id)) {
-      placeSplit(current.groupId, destination);
-      return;
-    }
-    placeTab(id, { groupId: destination, pinned: false, beforeId: null });
-  }
-
-  /** Drops `sourceId` on a tab that is not already in a group.
-   * Both land in a new group, `sourceId` before the target when `before` is set.
-   * Session ids stay the same, and pins are cleared. */
-  function combineTabs(sourceId: string, targetId: string, before: boolean) {
-    const source = tab(sourceId);
-    const target = tab(targetId);
-    if (!source || !target || sourceId === targetId || target.groupId) return null;
-    const groupId = `group-${++sequence}`;
-    const ordered = (before ? [source, target] : [target, source]).map((item) => ({ ...item, groupId, pinned: false }));
-    const next = tabs().filter((item) => item.id !== sourceId && item.id !== targetId);
-    const targetIndex = tabs().findIndex((item) => item.id === targetId);
-    const sourceWasBefore = tabs().findIndex((item) => item.id === sourceId) < targetIndex;
-    next.splice(Math.max(0, targetIndex - (sourceWasBefore ? 1 : 0)), 0, ...ordered);
-    const cwd = target.cwd || "~";
-    const color = nextGroupColor();
-    const follow = activeId() === sourceId || activeId() === targetId;
-    const shown = follow ? activeId()! : targetId;
-    batch(() => {
-      groups.update((all) => [...all, { id: groupId, title: groupName(cwd), cwd, color, collapsed: false }]);
-      tabs.set(next);
-      expanded.set(true);
-      forgetSession(sourceId);
-      forgetSession(targetId);
-      const pane = nextPane(shown);
-      setLayout(groupId, { root: pane, focusedPaneId: pane.id, zoomed: false });
-      if (follow) select(shown);
-    });
-    return groupId;
-  }
-
-  function togglePin(id: string) {
-    const current = tab(id);
-    if (!current) return;
-    placeTab(id, { groupId: null, pinned: !current.pinned, beforeId: null });
-  }
-
-  function step(direction: number) {
-    const all = tabs();
-    if (!all.length) return;
-    const index = all.findIndex((t) => t.id === activeId());
-    select(all[(index + direction + all.length) % all.length].id);
-  }
-
-  function reorder(id: string, direction: number) {
-    const current = tab(id);
-    if (!current) return;
-    const all = [...tabs()];
-    const peers = all.filter((t) => t.groupId === current.groupId && t.pinned === current.pinned);
-    const target = peers[peers.findIndex((t) => t.id === id) + direction];
-    if (!target) return;
-    const a = all.findIndex((t) => t.id === id);
-    const b = all.findIndex((t) => t.id === target.id);
-    [all[a], all[b]] = [all[b], all[a]];
-    tabs.set(all);
-  }
+  const { addGroup, ungroup, closeGroup, placeTab, inSplit, moveTab, combineTabs, togglePin, step, reorder } = groupOperations({
+    groups, tabs, expanded, workspaceKey, layouts, gitViews, activeId, nextSequence: () => ++sequence,
+    tab, group, addTab, closeTabs, closeDashboardFor, layoutOf, layoutKey, layoutSessions, placeSplit,
+    select, forgetSession, patchGroup, nextPane, setLayout,
+  });
 
   /** The serializable workspace. Transient session state, bells and processes stay out. */
   function snapshotFile(preferences: SnapshotPreferences): WorkspaceSnapshot {
@@ -755,7 +453,8 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
       layouts: open,
       activeTabId: activeId(),
       workspaceKey: workspaceKey(),
-      dashboards: dashboardGroups().filter(id => groups().some(g => g.id === id)),
+      dashboards: [],
+      gitViews: Object.fromEntries(Object.entries(gitViews()).filter(([id]) => !!group(id))),
       expanded: expanded(),
       sidebarWidth: sidebarWidth(),
       fontSize: fontSize(),
@@ -770,7 +469,9 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
   if (snapshot) {
     // Restoring the saved overview happens after the initial selection, which
     // otherwise counts as choosing a terminal and closes it.
-    dashboardGroups.set(snapshot.dashboards.filter(id => !!group(id)));
+    dashboardGroups.set([]);
+    gitViews.set(savedGitViews);
+    if (!snapshot.workspaceKey || group(snapshot.workspaceKey)) workspaceKey.set(snapshot.workspaceKey);
     for (const saved of snapshot.groups) {
       if (saved.collapsed !== group(saved.id)?.collapsed) patchGroup(saved.id, { collapsed: saved.collapsed });
     }
@@ -778,7 +479,7 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
 
   return {
     tabs, groups, activeId, activeTab, expanded, sidebarWidth, fontSize, scrollback, clipboardRead, workspaceKey, snapshot: snapshotFile,
-    dashboardOpen, openDashboard, closeDashboard,
+    dashboardOpen, openDashboard, closeDashboard, gitViews, activeGitView, canvasBlocked, selectGroup, selectUngrouped, openGitView, closeGitView,
     tiling, paneList, inputBlocked, cellWidth, canvasSize, setCanvasSize, paneMinimum, fullGeometry, constrained, projected,
     paneForSession, frameForSession, focusPane, canSplit, splitTerminal, hidePane, toggleZoom, focusDirection,
     layoutSessions, placeSplit, inSplit,

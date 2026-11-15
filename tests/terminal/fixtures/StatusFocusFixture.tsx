@@ -1,7 +1,7 @@
 import { cleanup, mount, signal, Text, View } from "nsh";
 import { Button } from "nsh/base";
 import { Runtime, Sessions } from "termlevel/native";
-import { createWorkspace } from "../../../ui/workspace/workspace";
+import { createWorkspace } from "../../../ui/workspace/state";
 import { TerminalSurface } from "../../../ui/terminal/TerminalSurface";
 
 // Rebinding an active production surface must not acknowledge unseen results.
