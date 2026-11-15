@@ -28,39 +28,45 @@ test("resizing updates the layout before release and hover still opens the sideb
   await app.press("id:toggle-sidebar");
   expect(app.shows("id:session-path")).toBe(true);
   await app.hover("id:sidebar-panel");
-  await app.hover("id:group-menu-termlevel");
-  await app.press("id:group-menu-termlevel");
-  await app.waitFor("id:group-editor");
+  await app.hover("id:group-termlevel");
+  await app.press("id:group-termlevel");
+  await app.waitFor("id:dashboard");
   await app.keyboard.press("escape");
   await app.hover("id:session-toolbar");
-  expect(app.shows("id:group-menu-termlevel")).toBe(false);
+  expect(app.shows("id:dashboard")).toBe(false);
   await app.waitFor("text:resize-overlay-output");
   expect(app.count("id:terminal-prototype")).toBe(1);
 });
 
-test("hover expands the compact sidebar over the terminal and keeps group editing open", async () => {
+test("the compact rail opens the group overview and keeps terminal output", async () => {
   const app = await open("../../App.tsx", { ...options, width: 640, height: 480 });
   await app.type("id:terminal-prototype", "echo hover-retains-output");
   await app.keyboard.press("enter");
   await app.press("id:toggle-sidebar");
   expect(app.shows("id:session-path")).toBe(true);
-  expect(app.shows("id:group-menu-termlevel")).toBe(false);
+  expect(app.shows("id:group-termlevel")).toBe(true);
   await app.hover("id:sidebar-panel");
-  expect(app.shows("id:group-menu-termlevel")).toBe(true);
-  expect(app.shows("id:session-path")).toBe(true);
-  await app.press("id:group-menu-termlevel");
-  await app.hover("id:group-name-input");
-  expect(app.shows("id:group-menu-termlevel")).toBe(true);
-  expect(app.shows("id:group-editor")).toBe(true);
+  await app.press("id:group-termlevel");
+  await app.waitFor("id:dashboard");
+  await app.hover("id:dashboard");
+  expect(app.shows("id:dashboard")).toBe(true);
+  expect(app.shows("id:session-path")).toBe(false);
   await app.keyboard.press("escape");
+  expect(app.shows("id:dashboard")).toBe(false);
   await app.hover("id:session-toolbar");
-  expect(app.shows("id:group-menu-termlevel")).toBe(false);
   await app.waitFor("text:hover-retains-output");
   expect(app.count("id:terminal-prototype")).toBe(1);
   await app.press("id:toggle-sidebar");
-  await app.hover("id:session-toolbar");
-  expect(app.shows("id:group-menu-termlevel")).toBe(true);
   expect(app.shows("id:window-toolbar")).toBe(true);
+});
+
+test("the group chevron toggles the group without opening the overview", async () => {
+  const app = await open("../../App.tsx", options);
+  await app.press("id:group-toggle-termlevel");
+  expect(app.shows("id:dashboard")).toBe(false);
+  expect(app.shows("id:tab-prototype")).toBe(false);
+  await app.press("id:group-toggle-termlevel");
+  expect(app.shows("id:tab-prototype")).toBe(true);
 });
 
 test("a folded group in the compact rail keeps its active tab and counts hidden tabs", async () => {
@@ -68,7 +74,7 @@ test("a folded group in the compact rail keeps its active tab and counts hidden 
   await app.type("id:terminal-prototype", "echo folded-output");
   await app.keyboard.press("enter");
   await app.press("id:toggle-sidebar");
-  await app.press("id:group-termlevel");
+  await app.press("id:group-toggle-termlevel");
   expect(app.shows("id:tab-prototype")).toBe(true);
   expect(app.shows("id:tab-preview")).toBe(false);
   expect(app.texts()).toContain("+1");
@@ -91,9 +97,9 @@ test("switching tabs and collapsing groups preserve terminal output", async () =
   await app.keyboard.press("enter");
   await app.waitFor("text:retained-output");
   await app.press("id:tab-preview");
-  await app.press("id:group-termlevel");
+  await app.press("id:group-toggle-termlevel");
   expect(app.shows("id:tab-prototype")).toBe(false);
-  await app.press("id:group-termlevel");
+  await app.press("id:group-toggle-termlevel");
   await app.press("id:tab-prototype");
   await app.waitFor("text:retained-output");
   expect(app.count("id:terminal-prototype")).toBe(1);
@@ -103,7 +109,7 @@ test("creates a group and renames its terminal without resetting it", async () =
   const app = await open("../../App.tsx", options);
   await app.press("id:new-group");
   await app.waitFor("id:new-group-path");
-  expect(app.shows("id:group-editor")).toBe(false);
+  expect(app.shows("id:dashboard")).toBe(false);
   expect(app.shows("id:terminal-tab-2")).toBe(false);
   await app.keyboard.press("escape");
   expect(app.shows("id:new-group-path")).toBe(false);
@@ -111,7 +117,7 @@ test("creates a group and renames its terminal without resetting it", async () =
   await app.press("id:new-group");
   await app.press("id:group-path-0");
   await app.waitUntil(() => !app.shows("id:new-group-path"));
-  expect(app.shows("id:group-editor")).toBe(false);
+  expect(app.shows("id:dashboard")).toBe(false);
   expect(app.shows("id:group-group-1")).toBe(true);
   await app.waitFor("id:terminal-tab-2");
   await app.type("id:terminal-tab-2", "echo still-here");
@@ -129,22 +135,26 @@ test("moves a terminal between groups and removes a group without closing termin
   const app = await open("../../App.tsx", options);
   await app.rightClick("id:tab-preview");
   await app.chooseMenuItem("Move to group > Playground");
-  await app.press("id:group-termlevel");
+  await app.press("id:group-toggle-termlevel");
   expect(app.shows("id:tab-preview")).toBe(true);
-  await app.press("id:group-menu-playground");
-  await app.press("id:group-editor-ungroup");
+  await app.press("id:group-playground");
+  await app.waitFor("id:dashboard");
+  await app.press("id:dashboard-group-menu");
+  await app.chooseMenuItem("Ungroup terminals");
   expect(app.shows("id:group-playground")).toBe(false);
   expect(app.shows("id:tab-preview")).toBe(true);
   expect(app.shows("id:tab-colors")).toBe(true);
   expect(app.shows("id:tab-home")).toBe(true);
-  await app.press("id:group-termlevel");
+  await app.press("id:group-toggle-termlevel");
   expect(app.shows("id:tab-prototype")).toBe(true);
 });
 
 test("closing an active group selects a remaining terminal and an empty workspace can recover", async () => {
   const app = await open("../../App.tsx", options);
-  await app.press("id:group-menu-termlevel");
-  await app.press("id:group-editor-delete");
+  await app.press("id:group-termlevel");
+  await app.waitFor("id:dashboard");
+  await app.press("id:dashboard-group-menu");
+  await app.chooseMenuItem("Delete group…");
   await app.press("id:confirm-close-group");
   expect(app.shows("id:group-termlevel")).toBe(false);
   expect(app.shows("id:tab-home")).toBe(true);
@@ -162,7 +172,7 @@ test("closing an active group selects a remaining terminal and an empty workspac
 
 test("search opens a terminal in a collapsed group and compact sidebar keeps navigation", async () => {
   const app = await open("../../App.tsx", options);
-  await app.press("id:group-playground");
+  await app.press("id:group-toggle-playground");
   await app.keyboard.press("mod+k");
   await app.type("id:terminal-search", "Color test");
   await app.press("id:search-colors");
@@ -184,8 +194,8 @@ test("new terminal stays outside groups unless created from a group", async () =
   await app.press("id:tab-prototype");
   await app.press("id:new-terminal");
   await app.waitFor("id:terminal-tab-1");
-  await app.press("id:group-termlevel");
-  await app.press("id:group-playground");
+  await app.press("id:group-toggle-termlevel");
+  await app.press("id:group-toggle-playground");
   expect(app.shows("id:tab-tab-1")).toBe(true);
   expect(app.shows("id:tab-prototype")).toBe(false);
   expect(app.shows("id:tab-colors")).toBe(false);
@@ -197,7 +207,7 @@ test("pinning and menu ordering preserve the selected session", async () => {
   await app.keyboard.press("enter");
   await app.rightClick("id:tab-prototype");
   await app.chooseMenuItem("Pin terminal");
-  await app.press("id:group-termlevel");
+  await app.press("id:group-toggle-termlevel");
   expect(app.shows("id:tab-prototype")).toBe(true);
   await app.rightClick("id:tab-prototype");
   await app.chooseMenuItem("Move up");
@@ -263,57 +273,58 @@ test("the session toolbar adapts to narrow windows while keeping its actions acc
 });
 
 
-test("the group editor changes color and name inline while keeping terminal output", async () => {
+test("the overview header changes color and name while keeping terminal output", async () => {
   const app = await open("../../App.tsx", options);
   await app.type("id:terminal-prototype", "echo group-editor-retains-output");
   await app.keyboard.press("enter");
   const before = app.spanStyle("id:group-termlevel >> text:termlevel").color;
   await app.rightClick("id:group-termlevel");
-  await app.waitFor("id:group-editor");
+  await app.waitFor("id:dashboard");
   expect(app.value("id:group-name-input")).toBe("termlevel");
+  await app.press("id:group-color-trigger");
   for (const color of ["blue", "purple", "cyan", "orange", "yellow", "pink", "green", "gray", "red"]) {
     expect(app.count(`id:group-color-${color}`)).toBe(1);
   }
   await app.press("id:group-color-red");
-  expect(app.shows("id:group-editor")).toBe(true);
+  expect(app.shows("id:dashboard")).toBe(true);
   expect(app.shows("id:group-termlevel >> label:red group marker")).toBe(true);
   await app.clear("id:group-name-input");
   await app.type("id:group-name-input", "Release");
   // Color belongs to the marker; the name keeps its readable neutral color.
   expect(app.spanStyle("id:group-termlevel >> text:Release").color).toBe(before);
   await app.keyboard.press("escape");
-  expect(app.shows("id:group-editor")).toBe(false);
+  expect(app.shows("id:dashboard")).toBe(false);
   await app.waitFor("text:group-editor-retains-output");
 
-  await app.press("id:group-menu-termlevel");
-  await app.press("id:group-editor-new-terminal");
-  expect(app.shows("id:group-editor")).toBe(false);
+  await app.press("id:group-termlevel");
+  await app.waitFor("id:dashboard");
+  await app.press("id:dashboard-new-terminal");
+  expect(app.shows("id:dashboard")).toBe(false);
   expect(app.shows("id:tab-tab-1")).toBe(true);
-  await app.press("id:group-termlevel");
+  await app.press("id:group-toggle-termlevel");
   expect(app.shows("id:tab-tab-1")).toBe(false);
-  await app.press("id:group-termlevel");
+  await app.press("id:group-toggle-termlevel");
   await app.press("id:tab-prototype");
   await app.waitFor("text:group-editor-retains-output");
   expect(app.count("id:terminal-prototype")).toBe(1);
 });
 
-test("the group editor opens from the compact rail and dismisses outside", async () => {
+test("the group overview opens from the compact rail and closes with Escape", async () => {
   const app = await open("../../App.tsx", options);
   await app.press("id:toggle-sidebar");
   await app.rightClick("id:group-termlevel");
-  await app.waitFor("id:group-editor");
+  await app.waitFor("id:dashboard");
+  await app.press("id:group-color-trigger");
   await app.press("id:group-color-gray");
-  await app.keyboard.press("enter");
-  expect(app.shows("id:group-editor")).toBe(false);
-  await app.rightClick("id:group-termlevel");
-  await app.press("id:tab-preview");
-  expect(app.shows("id:group-editor")).toBe(false);
+  expect(app.shows("id:dashboard")).toBe(true);
+  await app.keyboard.press("escape");
+  expect(app.shows("id:dashboard")).toBe(false);
+  await app.press("id:group-termlevel");
+  await app.waitFor("id:dashboard");
+  await app.keyboard.press("escape");
+  expect(app.shows("id:dashboard")).toBe(false);
   await app.press("id:toggle-sidebar");
-  expect(app.count("id:terminal-preview")).toBe(1);
-  await app.press("id:group-menu-termlevel");
-  expect(app.shows("id:group-editor")).toBe(true);
-  await app.press("id:group-menu-termlevel");
-  expect(app.shows("id:group-editor")).toBe(false);
+  expect(app.count("id:terminal-prototype")).toBe(1);
 });
 
 test("dragging a terminal onto a group keeps its session and shows the drop target", async () => {
@@ -326,11 +337,11 @@ test("dragging a terminal onto a group keeps its session and shows the drop targ
   await app.waitFor("id:drop-group-termlevel");
   await app.drop();
   expect(app.shows("id:drop-group-termlevel")).toBe(false);
-  await app.press("id:group-playground");
+  await app.press("id:group-toggle-playground");
   expect(app.shows("id:tab-colors")).toBe(true);
-  await app.press("id:group-termlevel");
+  await app.press("id:group-toggle-termlevel");
   expect(app.shows("id:tab-colors")).toBe(false);
-  await app.press("id:group-termlevel");
+  await app.press("id:group-toggle-termlevel");
   await app.press("id:tab-colors");
   await app.waitFor("text:dragged-into-group");
   expect(app.count("id:terminal-colors")).toBe(1);
@@ -341,13 +352,13 @@ test("dragging onto a collapsed group opens it there and a sideways drag does no
   await app.type("id:terminal-prototype", "echo stayed-put");
   await app.keyboard.press("enter");
   await app.drag("id:tab-prototype", { x: 280 });
-  await app.press("id:group-termlevel");
+  await app.press("id:group-toggle-termlevel");
   expect(app.shows("id:tab-prototype")).toBe(false);
-  await app.press("id:group-termlevel");
-  await app.press("id:group-playground");
+  await app.press("id:group-toggle-termlevel");
+  await app.press("id:group-toggle-playground");
   await app.drag("id:tab-prototype", { y: 70 });
   expect(app.shows("id:tab-prototype")).toBe(true);
-  await app.press("id:group-termlevel");
+  await app.press("id:group-toggle-termlevel");
   expect(app.shows("id:tab-prototype")).toBe(true);
   await app.waitFor("text:stayed-put");
   expect(app.count("id:terminal-prototype")).toBe(1);
@@ -363,11 +374,11 @@ test("dragging onto a terminal joins its group, or starts one when it has none",
   await app.waitFor("id:drop-tab-prototype");
   await app.drop();
   expect(app.shows("id:drop-tab-prototype")).toBe(false);
-  await app.press("id:group-playground");
+  await app.press("id:group-toggle-playground");
   expect(app.shows("id:tab-colors")).toBe(true);
-  await app.press("id:group-termlevel");
+  await app.press("id:group-toggle-termlevel");
   expect(app.shows("id:tab-colors")).toBe(false);
-  await app.press("id:group-termlevel");
+  await app.press("id:group-toggle-termlevel");
 
   await app.rightClick("id:tab-colors");
   await app.chooseMenuItem("Move to group > No group");
@@ -376,15 +387,16 @@ test("dragging onto a terminal joins its group, or starts one when it has none",
   await app.dragAndHold("id:tab-colors", { y: 36 });
   await app.waitFor("id:drop-tab-preview");
   await app.drop();
-  expect(app.shows("id:group-editor")).toBe(false);
+  expect(app.shows("id:dashboard")).toBe(false);
   expect(app.shows("id:group-group-1 >> text:termlevel")).toBe(true);
-  await app.press("id:group-menu-group-1");
-  await app.press("id:group-editor-new-terminal");
-  expect(app.texts()).toContain("~/Projects/termlevel");
   await app.press("id:group-group-1");
+  await app.waitFor("id:dashboard");
+  await app.press("id:dashboard-new-terminal");
+  expect(app.texts()).toContain("~/Projects/termlevel");
+  await app.press("id:group-toggle-group-1");
   expect(app.shows("id:tab-colors")).toBe(false);
   expect(app.shows("id:tab-preview")).toBe(false);
-  await app.press("id:group-group-1");
+  await app.press("id:group-toggle-group-1");
   await app.press("id:tab-colors");
   await app.waitFor("text:grouped-session");
   expect(app.count("id:terminal-colors")).toBe(1);

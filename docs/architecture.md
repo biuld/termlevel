@@ -13,10 +13,14 @@ App.tsx                                      mount 工作区，仅作入口
   ui/workspace/workspace-snapshot.ts         工作区文档 schema、校验与会话 ID 还原
   ui/workspace/persistence.ts                NSH Storage 的读取与保存
   ui/workspace/Sidebar.tsx                   vertical tabs、分组与响铃标记
-  ui/workspace/GroupEditor.tsx               锚定组头的名称、颜色和组操作
-  ui/workspace/workspace.ts                  会话、分组与平铺操作、唯一逻辑焦点
+  ui/workspace/workspace.ts                  会话、分组、概览模式与平铺操作、唯一逻辑焦点
   ui/workspace/tiling.ts                     布局树变换、约束、几何与方向导航
   ui/workspace/TilingCanvas.tsx              按 session ID 稳定挂载、pane 工具栏与分隔拖动
+  ui/dashboard/Dashboard.tsx                 组概览外壳：头部组设置与关闭
+  ui/dashboard/GitPanel.tsx                  变更文件树、单文件 diff、刷新与状态
+  ui/dashboard/git-types.ts                  TSX 侧的 Git 快照契约与 transport 接口
+  ui/dashboard/native-git.ts                 经 termlevel/native 调用系统 git CLI
+  ui/dashboard/preview-git.ts                显式预览的干净仓库状态，不执行命令
   ui/shared/theme.ts                         分组标识到主题 token 的映射
   ui/terminal/TerminalSurface.tsx            真实终端的显示、焦点属性与低频状态
     native SessionTerminal       绑定已有 Rust 会话
@@ -26,6 +30,7 @@ App.tsx                                      mount 工作区，仅作入口
 src/lib.rs                                   注册 termlevel/native 导出与原生 renderer factory
 src/runtime.rs                               版本、启动目录、显式预览开关与原生 cell 测量
 src/dialog_keys.rs                           对话框 Escape 与 pane 缩放模式的原生键盘优先级
+src/git.rs                                   只读 Git CLI：porcelain v2 状态、unified diff、版本检查
 src/terminal.rs                              Ghostty 状态 / RenderState 到 NSH 的适配；预览 provider
 src/sessions.rs                              SessionManager、PTY、进程、reader/writer/reaper
   sessions/api.rs                TSX 可调用的显式会话操作
@@ -84,6 +89,27 @@ reader 直接将原始字节送入同一个 Rust/C parser，保留跨 chunk 的 
 Settings → Terminal 的 Terminal identity 默认是 Termlevel，也可显式选择 Ghostty compatibility。应用接线持有该偏好，随工作区文档保存，并在创建工作区前读取，以便启动恢复的新 shell 使用所选身份。旧文档缺少该字段或字段未知时回退 Termlevel，保留 schema v1 和既有布局。
 
 每次 `Sessions.open` 单独传入身份，由 Rust 在 spawn 前白名单映射：两种模式均设置 `TERM=xterm-256color` 和 `COLORTERM=truecolor`；默认设置 `TERM_PROGRAM=termlevel` 与应用版本，兼容模式设置 `TERM_PROGRAM=ghostty` 并移除 `TERM_PROGRAM_VERSION`，不伪造 Ghostty 版本。继承的 `LC_ALL` / `LC_CTYPE` / `LANG` 都不是 UTF-8 时，补上 `en_US.UTF-8`，避免会话里的 `pbcopy` 把 OSC 52 同期写入的中文按 MacRoman 存盘。shell 启动文件仍可能覆盖环境。设置变化不修改已有会话、不创建或重启进程，也不改变 Ghostty 协议解析与原生 renderer。身份覆盖仅供客户端识别兼容，不代表被模拟终端的全部能力或真实 Codex Pets 已通过验收。
+
+## 概览的 Git 数据通路
+
+组概览的 Git 数据是只读的，由 `src/git.rs` 调用系统 `git` CLI 得到；应用不内嵌 Git 实现。最低版本为 Git 2.20，版本过低、找不到 git 或仓库不可读时返回带说明的 `RepoStatus`，由 UI 显示提示，不启动仓库操作。
+
+```text
+TSX GitPanel ── status(root) / diff(root, path, mode) ── Rust Git
+                                                          │ blocking（engine 线程外）
+                                                          │ git -C <repo> ...
+                                                          ▼
+                                   RepoStatus（branch / ahead / behind / operation / entries）
+                                   unified patch（staged / unstaged / untracked）
+```
+
+- 状态使用 `git status --porcelain=v2 --branch -z --untracked-files=all`，只解析文档化的机器格式；rename 用 `2` 记录的两个 NUL 路径，冲突用 `u`，untracked 用 `?`。
+- 差异使用 `git diff --no-ext-diff --no-textconv --no-color --unified=3 [--cached] -- <path>`；untracked 文件由 Rust 读取有界文本生成新文件 patch。
+- 所有命令以参数数组启动，不经过 shell；设置 `GIT_OPTIONAL_LOCKS=0`、`GIT_TERMINAL_PROMPT=0`、`GIT_NO_LAZY_FETCH=1`、`GIT_PAGER=cat` 和 `LC_ALL=C`。
+- 每条命令有 3 秒超时并终止自己的进程组；状态和 diff 分别限制 2 MiB，单文件预览限制 512 KiB，条目限制 5,000。
+- 先在 group 路径找 worktree，再以仓库根运行 status/diff，因此路径是仓库根相对路径；group 路径是仓库子目录时，UI 在分支 tooltip 显示仓库根。
+- 操作进行中通过 worktree 的 git dir 标记检测 merge / rebase / cherry-pick / revert / bisect，不执行 hooks。
+- V1 只读：不 stage、unstage、commit、checkout，也不修改 index。预览模式使用 `preview-git.ts` 的确定性干净仓库状态，不启动 git。
 
 ## 历史滚动与跨屏拖选
 

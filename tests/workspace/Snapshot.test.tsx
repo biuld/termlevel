@@ -28,6 +28,7 @@ test("a stored document is accepted, deduplicated and normalized", () => {
     },
     activeTabId: "old-b",
     workspaceKey: "group-1",
+    dashboards: ["group-1", "missing", "group-1"],
     expanded: false,
     sidebarWidth: 240.5,
     fontSize: "large",
@@ -61,6 +62,7 @@ test("a stored document is accepted, deduplicated and normalized", () => {
   expect((snapshot!.layouts["group-1"].root as { ratio: number }).ratio).toBe(1);
   expect(snapshot!.layouts.bad).toBe(undefined);
   expect(snapshot!.activeTabId).toBe("old-b");
+  expect(snapshot!.dashboards).toEqual(["group-1"]);
   expect(snapshot!.expanded).toBe(false);
   expect(snapshot!.sidebarWidth).toBe(240.5);
   expect(snapshot!.fontSize).toBe(null);
@@ -78,6 +80,7 @@ test("an empty versioned document is valid, and broken or newer ones are ignored
   expect(empty!.layouts).toEqual({});
   expect(empty!.activeTabId).toBe(null);
   expect(empty!.workspaceKey).toBe("");
+  expect(empty!.dashboards).toEqual([]);
   expect(empty!.expanded).toBe(true);
   expect(empty!.appearance).toBe("system");
 

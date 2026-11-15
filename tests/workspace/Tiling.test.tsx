@@ -86,9 +86,9 @@ test("sidebar dragging to a pane creates a split and cancellation does not chang
   expect(app.shows("id:terminal-colors")).toBe(true);
   expect(app.shows("id:terminal-prototype")).toBe(true);
   expect(app.shows("id:tab-tab-1")).toBe(false);
-  await app.press("id:group-termlevel");
+  await app.press("id:group-toggle-termlevel");
   expect(app.shows("id:tab-colors")).toBe(false);
-  await app.press("id:group-termlevel");
+  await app.press("id:group-toggle-termlevel");
   const before = JSON.stringify(state(app).tiling.root);
   await app.dragAndHold("id:tab-home", { x: 600, y: 80 });
   await app.keyboard.press("escape"); await app.drop();
@@ -119,7 +119,7 @@ test("each tab group keeps its own tiling layout", async () => {
   expect(app.shows("id:terminal-prototype")).toBe(true);
   expect(app.shows("id:terminal-tab-1")).toBe(true);
   expect(app.shows("id:terminal-colors")).toBe(false);
-  await app.press("id:group-menu-termlevel"); await app.press("id:group-editor-delete"); await app.press("id:confirm-close-group");
+  await app.press("id:group-termlevel"); await app.waitFor("id:dashboard"); await app.press("id:dashboard-group-menu"); await app.chooseMenuItem("Delete group…"); await app.press("id:confirm-close-group");
   expect(app.shows("id:terminal-prototype")).toBe(false);
   expect(app.shows("id:terminal-tab-1")).toBe(false);
   expect(app.shows("id:terminal-colors")).toBe(true);
@@ -146,7 +146,7 @@ test("a split is its own sidebar unit and can move into a tab group", async () =
   expect(app.shows("id:split-unit")).toBe(false);
   expect(app.shows("id:split-unit-playground >> id:tab-home")).toBe(true);
   expect(app.shows("id:split-unit-playground >> id:tab-tab-1")).toBe(true);
-  await app.press("id:group-playground");
+  await app.press("id:group-toggle-playground");
   expect(app.shows("id:tab-home")).toBe(false);
   expect(app.shows("id:tab-tab-1")).toBe(false);
   await app.press("id:tab-prototype");

@@ -27,6 +27,11 @@ const paths = {
   check: "M5 12L10 17L19 7",
   alert: "M12 3A9 9 0 1 0 12 21A9 9 0 1 0 12 3 M12 8V13 M12 16.5V17",
   xCircle: "M12 3A9 9 0 1 0 12 21A9 9 0 1 0 12 3 M9 9L15 15 M15 9L9 15",
+  dashboard: "M4 4H10V10H4Z M14 4H20V10H14Z M4 14H10V20H4Z M14 14H20V20H14Z",
+  gitBranch: "M7 5V15 M7 9A4 4 0 0 0 11 13H14A4 4 0 0 1 18 17V20 M7 3A2 2 0 1 0 7 7A2 2 0 1 0 7 3 M18 18A2 2 0 1 0 18 22A2 2 0 1 0 18 18",
+  file: "M6 3H14L19 8V21H6Z M14 3V8H19",
+  refresh: "M20 11A8 8 0 1 1 17.5 5.5 M20 3V9H14",
+  copy: "M8 8H20V20H8Z M5 16H3V3H16V5",
 } as const;
 
 export type IconName = keyof typeof paths;

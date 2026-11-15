@@ -7,6 +7,8 @@ import { Action, DialogKeys, Hint, IconButton } from "../shared/controls";
 import { Icon } from "../shared/icons";
 import { Type } from "../shared/type";
 import { groupColor } from "../shared/theme";
+import { Dashboard } from "../dashboard/Dashboard";
+import type { GitTransport } from "../dashboard/git-types";
 import type { Workspace } from "./workspace";
 import type { Divider, Direction, Rect } from "./tiling";
 
@@ -15,6 +17,8 @@ export function TilingCanvas(props: {
   preview: boolean;
   rename: (id: string) => void;
   newGroup: () => void;
+  closeGroup: (id: string) => void;
+  git: GitTransport;
   finding: Signal<boolean>;
   findQuery: Signal<string>;
 }) {
@@ -69,7 +73,7 @@ export function TilingCanvas(props: {
     const id = row.id;
     const tab = () => store.tab(id);
     const focused = () => store.activeId() === id;
-    const shown = () => !!store.frameForSession(id);
+    const shown = () => !store.dashboardOpen() && !!store.frameForSession(id);
     let lastFrame: Rect = { x: 0, y: 0, width: 640, height: 400 };
     const frame = () => { const next = store.frameForSession(id); if (next) lastFrame = next; return lastFrame; };
     const showPath = () => store.paneList().length === 1 && frame().width >= 520;
@@ -169,7 +173,8 @@ export function TilingCanvas(props: {
         style={{ width: divider().axis === "row" ? 2 : "100%", height: divider().axis === "row" ? "100%" : 2 }} />
     </View>;
   }
-  const hint = () => store.resizing() ? "Resize panes with arrow keys · Enter or Escape to finish"
+  const hint = () => store.dashboardOpen() ? ""
+    : store.resizing() ? "Resize panes with arrow keys · Enter or Escape to finish"
     : store.constrained() ? "Window too small · Showing the focused terminal" : store.layoutMessage();
   return <View testID="session-panel" class="relative min-h-0 min-w-0 flex-1"
     ref={ref => { canvas = ref; measureOrigin(); }}
@@ -177,10 +182,10 @@ export function TilingCanvas(props: {
     <TerminalMetrics fontFamily={monoFont()} fontSize={store.fontSize()} onChange={({ width }) => { if (store.cellWidth() !== width) store.cellWidth.set(width); }} />
     {/* A single keyed native surface per session survives every tree operation. */}
     <Each of={store.tabs().map(tab => tab.id)}>{id => <SessionPane id={id()} />}</Each>
-    <If when={!store.tiling().zoomed && !store.constrained()}>
+    <If when={!store.tiling().zoomed && !store.constrained() && !store.dashboardOpen()}>
       <Each of={store.fullGeometry().dividers.map(d => d.id)}>{id => <ResizeHandle id={id()} />}</Each>
     </If>
-    <If when={store.tabs().length === 0}>
+    <If when={store.tabs().length === 0 && !store.dashboardOpen()}>
       <View testID="empty-state" class="flex-1 items-center justify-center gap-3 rounded-(--radius-panel) bg-terminal-background">
         <View class="h-10 w-10 items-center justify-center rounded-(--radius-panel) border border-border bg-muted"><Icon name="terminal" size={20} /></View>
         <Type role="heading">Room for something new.</Type>
@@ -201,7 +206,7 @@ export function TilingCanvas(props: {
         </If>
       </View>
     </If>
-    <If when={store.paneDrag()?.targetId != null && store.dropPreview() != null}>
+    <If when={store.paneDrag()?.targetId != null && store.dropPreview() != null && !store.dashboardOpen()}>
       <View testID="pane-drop-preview" class="absolute items-center justify-center rounded-(--radius-panel) border-2 bg-primary/15"
         style={{ left: store.dropPreview()!.x, top: store.dropPreview()!.y, width: store.dropPreview()!.width, height: store.dropPreview()!.height,
           borderColor: token(store.paneDrag()!.allowed ? "ring" : "destructive"), pointerEvents: "none", zIndex: 20 }}>
@@ -211,6 +216,9 @@ export function TilingCanvas(props: {
             : store.paneDrag()!.position === "center" ? "Swap or replace terminal" : "Move terminal here"
           : "Cannot place terminal here"}</Type>
       </View>
+    </If>
+    <If when={store.dashboardOpen()}>
+      <Dashboard workspace={store} preview={props.preview} closeGroup={props.closeGroup} git={props.git} />
     </If>
   </View>;
 }

@@ -3,6 +3,9 @@ import { Button, Input, ResizablePanel, ResizablePanelGroup } from "nsh/base";
 import { Application, currentWindow, Menu, titleBar } from "nsh/desktop";
 import { Runtime, Sessions, TerminalEngine } from "termlevel/native";
 import { TilingCanvas } from "../workspace/TilingCanvas";
+import { nativeGit } from "../dashboard/native-git";
+import { previewGit } from "../dashboard/preview-git";
+import type { GitTransport } from "../dashboard/git-types";
 import { Action, AppDialog, DialogActions, fieldClass, IconButton } from "../shared/controls";
 import { Icon } from "../shared/icons";
 import { GroupPathDialog } from "../workspace/GroupPathDialog";
@@ -25,8 +28,11 @@ export function WorkspaceApp(props: {
   snapshot?: WorkspaceSnapshot | null;
   /** Persist the workspace document after changes. The app entry opts in. */
   persist?: boolean;
+  /** Git data for the overview. Defaults to the preview or system-CLI transport. */
+  git?: GitTransport;
 } = {}) {
   const preview = Runtime.previewMode();
+  const git = props.git ?? (preview ? previewGit : nativeGit);
   const terminalIdentity = signal<TerminalIdentity>(props.snapshot?.terminalIdentity ?? "termlevel");
   const store = props.workspace ?? createWorkspace(preview ? undefined : {
     cwd: Runtime.cwd(), list: Sessions.list,
@@ -90,19 +96,18 @@ export function WorkspaceApp(props: {
     }
   });
   const closingGroup = signal<string | null>(null);
-  const editingGroup = signal<string | null>(null);
   const choosingPath = signal(false);
   const pathError = signal("");
   const version = Runtime.version();
   effect(() => {
-    const modal = editor() !== null || searching() || settings() || notifying() || closingGroup() !== null || editingGroup() !== null || choosingPath() || finding();
+    const modal = editor() !== null || searching() || settings() || notifying() || closingGroup() !== null || choosingPath() || finding() || store.dashboardOpen();
     if (modal) { store.resizing.set(false); store.cancelPaneDrag(); }
     store.inputBlocked.set(modal || store.resizing());
   });
   const terminalAction = (action: () => void) => () => { if (!store.inputBlocked()) action(); };
   const sidebarHovered = signal(false);
   const sidebarLayoutWidth = signal(store.sidebarWidth() + token("gap-pane") / 2);
-  const sidebarOpen = () => store.expanded() || sidebarHovered() || editingGroup() !== null;
+  const sidebarOpen = () => store.expanded() || sidebarHovered();
   const sidebarFloating = () => !store.expanded() && sidebarOpen();
   function toggleSidebar() {
     sidebarHovered.set(false);
@@ -113,7 +118,11 @@ export function WorkspaceApp(props: {
     title: "Termlevel", titleBar: { style: "hidden", height: token("height-titlebar") },
     minSize: { width: 640, height: 420 },
   });
-  effect(() => win.set({ title: `${store.activeTab()?.title ?? "Termlevel"} — Termlevel` }));
+  effect(() => win.set({
+    title: store.dashboardOpen()
+      ? `Overview — ${store.groupTitle(store.workspaceKey() || null)} — Termlevel`
+      : `${store.activeTab()?.title ?? "Termlevel"} — Termlevel`,
+  }));
 
   function edit(title: string, value: string, save: (value: string) => void) {
     draft.set(value);
@@ -137,14 +146,18 @@ export function WorkspaceApp(props: {
   // Application shortcuts use Command on macOS, preserving shell Control keys.
   const shortcuts: Record<string, () => void> = {
     "mod+t": () => { store.addTab(); },
-    "mod+w": () => { const id = store.activeId(); if (id) store.closeTab(id); },
+    "mod+w": () => {
+      if (store.dashboardOpen()) { store.closeDashboard(); return; }
+      const id = store.activeId(); if (id) store.closeTab(id);
+    },
     "mod+b": toggleSidebar,
     "mod+d": terminalAction(() => { store.splitTerminal("right"); }),
     "mod+shift+d": terminalAction(() => { store.splitTerminal("down"); }),
     "mod+shift+enter": terminalAction(store.toggleZoom),
     "mod+shift+g": actions.newGroup,
+    "mod+shift+o": () => { const key = store.workspaceKey(); if (key) store.openDashboard(key); },
     "mod+k": actions.search,
-    "mod+f": () => { if (editor() === null && !searching() && !settings() && closingGroup() === null && editingGroup() === null && !choosingPath()) finding.set(true); },
+    "mod+f": () => { if (editor() === null && !searching() && !settings() && closingGroup() === null && !choosingPath() && !store.dashboardOpen()) finding.set(true); },
     "mod+,": actions.settings,
     "ctrl+tab": () => store.step(1),
     "ctrl+shift+tab": () => store.step(-1),
@@ -175,6 +188,7 @@ export function WorkspaceApp(props: {
     { label: "Edit", submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] },
     { label: "View", submenu: [
       { label: "Toggle sidebar", shortcut: "mod+b", onSelect: shortcuts["mod+b"] },
+      { label: "Group overview", shortcut: "mod+shift+o", onSelect: shortcuts["mod+shift+o"] },
       { label: "Find a terminal…", shortcut: "mod+k", onSelect: actions.search },
       { label: "Find in terminal…", shortcut: "mod+f", onSelect: () => finding.set(true) },
       { type: "separator" },
@@ -201,7 +215,7 @@ export function WorkspaceApp(props: {
           testID="toggle-sidebar" onPress={actions.toggleSidebar} />
       </View>
       <View class="absolute inset-0 items-center justify-center" style={{ pointerEvents: "none" }}>
-        <Type role="label">Termlevel</Type>
+        <Type role="label">{store.dashboardOpen() ? `Overview · ${store.groupTitle(store.workspaceKey() || null)}` : "Termlevel"}</Type>
       </View>
       <View testID="global-actions" desktop={{ windowDrag: false }} class="ml-auto flex-row items-center gap-0.5">
         <IconButton icon="folder" label="New group" testID="new-group" onPress={actions.newGroup} />
@@ -232,7 +246,7 @@ export function WorkspaceApp(props: {
         <ResizablePanel minSize={320}>
           <View class="h-full min-w-0 flex-1" style={{ paddingLeft: token("gap-pane") / 2 }}>
             <TilingCanvas workspace={store} preview={preview} rename={actions.renameTab} newGroup={actions.newGroup}
-              finding={finding} findQuery={findQuery} />
+              closeGroup={actions.closeGroup} git={git} finding={finding} findQuery={findQuery} />
           </View>
         </ResizablePanel>
       </ResizablePanelGroup>
@@ -255,7 +269,7 @@ export function WorkspaceApp(props: {
         borderRadius: token("radius-panel"),
         boxShadow: sidebarFloating() ? [{ x: 6, y: 0, blur: 28, color: token("panel-shadow") }] : [],
       }}>
-      <Sidebar workspace={store} actions={actions} groupEditor={editingGroup} expanded={sidebarOpen} indicator={workingIndicator} />
+      <Sidebar workspace={store} actions={actions} expanded={sidebarOpen} indicator={workingIndicator} />
     </View>
 
     <AppDialog testID="name-dialog" open={editor() !== null} label={editor()?.title ?? "Edit name"} title={editor()?.title}

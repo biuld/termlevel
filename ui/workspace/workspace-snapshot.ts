@@ -47,6 +47,8 @@ export interface WorkspaceSnapshot {
   layouts: Record<string, TilingState>;
   activeTabId: string | null;
   workspaceKey: string;
+  /** Groups whose overview is their remembered view. */
+  dashboards: string[];
   expanded: boolean;
   sidebarWidth: number | null;
   fontSize: number | null;
@@ -176,6 +178,14 @@ export function parseSnapshot(raw: string): WorkspaceSnapshot | null {
     }
   }
 
+  const dashboards: string[] = [];
+  if (Array.isArray(document.dashboards)) {
+    for (const entry of document.dashboards) {
+      const id = nonEmpty(entry);
+      if (id && groupIds.has(id) && !dashboards.includes(id)) dashboards.push(id);
+    }
+  }
+
   return {
     version: SNAPSHOT_VERSION,
     groups,
@@ -183,6 +193,7 @@ export function parseSnapshot(raw: string): WorkspaceSnapshot | null {
     layouts,
     activeTabId: nonEmpty(document.activeTabId),
     workspaceKey: typeof document.workspaceKey === "string" ? document.workspaceKey : "",
+    dashboards,
     expanded: document.expanded !== false,
     sidebarWidth: finite(document.sidebarWidth),
     fontSize: finite(document.fontSize),

@@ -1,4 +1,4 @@
-import { reduceMotion, keymap, Scroll, signal, Text, token, View, type GestureResponderEvent, type Point, type Signal, type ViewRef } from "nsh";
+import { reduceMotion, keymap, Scroll, signal, Text, token, View, type GestureResponderEvent, type Point, type ViewRef } from "nsh";
 import { Button, Progress } from "nsh/base";
 import { Menu } from "nsh/desktop";
 import { Icon, type IconName } from "../shared/icons";
@@ -6,7 +6,6 @@ import { WorkingIndicator, type WorkingIndicatorKind } from "../shared/WorkingIn
 import { Hint, IconButton } from "../shared/controls";
 import type { Workspace } from "./workspace";
 import { groupColor, groupLine, groupTint } from "../shared/theme";
-import { GroupEditor } from "./GroupEditor";
 import { Type } from "../shared/type";
 
 type DragSlot = { ref: ViewRef; kind: "tab" | "header" | "ungrouped"; id: string | null };
@@ -22,7 +21,7 @@ export interface SidebarActions {
   toggleSidebar(): void;
 }
 
-export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; groupEditor: Signal<string | null>; expanded: () => boolean; indicator: () => WorkingIndicatorKind }) {
+export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; expanded: () => boolean; indicator: () => WorkingIndicatorKind }) {
   const store = props.workspace;
   const actions = props.actions;
   const members = (groupId: string | null) => store.tabs().filter((t) => t.groupId === groupId && !t.pinned);
@@ -191,7 +190,7 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
   function TabRow(row: { id: string }) {
     const id = row.id;
     const tab = () => store.tab(id);
-    const active = () => store.activeId() === id;
+    const active = () => store.activeId() === id && !store.dashboardOpen();
     const combining = () => drop()?.combineId === id && dragging() !== id;
     const lineBefore = () => drop()?.combineId == null && drop()?.headerId == null && drop()?.beforeId === id && dragging() !== id;
     const lineAfter = () => {
@@ -336,35 +335,32 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
     };
     const visibleMembers = () => members(id).filter((tab) => !splitSessions(id).includes(tab.id) && (!store.group(id)?.collapsed || (!props.expanded() && tab.id === store.activeId())));
     const hiddenCount = () => members(id).filter((tab) => !visibleMembers().some((item) => item.id === tab.id) && !shownSplit().includes(tab.id)).length;
-    const anchor = signal<ViewRef | null>(null);
-    let trigger: ViewRef | undefined;
-    const close = (restoreFocus = false) => {
-      props.groupEditor.set(null);
-      if (restoreFocus) trigger?.focus();
-    };
     return <View class="relative mb-2"
         classList={{ "mx-1 py-0.5": props.expanded() }}>
         <If when={!props.expanded()}>
           <View class="absolute w-px rounded-sm" style={{ left: 2, top: 2, bottom: 2, backgroundColor: groupLine(store.group(id)?.color) }} />
         </If>
-        <View ref={(ref) => { anchor.set(ref); register(`header:${id}`, ref ? { ref, kind: "header", id } : null); }}
+        <View ref={(ref) => register(`header:${id}`, ref ? { ref, kind: "header", id } : null)}
           testID={store.workspaceKey() === id ? `group-workspace-${id}` : undefined}
           class="group relative flex-row items-center rounded-(--radius-control)"
           classList={{ "mx-1": !props.expanded(), "bg-sidebar-accent": drop()?.headerId === id || store.workspaceKey() === id }}
           style={{ marginVertical: props.expanded() ? 0 : 2 }}
-          onContextMenu={() => props.groupEditor.set(id)}>
+          onContextMenu={() => store.openDashboard(id)}>
           <If when={drop()?.headerId === id}>
             <View testID={`drop-group-${id}`} class="absolute inset-0 rounded-(--radius-control) border border-primary" style={{ pointerEvents: "none" }} />
           </If>
-          <Button testID={`group-${id}`} ref={(ref) => { trigger = ref; }}
-            accessibilityLabel={`${store.group(id)?.collapsed ? "Expand" : "Collapse"} ${store.groupTitle(id)}${store.workspaceKey() === id ? ", current layout" : ""}`}
-            onPress={() => { close(false); toggleGroup(id); }}
+          <Button testID={`group-toggle-${id}`}
+            accessibilityLabel={`${store.group(id)?.collapsed ? "Expand" : "Collapse"} ${store.groupTitle(id)}`}
+            onPress={() => toggleGroup(id)}
+            class="h-(--height-tab) w-5 shrink-0 items-center justify-center rounded-(--radius-control) hover:bg-control-hover active:bg-control-pressed focus-visible:ring-2 ring-sidebar-ring">
+            <Icon name={store.group(id)?.collapsed ? "chevron" : "down"} size={11} color={token("subtle-foreground")} />
+          </Button>
+          <Button testID={`group-${id}`}
+            accessibilityLabel={`Open overview for ${store.groupTitle(id)}${store.dashboardOpen() && store.workspaceKey() === id ? ", current" : ""}`}
+            onPress={() => store.openDashboard(id)}
             class="h-(--height-tab) min-w-0 flex-1 flex-row items-center gap-1.5 rounded-(--radius-control) focus-visible:ring-2 ring-sidebar-ring"
-            style={{ justifyContent: props.expanded() ? "flex-start" : "center", paddingHorizontal: props.expanded() ? 4 : 0 }}
+            style={{ justifyContent: props.expanded() ? "flex-start" : "center", paddingHorizontal: props.expanded() ? 2 : 0 }}
             tooltip={<Hint>{`${store.groupTitle(id)} · ${store.group(id)?.cwd ?? ""} · ${members(id).length} terminals`}</Hint>}>
-            <If when={props.expanded()}>
-              <Icon name={store.group(id)?.collapsed ? "chevron" : "down"} size={11} color={token("subtle-foreground")} />
-            </If>
             <View accessibilityLabel={`${store.group(id)?.color ?? "blue"} group marker`} style={{
               width: token("size-group-marker"),
               height: token("size-group-marker"),
@@ -377,12 +373,6 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
                 style={{ color: token("sidebar-foreground"), numberOfLines: 1 }}>{store.groupTitle(id)}</Text>
             </If>
           </Button>
-          <If when={props.expanded()}>
-            <View class="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-              style={{ opacity: props.groupEditor() === id ? 1 : undefined }}>
-              <IconButton icon="more" label={`Options for ${store.groupTitle(id)}`} testID={`group-menu-${id}`} onPress={() => props.groupEditor.set(props.groupEditor() === id ? null : id)} />
-            </View>
-          </If>
         </View>
         <If when={shownSplit().length > 0 || visibleMembers().length > 0}>
           <View style={{ marginLeft: props.expanded() ? 10 : 0, paddingLeft: props.expanded() ? token("gap-group-guide") : 0, borderLeftWidth: props.expanded() ? 1 : 0, borderColor: groupLine(store.group(id)?.color) }}>
@@ -399,10 +389,6 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
               <Text class="text-(length:--text-label)" style={{ color: groupColor(store.group(id)?.color) }}>+{hiddenCount()}</Text>
             </View>
           </Button>
-        </If>
-      <If when={props.groupEditor() === id && anchor() !== null}>
-          <GroupEditor id={id} anchor={anchor()!} workspace={store} close={close}
-            deleteGroup={() => actions.closeGroup(id)} />
         </If>
       </View>;
   }

@@ -214,3 +214,32 @@ test("the working indicator is saved and restored through settings", async () =>
     app.dispose();
   }
 });
+
+test("a saved group overview reopens over the group and closes to its terminal", async () => {
+  const stored = {
+    version: 1,
+    groups: [{ id: "group-1", title: "termlevel", cwd: "/work", color: "purple", collapsed: false }],
+    tabs: [{ id: "old-a", title: "Shell", cwd: "/work", groupId: "group-1", pinned: false, customTitle: false }],
+    layouts: {
+      "group-1": {
+        root: { kind: "pane", id: "pane-1", sessionId: "old-a" },
+        focusedPaneId: "pane-1", zoomed: false,
+      },
+    },
+    activeTabId: "old-a",
+    workspaceKey: "group-1",
+    dashboards: ["group-1"],
+    expanded: true,
+    appearance: "dark",
+  };
+  const app = await open("./fixtures/RestoreFixture.tsx", {
+    ...options, storage: { workspace: JSON.stringify(stored) },
+  });
+  await app.waitFor("id:dashboard");
+  expect(app.shows("id:dashboard")).toBe(true);
+  expect(app.shows("id:terminal-session-1")).toBe(false);
+  await app.keyboard.press("escape");
+  expect(app.shows("id:dashboard")).toBe(false);
+  expect(app.shows("id:terminal-session-1")).toBe(true);
+  app.dispose();
+});
