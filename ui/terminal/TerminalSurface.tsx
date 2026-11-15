@@ -62,7 +62,7 @@ export function TerminalSurface(props: {
       inputBlocked={store.inputBlocked() || props.finding()}
       onFocusRequest={() => { if (!store.inputBlocked() && store.frameForSession(id)) store.select(id); }}
       accessibilityLabel={`Terminal ${tab()?.title ?? id}`}
-      fontFamily={monoFont()} fontSize={store.fontSize()}
+      fontFamily={monoFont()} fontSize={store.fontSize()} scrollbarWidth={token("width-terminal-scrollbar")} scrollbarInset={token("inset-terminal-scrollbar")}
       lineHeight={store.fontSize() + token("line-gap-terminal")}
       cursorClass="bg-terminal-cursor/55"
       defaultForeground={token("terminal-foreground")} defaultBackground={token("terminal-background")}

@@ -7,6 +7,7 @@ mod keys;
 mod paint;
 pub(crate) mod platform;
 mod presentation;
+mod scroll;
 mod surface;
 mod view;
 pub(crate) mod window;
@@ -42,6 +43,12 @@ pub struct SessionTerminalProps {
     /// Text row height in points.
     #[prop(default = Points(21.0))]
     pub line_height: Prop<Points>,
+    /// Overlay scrollbar hit width; never deducted from terminal columns.
+    #[prop(default = Points(10.0))]
+    pub scrollbar_width: Prop<Points>,
+    /// Overlay inset from the pane edge, independent of text padding.
+    #[prop(default = Points(2.0))]
+    pub scrollbar_inset: Prop<Points>,
     /// Accessible name for the native terminal input.
     pub accessibility_label: Prop<Option<SharedString>>,
     /// Theme classes for the native cursor.

@@ -103,11 +103,15 @@ impl Window {
         self.origin != old
     }
     pub fn hit(&self, x: f32, y: f32, cw: f32, lh: f32) -> (u16, usize) {
+        let (col, row) = self.cell(x, y, cw, lh);
+        (col, self.origin.saturating_add(row))
+    }
+    pub fn cell(&self, x: f32, y: f32, cw: f32, lh: f32) -> (u16, usize) {
         let col = (x / cw.max(1.0)).floor().max(0.0) as u16;
         let row = (y / lh.max(1.0)).floor().max(0.0) as usize;
         (
             col.min(self.cols.saturating_sub(1)),
-            self.origin + row.min(self.rows.saturating_sub(1)),
+            row.min(self.rows.saturating_sub(1)),
         )
     }
 }
@@ -126,6 +130,8 @@ mod tests {
         w.follow(101, 3, 80, false, None);
         assert_eq!(w.origin, 98);
         assert_eq!(w.hit(9999.0, 9999.0, 8.0, 21.0), (79, 100));
+        assert_eq!(w.cell(8.0, 21.0, 8.0, 21.0), (1, 1));
+        assert_eq!(w.hit(8.0, 21.0, 8.0, 21.0), (1, 99));
     }
     #[test]
     fn subrow_trackpad_events_accumulate_before_leaving_bottom() {

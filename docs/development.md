@@ -64,12 +64,13 @@ git diff --check
 ```sh
 ./scripts/test-native-input
 ./scripts/test-native-scroll
+./scripts/test-native selection
 ./scripts/test-native-tiling
 ./scripts/test-native-protocols
 ./scripts/test-native-ghostty
 ```
 
-这些入口保持兼容，也可用 `./scripts/test-native <类别>`。原生测试需要前台窗口，不能由类型检查或 headless 成功替代。系统输入法候选窗、拖动手感、选区和长期负载的人工验收另记。
+这些入口保持兼容，也可用 `./scripts/test-native <类别>`。完整 headless 发现不得与 scripts/test-native 并行：后者在仓库根目录生成临时 *.test.tsx，会被前者误发现。原生测试需要前台窗口，不能由类型检查或 headless 成功替代。系统输入法候选窗、拖动手感、选区和长期负载的人工验收另记。
 
 验证记录注明 revision 或未提交状态、命令、结果、日志以及未覆盖项。预览、真实 PTY、headless、原生自动化、人工验收分别说明。遇到已有失败先保留具体失败与历史基线，不通过改断言或超时来掩盖。持久化提交曾记录 126/128；本次目录整理复验为 128/128。历史失败仍保留在 validation 对应章节，不推断间歇性问题已根治。
 

@@ -83,6 +83,14 @@ Settings → Terminal 的 Terminal identity 默认是 Termlevel，也可显式�
 
 每次 `Sessions.open` 单独传入身份，由 Rust 在 spawn 前白名单映射：两种模式均设置 `TERM=xterm-256color` 和 `COLORTERM=truecolor`；默认设置 `TERM_PROGRAM=termlevel` 与应用版本，兼容模式设置 `TERM_PROGRAM=ghostty` 并移除 `TERM_PROGRAM_VERSION`，不伪造 Ghostty 版本。shell 启动文件仍可能覆盖环境。设置变化不修改已有会话、不创建或重启进程，也不改变 Ghostty 协议解析与原生 renderer。身份覆盖仅供客户端识别兼容，不代表被模拟终端的全部能力或真实 Codex Pets 已通过验收。
 
+## 历史滚动与跨屏拖选
+
+真实终端在 Rust `session_view` 内显示历史滚动条；视口位置仍由唯一 SurfaceController / Window 管理，不增加 ScrollView 或 JS 网格副本。`scroll.rs` 只负责滚动条几何和按时间计算的边缘滚动速度。滑块根据已发布 WindowSnap 的 origin / count / rows 更新；拖动滑块反算 origin，并走 controller 的显式 reveal。滚动条覆盖在终端外层右边缘，宽度与边距来自 theme.json（默认 10px 命中宽度、2px 右边距），独立于文本内边距，不从终端可用列宽中扣除。滚动、视口变化或指针进入命中区域时显示，悬停 / 拖动期间保持显示，离开后空闲 800ms 再用 180ms 淡出；显示变化复用原有 Rust 帧调度，不改变列数。备用屏幕与无历史时不显示滑块。
+
+按下立即在 Ghostty 建立 tracked 选区，移动后由 NSH responder 捕获原网格手势，指针离开网格后仍收到移动 / 释放。controller 在已有 16 ms 帧调度中推进边缘自动滚动，并按新视口 origin 更新选区终点；速度随离开上下边缘的距离增加，单轮时间上限避免暂停后的追赶跳跃。鼠标停止在边缘仍可持续滚动，回到网格中部速度归零，释放 / 取消 / 隐藏 / modal 阻断 / resize 终止拖选跟踪。选区本身仍由 Ghostty 保存，拖动滑块只改视口，不清除选区。
+
+坐标分工明确：按下和释放使用绝对历史行；hover 与排队的 drag 使用视口内局部行，在 controller 中只加一次 origin。程序鼠标报告不参与宿主拖选合并；Shift 绕过报告后开始的宿主手势保持归属，避免中途松开 Shift 把同一拖选拆成程序事件。同步输出 hold 期间不修改选区或历史视口。双击词 / 三击行沿用原有选择语义，尚未新增按词或按整行扩展的拖选模式。
+
 ## 通知面板
 
 标题栏铃铛提供应用内通知历史，侧栏收起后仍可使用。`src/notifications.rs` 是宿主进程内历史的唯一所有者，独立于会话视图挂载和会话关闭；不写入 workspace 文档，应用重启后清空。最多保留最新 100 条，每条记录来源、级别、session ID、时间和未读状态；同一会话相同内容在两秒内合并计数并重新置为未读。标题最多 160 字符、正文最多 4096 字符，控制字符过滤后保留换行和制表。

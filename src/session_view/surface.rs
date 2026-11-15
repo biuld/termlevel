@@ -1,7 +1,7 @@
 //! Per-session display controller: viewport policy, invalidation and one capture
 //! per scheduling round. Input never waits on this layer; it only asks the next
 //! published window to follow output.
-use super::window::Window;
+use super::{scroll::SelectionDrag, window::Window};
 use crate::{
     sessions::Session,
     terminal::{WindowCapture, WindowSnap},
@@ -144,6 +144,7 @@ struct Inner {
     report: Option<Instant>,
     held_since: Option<Instant>,
     held_run: u64,
+    selection_drag: Option<SelectionDrag>,
 }
 
 /// A display handle to one independently owned session. Cloning shares the
@@ -187,6 +188,7 @@ impl SurfaceController {
                 report: None,
                 held_since: None,
                 held_run: 0,
+                selection_drag: None,
             })),
         })
     }
@@ -224,9 +226,28 @@ impl SurfaceController {
     /// is equivalent to applying every intermediate one because the selection
     /// start is owned by the terminal and only the end is replaced.
     pub(super) fn queue_drag(&self, at: Option<(u16, usize, bool)>) {
-        self.inner.borrow_mut().demand.drag = at;
+        let mut inner = self.inner.borrow_mut();
+        inner.demand.drag = at;
+        if at.is_none() {
+            inner.selection_drag = None;
+        }
     }
 
+    pub(super) fn selection_pointer(&self, x: f32, y: f32, cw: f32, lh: f32, rectangle: bool) {
+        let mut inner = self.inner.borrow_mut();
+        let (col, row) = inner.window.cell(x, y, cw, lh);
+        let mut drag =
+            SelectionDrag::new(col, row, rectangle, y, inner.window.rows as f32 * lh, lh);
+        if let Some(previous) = inner.selection_drag {
+            drag.inherit_fraction(previous);
+        }
+        inner.selection_drag = Some(drag);
+        inner.demand.drag = Some((col, row, rectangle));
+    }
+    pub(super) fn local_hit(&self, x: f32, y: f32, cw: f32, lh: f32) -> (u16, usize) {
+        let inner = self.inner.borrow();
+        inner.window.cell(x, y, cw, lh)
+    }
     pub(super) fn hit(&self, x: f32, y: f32, cw: f32, lh: f32) -> (u16, usize) {
         self.inner.borrow().window.hit(x, y, cw, lh)
     }
@@ -238,6 +259,7 @@ impl SurfaceController {
         }
         let mut inner = self.inner.borrow_mut();
         inner.window.follow_user(origin);
+        inner.window.wheel_frac = 0.0;
         inner.demand.request_capture();
         inner.demand.user = true;
     }
@@ -264,6 +286,13 @@ impl SurfaceController {
             .session
             .revision
             .load(std::sync::atomic::Ordering::Acquire);
+        let selecting = self.inner.borrow().selection_drag.is_some();
+        // Keep the hold decision and selection mutation under the same lock;
+        // a PTY thread must not start a synchronized transaction between them.
+        let mut selection_emulator = selecting.then(|| self.session.emulator.lock().unwrap());
+        let held = selection_emulator
+            .as_ref()
+            .is_some_and(|emulator| emulator.render_held());
         let (hover, drag, origin) = {
             let mut inner = self.inner.borrow_mut();
             let inner = &mut *inner;
@@ -276,7 +305,20 @@ impl SurfaceController {
                 let gap = started.duration_since(last).as_nanos() as u64;
                 inner.stats.gap_max_ns = inner.stats.gap_max_ns.max(gap);
             }
+            let seconds = inner
+                .last_tick
+                .map_or(0.0, |last| started.duration_since(last).as_secs_f32());
             inner.last_tick = Some(started);
+            if !held && let Some(mut drag) = inner.selection_drag {
+                let rows = drag.advance(seconds);
+                let moved = rows != 0.0 && inner.window.wheel(rows);
+                if moved || inner.demand.user {
+                    inner.demand.drag = Some((drag.col, drag.row, drag.rectangle));
+                    inner.demand.request_capture();
+                    inner.demand.user = true;
+                }
+                inner.selection_drag = Some(drag);
+            }
             let window = &mut inner.window;
             let demand = &mut inner.demand;
             demand.apply_follow(window);
@@ -284,7 +326,9 @@ impl SurfaceController {
         };
         let mut hover_uri = None;
         if hover.is_some() || drag.is_some() {
-            let mut emulator = self.session.emulator.lock().unwrap();
+            let mut emulator = selection_emulator
+                .take()
+                .unwrap_or_else(|| self.session.emulator.lock().unwrap());
             if emulator.render_held() {
                 // Frozen frames ignore pointer work, matching the per-event
                 // path: a stale tooltip is cleared and the drag is dropped.
@@ -301,6 +345,7 @@ impl SurfaceController {
                 }
             }
         }
+        drop(selection_emulator);
         let changed = self.capture();
         #[cfg(debug_assertions)]
         {

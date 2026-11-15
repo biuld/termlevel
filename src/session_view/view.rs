@@ -1,6 +1,7 @@
 //! A fixed terminal grid. Rust owns snapshots and native drawing; NSH owns layout.
 use super::{
-    SessionTerminalProps, input::InputState, keys, paint, platform, surface::SurfaceController,
+    SessionTerminalProps, input::InputState, keys, paint, platform, scroll::Scrollbar,
+    surface::SurfaceController,
 };
 use crate::{
     sessions::{MouseReport, Session},
@@ -28,6 +29,11 @@ pub(super) struct Display {
     viewport: Signal<Size<Points>>,
     cell_width: Memo<Points>,
     drag: Rc<Cell<Option<(u16, usize)>>>,
+    drag_mods: Rc<Cell<nsh_core::keymap::Modifiers>>,
+    scrollbar_grab: Rc<Cell<Option<f32>>>,
+    scrollbar_hover: Rc<Cell<bool>>,
+    scrollbar_activity: Rc<Cell<Option<Instant>>>,
+    scrollbar_opacity: Signal<f32>,
     blink: Signal<bool>,
     synthetic_keys: Signal<bool>,
     wheel_delta: Rc<Cell<(f32, f32)>>,
@@ -266,6 +272,11 @@ impl Display {
             viewport: signal(Size::default()),
             cell_width,
             drag: Rc::default(),
+            drag_mods: Rc::default(),
+            scrollbar_grab: Rc::default(),
+            scrollbar_hover: Rc::default(),
+            scrollbar_activity: Rc::default(),
+            scrollbar_opacity: signal(0.0),
             blink: signal(true),
             synthetic_keys: signal(synthetic_keys()),
             wheel_delta: Rc::default(),
@@ -298,8 +309,12 @@ impl Display {
     pub(super) fn frame(&self) {
         use std::sync::atomic::Ordering;
         self.synthetic_keys.set(synthetic_keys());
-        if !self.props.visible.get_untracked() {
-            return;
+        if !self.props.visible.get_untracked() || self.props.input_blocked.get_untracked() {
+            self.cancel_drag();
+            if !self.props.visible.get_untracked() {
+                self.scrollbar_hover.set(false);
+                return;
+            }
         }
         let now = Instant::now();
         let revision = self.session.revision.load(Ordering::Acquire);
@@ -317,8 +332,23 @@ impl Display {
             self.hover.set(hover);
         }
         if tick.changed {
+            self.flash_scrollbar();
             self.search.invalidate();
             self.hover.set(None);
+        }
+        let active = self.scrollbar_hover.get()
+            || self.scrollbar_grab.get().is_some()
+            || self.drag.get().is_some();
+        let opacity = if active {
+            1.0
+        } else {
+            self.scrollbar_activity.get().map_or(0.0, |last| {
+                let age = now.saturating_duration_since(last).as_secs_f32();
+                (1.0 - ((age - 0.8) / 0.18).max(0.0)).clamp(0.0, 1.0)
+            })
+        };
+        if self.scrollbar_opacity.get_untracked() != opacity {
+            self.scrollbar_opacity.set(opacity);
         }
         let phase = self.reset.get().elapsed().as_millis() % 1000 < 500;
         if self.blink.get_untracked() != phase {
@@ -429,6 +459,8 @@ impl Display {
     }
     fn press(&self, e: &PressEvent) {
         use termlevel_ghostty_vt::raw::*;
+        self.cancel_drag();
+        self.drag_mods.set(e.modifiers);
         if e.modifiers.cmd {
             if self.session.emulator.lock().unwrap().render_held() {
                 return;
@@ -480,22 +512,54 @@ impl Display {
     }
     fn motion(&self, e: &MouseEvent) {
         use termlevel_ghostty_vt::raw::*;
-        let event = self.mouse_event(
-            GHOSTTY_MOUSE_ACTION_MOTION,
-            e.pressed_button.map(button),
-            e.modifiers,
-            e.position,
-            e.pressed_button.is_some(),
-        );
-        if let MouseReport::Encoded = self.report_mouse(e.modifiers.shift, &[(event, 1)]) {
+        self.drag_mods.set(e.modifiers);
+        // A host gesture keeps ownership even if Shift is released mid-drag.
+        if self.drag.get().is_none() {
+            let event = self.mouse_event(
+                GHOSTTY_MOUSE_ACTION_MOTION,
+                e.pressed_button.map(button),
+                e.modifiers,
+                e.position,
+                e.pressed_button.is_some(),
+            );
+            if let MouseReport::Encoded = self.report_mouse(e.modifiers.shift, &[(event, 1)]) {
+                return;
+            }
+        }
+        let (cw, lh) = self.metrics();
+        self.surface.queue_hover(Some(self.surface.local_hit(
+            e.position.x.0,
+            e.position.y.0,
+            cw,
+            lh,
+        )));
+    }
+    fn cancel_drag(&self) {
+        self.drag.set(None);
+        self.scrollbar_grab.set(None);
+        self.surface.queue_drag(None);
+    }
+    fn selection_motion(&self, position: Point<Points>) {
+        if self.drag.get().is_none() || self.props.input_blocked.get_untracked() {
             return;
         }
-        let at = self.grid_point(e.position);
-        self.surface.queue_hover(Some(at));
-        if e.pressed_button == Some(MouseButton::Left) && self.drag.get().is_some() {
-            self.surface.queue_drag(Some((at.0, at.1, e.modifiers.alt)));
-        } else {
-            self.surface.queue_drag(None);
+        let (cw, lh) = self.metrics();
+        self.surface.selection_pointer(
+            position.x.0,
+            position.y.0,
+            cw,
+            lh,
+            self.drag_mods.get().alt,
+        );
+    }
+    fn selection_release(&self, event: &ResponderEvent) {
+        if self.drag.get().is_some() {
+            self.release(&MouseEvent::released(
+                event.location,
+                event.page,
+                self.drag_mods.get(),
+                MouseButton::Left,
+            ));
         }
     }
     fn release(&self, e: &MouseEvent) {
@@ -507,7 +571,9 @@ impl Display {
             e.position,
             false,
         );
-        let _ = self.report_mouse(e.modifiers.shift, &[(event, 1)]);
+        if self.drag.get().is_none() {
+            let _ = self.report_mouse(e.modifiers.shift, &[(event, 1)]);
+        }
         let at = self.grid_point(e.position);
         let started = self.drag.get();
         // Release is a barrier: the pointer's final cell is authoritative, and
@@ -640,6 +706,7 @@ impl Display {
             );
             let key = (size, cw.round().max(1.0) as u32, lh.round().max(1.0) as u32);
             if previous.replace(Some(key)) != Some(key) {
+                layout.cancel_drag();
                 layout.session.resize_grid(size, key.1, key.2);
                 layout.surface.request_capture();
             }
@@ -652,6 +719,9 @@ impl Display {
             self.clone(),
         );
         let dropped = self.clone();
+        let selection_claim = self.clone();
+        let (selection_move, selection_end, selection_cancel) =
+            (self.clone(), self.clone(), self.clone());
         let viewport = self.viewport;
         let cw = self.cell_width;
         let snap = self.surface.snap();
@@ -714,6 +784,12 @@ impl Display {
                         input.focus();
                         down.press(e);
                     })
+                    .claim_touches(TouchClaim::on_move().ask(move |request: &ClaimRequest| {
+                        if selection_claim.drag.get().is_some() { request.claim(); }
+                    })).keep_touches(true)
+                    .on_responder_move(move |e: &ResponderEvent| selection_move.selection_motion(e.location))
+                    .on_responder_release(move |e: &ResponderEvent| selection_end.selection_release(e))
+                    .on_responder_terminate(move |_: &ResponderEvent| selection_cancel.cancel_drag())
                     .on_mouse_move(move |e: &MouseEvent| movement.motion(e))
                     .on_mouse_up(move |e: &MouseEvent| up.release(e))
                     .on_context_menu(move |e: &ContextMenuEvent| {
@@ -749,6 +825,137 @@ impl Display {
                         hover.get().map(|uri| view().absolute().inset_0().tooltip(text(uri)).into_element())
                     }))
                     .child(self.sink(cx))))
+            .child(self.scrollbar(cx))
+    }
+
+    fn flash_scrollbar(&self) {
+        self.scrollbar_activity.set(Some(Instant::now()));
+        if self.scrollbar_opacity.get_untracked() != 1.0 {
+            self.scrollbar_opacity.set(1.0);
+        }
+    }
+    fn scrollbar_geometry(&self) -> Scrollbar {
+        let snap = self.surface.snap().get_untracked();
+        Scrollbar::new(
+            snap.count,
+            snap.frame.rows as usize,
+            snap.origin,
+            snap.frame.rows as f32 * self.props.line_height.get_untracked().0,
+        )
+    }
+    fn scrollbar_move(&self, y: f32) {
+        if self.props.input_blocked.get_untracked() {
+            self.scrollbar_grab.set(None);
+            return;
+        }
+        if let Some(grab) = self.scrollbar_grab.get() {
+            self.flash_scrollbar();
+            self.surface
+                .reveal(self.scrollbar_geometry().origin(y, grab));
+        }
+    }
+    fn scrollbar(&self, cx: Scope<super::SessionTerminalEvent>) -> impl IntoElement + use<> {
+        let snap = self.surface.snap();
+        let props = self.props;
+        let (down, movement, up, cancel) = (self.clone(), self.clone(), self.clone(), self.clone());
+        let input = self.input;
+        let session_id = self.session.info().id;
+        let opacity = self.scrollbar_opacity;
+        let geometry = computed(move || {
+            let snap = snap.get();
+            Scrollbar::new(
+                snap.count,
+                snap.frame.rows as usize,
+                snap.origin,
+                snap.frame.rows as f32 * props.line_height.get().0,
+            )
+        });
+        when(
+            move || {
+                let snap = snap.get();
+                !snap.alternate && snap.count > snap.frame.rows as usize
+            },
+            move || {
+                let (down, movement, up, cancel, wheel, click_up, enter, leave) = (
+                    down.clone(),
+                    movement.clone(),
+                    up.clone(),
+                    cancel.clone(),
+                    movement.clone(),
+                    up.clone(),
+                    down.clone(),
+                    down.clone(),
+                );
+                view()
+                    .test_id(&format!("terminal-scrollbar-{session_id}"))
+                    .label("Terminal history scrollbar")
+                    .absolute()
+                    .right(move || Length::from(props.scrollbar_inset.get()))
+                    .top_0()
+                    .w(move || Length::from(props.scrollbar_width.get()))
+                    .h(move || px(snap.get().frame.rows as f32 * props.line_height.get().0))
+                    .on_mouse_enter(move |_: &MouseEvent| {
+                        enter.scrollbar_hover.set(true);
+                        enter.flash_scrollbar();
+                    })
+                    .on_mouse_leave(move |_: &MouseEvent| {
+                        leave.scrollbar_hover.set(false);
+                        leave.flash_scrollbar();
+                    })
+                    .claim_touches(TouchClaim::on_move())
+                    .keep_touches(true)
+                    .on_press_down(move |e: &PressEvent| {
+                        if props.input_blocked.get_untracked() {
+                            return;
+                        }
+                        cx.emit(super::SessionTerminalEvent::FocusRequest);
+                        input.focus();
+                        down.flash_scrollbar();
+                        down.cancel_drag();
+                        down.scrollbar_grab
+                            .set(Some(down.scrollbar_geometry().grab(e.position.y.0)));
+                        down.scrollbar_move(e.position.y.0);
+                    })
+                    .on_mouse_up(move |e: &MouseEvent| {
+                        click_up.scrollbar_move(e.position.y.0);
+                        click_up.scrollbar_grab.set(None);
+                    })
+                    .on_responder_move(move |e: &ResponderEvent| {
+                        movement.scrollbar_move(e.location.y.0)
+                    })
+                    .on_responder_release(move |e: &ResponderEvent| {
+                        up.scrollbar_move(e.location.y.0);
+                        up.scrollbar_grab.set(None);
+                    })
+                    .on_responder_terminate(move |_: &ResponderEvent| {
+                        cancel.scrollbar_grab.set(None)
+                    })
+                    .on_wheel(move |e: &WheelEvent| {
+                        wheel.flash_scrollbar();
+                        let (_, dy) = e.delta.xy();
+                        let rows = if e.delta.precise() {
+                            dy / props.line_height.get_untracked().0.max(1.0)
+                        } else {
+                            dy
+                        };
+                        let held = wheel.session.emulator.lock().unwrap().render_held();
+                        wheel.surface.wheel_history(rows, held);
+                    })
+                    .child(
+                        view()
+                            .test_id(&format!("terminal-scrollbar-thumb-{session_id}"))
+                            .absolute()
+                            .left(px(2.0))
+                            .right(px(2.0))
+                            .top(move || px(geometry.get().top))
+                            .h(move || px(geometry.get().thumb))
+                            .rounded(px(3.0))
+                            .bg(move || theme().muted_foreground)
+                            .opacity(move || opacity.get() * 0.7)
+                            .pointer_events(PointerEvents::None),
+                    )
+            },
+        )
     }
 
     fn paint_config(&self) -> paint::PaintConfig {
@@ -773,6 +980,7 @@ impl Display {
 
     fn wheel(&self, e: &WheelEvent) {
         use termlevel_ghostty_vt::raw::*;
+        self.flash_scrollbar();
         let (dx, dy) = e.delta.xy();
         let (cw, lh) = self.metrics();
         let (dx, dy) = if e.delta.precise() {

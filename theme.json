@@ -35,6 +35,8 @@
       "icon-size": "14px",
       "width-group-editor": "280px",
       "width-notifications": "380px",
+      "width-terminal-scrollbar": "10px",
+      "inset-terminal-scrollbar": "2px",
       "height-notifications-max": "340px",
       "height-notifications-footer": "22px",
       "height-notification-estimate": "96px",

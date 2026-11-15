@@ -621,3 +621,38 @@ Rust Session 独有的 InputQueue 改为 FIFO 总字节预算：4 MiB 待发送�
 - 更新 InputBackpressure 和真实 / 预览平铺回归，分别验证通知入口与标题栏状态，不再依赖底部状态条。
 - `./scripts/nsh check`、`./scripts/nsh build`、`git diff --check` 通过。日志 artifacts/notification-status-removal-{check,build}.log。本次没有 Rust 代码变化。
 - `./scripts/nsh test --junit artifacts/notification-status-removal-headless.xml`：153/153，日志 artifacts/notification-status-removal-headless.log。
+
+## 2026-11-15：历史滚动条与跨屏拖选
+
+基于 `0f8fe2b` 的未提交改动。真实终端此前没有历史滚动条，拖选终点被夹在可见网格内，也没有边缘持续滚动。代码同时确认 motion 的历史行已经包含 origin，却在 controller 内再次加 origin，影响历史拖选和链接命中。
+
+现将局部 cell / 绝对历史行分开；NSH responder 在移动后捕获已开始的宿主手势，保留起点按下事件并在网格外接收拖动 / 释放。SurfaceController 在已有帧调度中更新唯一 Window、边缘滚动和 Ghostty tracked 选区终点，单轮只采样一次。新 scrollbar 直接使用 WindowSnap 的 origin / count / rows；预留 gutter 不随历史出现或备用屏幕切换改变列数。导航不清除选区，鼠标释放 / 取消 / modal / 隐藏 / resize 停止跟踪。滚动条点击与捕获释放分别收尾，不能把框架取消 click 当成物理鼠标释放。同步输出 hold 判定与选区更新共用 emulator 锁，避免 PTY 在两者之间开启新事务。
+
+- 纯 Rust 覆盖滚动条上下边界 / 中点反算与裁剪、无历史退化、边缘持续速度、暂停后不追赶跳跃、连续 motion 保留不足一行的累计量、反向清除余量；Window 用例区分历史起点非零时的局部行与绝对行。
+- tests/terminal/Selection.test.tsx 使用真实 /bin/sh 输出 800 行含中文的文本，验证停在上边缘时继续滚动、释放后停止、滚动条到顶 / 到底仍保留选区、下边缘自动滚动与备用屏幕隐藏历史滚动条。读取选区只用 debug NativeInputProbe.selection，不修改系统剪贴板；生产路径不把选区或网格数据送到 JS。
+- `./scripts/test-native selection` 的两项原生 AppKit 验收分别验证向上跨屏拖选（可见样本约 140 行）、释放停止、滑块导航保留选区，以及从历史顶部向下跨屏拖选。已查看 artifacts/native-selection-autoscroll.png、native-selection-history-top.png，确认高亮、历史内容和滑块位置对应；其他截图为 native-selection-history-bottom.png、native-selection-autoscroll-down.png。
+- `./scripts/test-native protocols`：6/6，日志 artifacts/selection-protocols-native.log；保留 Kitty 键盘、程序 SGR 鼠标报告、OSC8 / 选区复制 / 图片和 OSC52 行为。原生构建仍有一条链接警告。
+
+开发验证中的失败保留：最初 headless 拖动定位了外层 SessionTerminal，改为真实 grid 后用例才覆盖正确入口；原生直接投递自建鼠标事件被 NSH 测试隔离过滤，已删除该探针，改用 NSH 自带 AppKit drag。一次全量发现与 scripts/test-native 并行，误发现根目录临时原生测试并改变 synthetic input 开关，已停止该无效运行（exit 143），日志 artifacts/selection-headless-contaminated.log；development 现明确禁止这类并行。随后全量曾 157/159：scrollbar 在 click 被框架取消时过早停止跟踪，修正为真实 mouse-up / responder-release 后专项通过，保留 artifacts/selection-headless-before-release-fix.{log,xml}。
+
+自动化不替代实际鼠标 / 触控板的长期手感验收。当前仍沿用双击选词、三击选行语义，未扩展为按词 / 整行拖选；并发历史淘汰、窗口外失焦和多 pane 长时间负载仍需日用复验。不声称 Neovim / tmux 全兼容。没有提交或重启用户终端。
+
+最终验证使用 `GHOSTTY_VT_ARCHIVE=/tmp/termlevel-ghostty-vt-1.0.1.xcframework.zip CARGO_NET_OFFLINE=true`：
+
+- `./scripts/nsh test --junit artifacts/selection-headless.xml`：159/159，日志 artifacts/selection-headless.log。全量后补齐滑块在视口内释放时应用最终坐标，以下最终专项覆盖该版本。
+- `./scripts/nsh test tests/terminal/Selection.test.tsx --junit artifacts/selection-focused.xml`：3/3，日志 artifacts/selection-focused.log。
+- `./scripts/test-native selection`：2/2，日志 artifacts/selection-native.log，包含两方向跨屏选择与视口导航 / 保留选区。headless 另验证鼠标停在边缘不动时继续滚动；原生用 NSH 自带 drag 路径验证持续拖动及释放。
+- `./scripts/nsh check`、`./scripts/nsh build`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check` 通过。日志 artifacts/selection-check.log、selection-scroll-build.log、selection-clippy.log。原生构建的一条链接警告仍保留。
+
+### 同日修正：滚动条改为覆盖式
+
+按用户确认，将历史滚动条从网格内并列 gutter 改为终端外层的覆盖元素。默认命中宽度 10px、pane 右边距 2px，由 theme.json 提供；文本内边距保持独立，列数计算不再扣除滚动条宽度。滚动 / 视口变化 / 进入右侧命中区时显示，悬停、滑块拖动或文本拖选期间保持显示；空闲 800ms 后用 180ms 淡出。淡出只更新 Rust 滑块的 opacity，不改变网格、PTY 尺寸或 tracked 选区。保留前述已有未提交拖选改动，未自动提交或重启用户终端。
+
+最终验证均使用前述固定 Ghostty archive 和离线环境：
+
+- `./scripts/nsh test tests/terminal/Selection.test.tsx --junit artifacts/scrollbar-overlay-focused.xml`：4/4，日志 artifacts/scrollbar-overlay-focused.log。新增真实 PTY 列数检查：无历史、历史出现、悬停、空闲淡出及滑块导航前后列数相同；原有跨屏拖选 / 选区保留 / 备用屏幕用例继续通过。夹具现使用与生产相同的水平及底部文本内边距。
+- `./scripts/test-native selection`：3/3，日志 artifacts/scrollbar-overlay-native.log。已查看 artifacts/native-scrollbar-overlay-hover.png 与 native-scrollbar-overlay-idle.png，滑块位于 pane 右边缘附近，悬停显示、移开后消失，正文位置与行列保持一致；原生样本始终为 110 列。该运行中的 debug getter 未使用 import 警告已移除，最终严格 Clippy 通过；原生宿主原有链接警告保留。
+- `./scripts/nsh test --junit artifacts/scrollbar-overlay-headless.xml`：160/160，日志 artifacts/scrollbar-overlay-headless.log。与原生脚本串行执行，无根目录临时测试串扰。
+- `./scripts/nsh check`、`./scripts/nsh build`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check` 通过；日志 artifacts/scrollbar-overlay-{check,build,clippy}.log。
+
+覆盖式方案取代上文历史记录中的预留 gutter 方案；当前行为以 architecture 和代码为准。人工长期手感验收仍与上述自动化分开。

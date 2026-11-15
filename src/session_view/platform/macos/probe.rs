@@ -113,6 +113,24 @@ impl NativeInputProbe {
         .map_err(|e| e.to_string())?
     }
 
+    /// Current PTY grid width for checking layout stability during overlays.
+    pub fn columns(session_id: String) -> Result<u32, String> {
+        let session = crate::sessions::manager()
+            .lock()
+            .unwrap()
+            .get(&session_id)?;
+        Ok(session.emulator.lock().unwrap().columns() as u32)
+    }
+
+    /// Reads the tracked selected text without changing the system clipboard.
+    pub fn selection(session_id: String) -> Result<Option<String>, String> {
+        let session = crate::sessions::manager()
+            .lock()
+            .unwrap()
+            .get(&session_id)?;
+        Ok(session.emulator.lock().unwrap().selection_text())
+    }
+
     /// Number of actual drawRect calls in the app-owned terminal NSView.
     pub async fn surface_frames(session_id: String) -> Result<u32, String> {
         run_on_main_thread(move || {
