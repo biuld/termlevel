@@ -761,7 +761,7 @@ impl Display {
                     return;
                 }
                 let Some(text) = super::file_drop::paste_paths(&event.uris) else { return; };
-                cx.emit(super::SessionTerminalEvent::FocusRequest);
+                cx.emit(super::SessionTerminalEvent::FocusRequest(true));
                 input.focus();
                 dropped.surface.request_follow();
                 dropped.session.paste(&text);
@@ -769,7 +769,7 @@ impl Display {
             .font_family(move || family(props))
             .text_size(move || Length::from(props.font_size.get()))
             .text_color(move || default_color(props.default_foreground, theme().foreground))
-            .on_press(move |_: &PressEvent| { cx.emit(super::SessionTerminalEvent::FocusRequest); input.focus(); })
+            .on_press(move |_: &PressEvent| { cx.emit(super::SessionTerminalEvent::FocusRequest(true)); input.focus(); })
             .child(view().flex_1().min_h(px(0.0)).overflow_hidden()
                 .on_layout(move |b: &Bounds<Points>| {
                     viewport.set(b.size);
@@ -780,7 +780,7 @@ impl Display {
                     .w(move || px(snap.get().frame.cols as f32 * cw.get().0))
                     .h(move || px(snap.get().frame.rows as f32 * props.line_height.get().0))
                     .on_press_down(move |e: &PressEvent| {
-                        cx.emit(super::SessionTerminalEvent::FocusRequest);
+                        cx.emit(super::SessionTerminalEvent::FocusRequest(true));
                         input.focus();
                         down.press(e);
                     })
@@ -908,7 +908,7 @@ impl Display {
                         if props.input_blocked.get_untracked() {
                             return;
                         }
-                        cx.emit(super::SessionTerminalEvent::FocusRequest);
+                        cx.emit(super::SessionTerminalEvent::FocusRequest(true));
                         input.focus();
                         down.flash_scrollbar();
                         down.cancel_drag();
@@ -1125,7 +1125,7 @@ impl Display {
             .on_focus(move || {
                 focused.set(true);
                 focus_session.focus_input(true);
-                cx.emit(super::SessionTerminalEvent::FocusRequest);
+                cx.emit(super::SessionTerminalEvent::FocusRequest(false));
             })
             .on_blur(move || {
                 focused.set(false);

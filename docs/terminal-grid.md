@@ -16,7 +16,7 @@ Termlevel 使用官方 libghostty-vt 1.0.1 解析终端输出、维护网格和�
 
 所有权保持：TSX 管工作区；Rust `Session` 管 PTY、进程与 Ghostty；Rust 原生 surface 管展示窗口和交互；NSH 管工作区布局和挂载；Termlevel 的自定义 AppKit NSView 管绘制；原来的 NSH field editor 管原生文本输入。Terminal 与 RenderState 为 Send + !Sync，访问继续由 `Session.emulator` 串行化。稳定 session ID 不随折叠、重排、换组和选择改变。工作区以低频 visible 属性通知实际展示状态；隐藏 surface 不因输出抓帧、推进查找或发布绘制场景，恢复展示时立即抓取最新窗口。非活动但仍可见的分屏继续刷新。
 
-不改 NSH 或其固定 0.5.0 版本，不把终端流和 cell grid 送进 TSX。预览 transport 仍不执行命令。pane 标题保持启动路径 `tab.cwd`，不做 OSC 7。Kitty file/temp/shared-memory medium 继续关闭；图片 RGBA 不写成文件。OSC 52 策略不变。不加 wheel cancel，不往滚动内容里放 footer。
+不改 NSH 或其固定 0.5.0 版本，不把终端流和 cell grid 送进 TSX。预览 transport 仍不执行命令。pane 标题使用 `tab.liveCwd ?? tab.cwd`；OSC 7 / ConEmu / iTerm2 CurrentDir 已接入。Kitty file/temp/shared-memory medium 继续关闭；图片 RGBA 不写成文件。OSC 52 策略不变。不加 wheel cancel，不往滚动内容里放 footer。
 
 ## 业界实现提供的约束
 

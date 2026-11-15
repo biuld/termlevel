@@ -525,3 +525,230 @@ fn desktop_notifications_are_owned_and_parse_across_chunks() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn progress_reports_are_coalesced_and_never_become_notifications() -> Result<()> {
+    let mut terminal = Terminal::new(20, 4)?;
+    terminal.write(b"\x1b]9;4;1;10\x07")?;
+    terminal.write(b"\x1b]9;4;1;20\x07\x1b]9;4;1;42\x1b\\")?;
+    let events = terminal.take_events();
+    assert_eq!(
+        events,
+        vec![Event::Progress(ProgressReport {
+            state: ProgressState::Set,
+            percent: Some(42),
+        })]
+    );
+    assert!(
+        events
+            .iter()
+            .all(|event| !matches!(event, Event::Notification { .. }))
+    );
+    Ok(())
+}
+
+#[test]
+fn every_progress_state_and_missing_percentage_is_owned() -> Result<()> {
+    let mut terminal = Terminal::new(20, 4)?;
+    for (sequence, expected) in [
+        (
+            b"\x1b]9;4;0\x07".as_slice(),
+            ProgressReport {
+                state: ProgressState::Remove,
+                percent: None,
+            },
+        ),
+        (
+            b"\x1b]9;4;2\x07",
+            ProgressReport {
+                state: ProgressState::Error,
+                percent: None,
+            },
+        ),
+        (
+            b"\x1b]9;4;3\x07",
+            ProgressReport {
+                state: ProgressState::Indeterminate,
+                percent: None,
+            },
+        ),
+        (
+            b"\x1b]9;4;4;17\x07",
+            ProgressReport {
+                state: ProgressState::Pause,
+                percent: Some(17),
+            },
+        ),
+    ] {
+        terminal.write(sequence)?;
+        assert_eq!(
+            terminal.take_events(),
+            vec![Event::Progress(expected)],
+            "{sequence:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn program_status_reports_are_owned_and_decoded() -> Result<()> {
+    let mut terminal = Terminal::new(20, 4)?;
+    terminal.write(b"\x1b]7501;state=blocked:kind=permission:app=terraform:msg=QXBwbHk/")?;
+    terminal.write(b"\x1b\\")?;
+    assert_eq!(
+        terminal.take_events(),
+        vec![Event::ProgramStatus(ProgramStatusReport {
+            state: ProgramStatusState::Blocked,
+            kind: ProgramStatusKind::Permission,
+            percent: None,
+            id: String::new(),
+            app: "terraform".into(),
+            title: String::new(),
+            message: "Apply?".into(),
+        })]
+    );
+    Ok(())
+}
+
+#[test]
+fn program_status_clear_and_support_query_are_forwarded() -> Result<()> {
+    let mut terminal = Terminal::new(20, 4)?;
+    terminal.write(b"\x1b]7501;state=working:id=build/test:app=cargo:progress=40\x07")?;
+    terminal.write(b"\x1b]7501;state=clear:id=build\x07")?;
+    let events = terminal.take_events();
+    assert!(
+        events.contains(&Event::ProgramStatus(ProgramStatusReport {
+            state: ProgramStatusState::Working,
+            kind: ProgramStatusKind::None,
+            percent: Some(40),
+            id: "build/test".into(),
+            app: "cargo".into(),
+            title: String::new(),
+            message: String::new(),
+        })),
+        "{events:?}"
+    );
+    assert!(
+        events.contains(&Event::ProgramStatus(ProgramStatusReport {
+            state: ProgramStatusState::Clear,
+            kind: ProgramStatusKind::None,
+            percent: None,
+            id: "build".into(),
+            app: String::new(),
+            title: String::new(),
+            message: String::new(),
+        })),
+        "{events:?}"
+    );
+    terminal.write(b"\x1b]7501;?\x1b\\")?;
+    let reply = terminal
+        .take_events()
+        .into_iter()
+        .find_map(|event| match event {
+            Event::WritePty(bytes) => Some(bytes),
+            _ => None,
+        })
+        .expect("program status query reply");
+    assert!(
+        reply.starts_with(b"\x1b]7501;?") && reply.windows(7).any(|part| part == b"working"),
+        "{reply:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn reset_clears_progress_and_program_status_before_reset() -> Result<()> {
+    let mut terminal = Terminal::new(20, 4)?;
+    terminal.write(b"\x1b]9;4;1;33\x07")?;
+    terminal.write(b"\x1b]7501;state=working:id=build\x07")?;
+    terminal.take_events();
+    terminal.write(b"\x1bc")?;
+    let events = terminal.take_events();
+    let progress = events.iter().position(|event| {
+        matches!(
+            event,
+            Event::Progress(ProgressReport {
+                state: ProgressState::Remove,
+                ..
+            })
+        )
+    });
+    let clear = events.iter().position(|event| {
+        matches!(
+            event,
+            Event::ProgramStatus(ProgramStatusReport {
+                state: ProgramStatusState::Clear,
+                id,
+                ..
+            }) if id.is_empty()
+        )
+    });
+    let reset = events.iter().position(|event| *event == Event::Reset);
+    assert!(progress.is_some(), "{events:?}");
+    assert!(clear.is_some(), "{events:?}");
+    assert!(reset.is_some(), "{events:?}");
+    assert!(progress < reset && clear < reset, "{events:?}");
+    Ok(())
+}
+
+#[test]
+fn osc22_mouse_shape_is_read_from_terminal_data() -> Result<()> {
+    let mut terminal = Terminal::new(20, 4)?;
+    assert_eq!(terminal.mouse_shape()?, MouseShape::Text);
+    terminal.write(b"\x1b]22;pointer\x07")?;
+    assert_eq!(terminal.mouse_shape()?, MouseShape::Pointer);
+    terminal.write(b"\x1b]22;not-allowed\x07")?;
+    assert_eq!(terminal.mouse_shape()?, MouseShape::NotAllowed);
+    terminal.write(b"\x1b]22;\x07")?;
+    assert_eq!(terminal.mouse_shape()?, MouseShape::Text);
+    terminal.write(b"\x1b]22;unknown-shape\x07")?;
+    assert_eq!(terminal.mouse_shape()?, MouseShape::Text);
+    terminal.write(b"\x1bc")?;
+    assert_eq!(terminal.mouse_shape()?, MouseShape::Text);
+    Ok(())
+}
+
+#[test]
+fn osc133_semantic_prompt_events_are_owned() -> Result<()> {
+    let mut terminal = Terminal::new(40, 8)?;
+    terminal.write(b"\x1b]133;A\x07")?;
+    assert!(matches!(
+        terminal.take_events().as_slice(),
+        [Event::SemanticPrompt(SemanticPromptReport {
+            kind: SemanticPromptKind::PromptStart,
+            prompt_kind: SemanticPromptPromptKind::Primary,
+            cursor_at_prompt: true,
+            ..
+        })]
+    ));
+    terminal.write(b"\x1b]133;B\x07")?;
+    assert!(matches!(
+        terminal.take_events().as_slice(),
+        [Event::SemanticPrompt(SemanticPromptReport {
+            kind: SemanticPromptKind::InputStart,
+            cursor_at_prompt: true,
+            ..
+        })]
+    ));
+    terminal.write(b"\x1b]133;C\x07")?;
+    assert!(matches!(
+        terminal.take_events().as_slice(),
+        [Event::SemanticPrompt(SemanticPromptReport {
+            kind: SemanticPromptKind::OutputStart,
+            cursor_at_prompt: false,
+            ..
+        })]
+    ));
+    terminal.write(b"\x1b]133;D;0\x07")?;
+    assert!(matches!(
+        terminal.take_events().as_slice(),
+        [Event::SemanticPrompt(SemanticPromptReport {
+            kind: SemanticPromptKind::CommandEnd,
+            has_exit_code: true,
+            exit_code: 0,
+            cursor_at_prompt: false,
+            ..
+        })]
+    ));
+    Ok(())
+}

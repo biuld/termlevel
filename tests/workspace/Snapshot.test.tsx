@@ -10,7 +10,8 @@ test("a stored document is accepted, deduplicated and normalized", () => {
       { id: "group-2", cwd: "/play", color: "not-a-color" },
     ],
     tabs: [
-      { id: "old-a", title: "A", cwd: "/work", groupId: "group-1", pinned: true, customTitle: true },
+      { id: "old-a", title: "A", cwd: "/work", groupId: "group-1", pinned: true, customTitle: true,
+        progress: { state: "set", percent: 42 }, activity: { state: "blocked" }, status: { state: "blocked" }, statusRevision: 17, shellPhase: "prompt" },
       { id: "old-b", title: "B", cwd: "/work", groupId: "missing", pinned: true, customTitle: false },
       { id: "old-a", title: "duplicate", cwd: "/", groupId: null, pinned: false, customTitle: false },
     ],
@@ -49,6 +50,12 @@ test("a stored document is accepted, deduplicated and normalized", () => {
   // An unknown group is not a pin: the tab returns to the ungrouped section.
   expect(snapshot!.tabs[1].groupId).toBe(null);
   expect(snapshot!.tabs[1].pinned).toBe(true);
+  // OSC 9;4 / 7501 are runtime metadata; unknown persisted keys are dropped.
+  expect("progress" in snapshot!.tabs[0]).toBe(false);
+  expect("activity" in snapshot!.tabs[0]).toBe(false);
+  expect("status" in snapshot!.tabs[0]).toBe(false);
+  expect("statusRevision" in snapshot!.tabs[0]).toBe(false);
+  expect("shellPhase" in snapshot!.tabs[0]).toBe(false);
   expect(snapshot!.layouts["group-1"].focusedPaneId).toBe("pane-2");
   expect(snapshot!.layouts["group-1"].zoomed).toBe(true);
   expect((snapshot!.layouts["group-1"].root as { ratio: number }).ratio).toBe(1);

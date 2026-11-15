@@ -5,10 +5,10 @@ import { Type } from "./type";
 import { DialogKeys as NativeDialogKeys } from "termlevel/native";
 
 /** A compact, opaque hint with the same surface as other popovers. */
-export function Hint(props: { children: string }) {
+export function Hint(props: { children: string; lines?: number }) {
   return <Text
     class="rounded-(--radius-overlay) border border-border bg-popover px-2 py-1 text-(length:--text-caption) text-popover-foreground"
-    style={{ boxShadow: [{ x: 0, y: 2, blur: 8, color: token("panel-shadow") }] }}
+    style={{ numberOfLines: props.lines, boxShadow: [{ x: 0, y: 2, blur: 8, color: token("panel-shadow") }] }}
   >{props.children}</Text>;
 }
 

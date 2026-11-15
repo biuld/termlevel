@@ -4,6 +4,11 @@ import { dropPosition, equalize, geometry, insertPane, minimum, neighbor, nodeId
 import { groupPalette, type GroupColor } from "../shared/theme";
 import { SNAPSHOT_VERSION, type SnapshotPreferences, type WorkspaceSnapshot } from "./workspace-snapshot";
 
+/** Rust owns protocol facts, aggregation and presentation semantics. */
+export type TabProgress = import("termlevel/native").ProgressInfo;
+export type TabActivity = import("termlevel/native").ActivityInfo;
+export type TabStatus = import("termlevel/native").TerminalStatusInfo;
+
 export interface Tab {
   id: string;
   title: string;
@@ -16,11 +21,27 @@ export interface Tab {
   inputWarning?: string | null;
   customTitle?: boolean;
   bell?: boolean;
+  progress?: TabProgress | null;
+  activity?: TabActivity | null;
+  status?: TabStatus;
+  statusRevision?: number;
+  shellPhase?: string;
+  /** Latest OSC 7 / ConEmu / iTerm2 working directory. Runtime-only. */
+  liveCwd?: string;
+  /** OSC 22 pointer shape. Runtime-only. */
+  mouseShape?: string;
+  /** OSC 133 semantic-prompt state. Runtime-only. */
+  atPrompt?: boolean;
 }
 
 export interface SessionTransport {
   cwd: string;
-  list(): Array<{ id: string; cwd: string; title: string; state: string; exitCode?: number | null; error?: string | null }>;
+  list(): Array<{
+    id: string; cwd: string; title: string; state: string; exitCode?: number | null;
+    error?: string | null; progress?: TabProgress | null; activity?: TabActivity | null;
+    currentCwd?: string | null; mouseShape?: string; atPrompt?: boolean;
+    status?: TabStatus; statusRevision?: number; shellPhase?: string;
+  }>;
   open(cwd: string): ReturnType<SessionTransport["list"]>[number];
   close(id: string): void;
 }
@@ -107,6 +128,12 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
         state: session?.state,
         exitCode: session?.exitCode,
         error: session?.error,
+        progress: session?.progress,
+        activity: session?.activity,
+        status: session?.status, statusRevision: session?.statusRevision, shellPhase: session?.shellPhase,
+        liveCwd: session?.currentCwd ?? undefined,
+        mouseShape: session?.mouseShape,
+        atPrompt: session?.atPrompt,
       });
     }
   } else if (demo) {
@@ -117,7 +144,7 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
   for (const session of live) {
     if (known.has(session.id)) continue;
     known.add(session.id);
-    initialTabs.push({ ...session, title: session.title || `Terminal ${initialTabs.length + 1}`, groupId: null, pinned: false });
+    initialTabs.push({ ...session, liveCwd: session.currentCwd ?? undefined, title: session.title || `Terminal ${initialTabs.length + 1}`, groupId: null, pinned: false });
   }
   // IDs, not tab objects or their positions, own the terminal surfaces.
   const tabs = signal<Tab[]>(initialTabs);
@@ -272,8 +299,9 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
     }
   }
 
-  function select(id: string) {
+  function select(id: string, acknowledge = true) {
     if (!tab(id)) return;
+    const observedRevision = tab(id)?.statusRevision;
     batch(() => {
       const key = layoutKey(tab(id)?.groupId);
       if (workspaceKey() !== key) workspaceKey.set(key);
@@ -301,20 +329,23 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
       const groupId = tab(id)?.groupId;
       if (groupId) patchGroup(groupId, { collapsed: false });
     });
+    if (acknowledge && observedRevision != null) Sessions.acknowledge(id, observedRevision);
   }
 
   function addTab(groupId: string | null = null, focus = true) {
     sequence++;
     const destination = groupId ? group(groupId) : undefined;
     // With no active terminal, a new one starts in the home folder.
-    const cwd = destination?.cwd || activeTab()?.cwd || "~";
+    const cwd = destination?.cwd || activeTab()?.liveCwd || activeTab()?.cwd || "~";
     const session = transport?.open(cwd);
     const id = session?.id ?? `tab-${sequence}`;
     const validGroup = destination ? groupId : null;
     batch(() => {
       tabs.update((all) => [...all, {
         ...session, id, title: session?.title || `Terminal ${sequence}`, groupId: validGroup, pinned: false,
-        cwd: session?.cwd ?? cwd,
+        cwd: session?.cwd ?? cwd, liveCwd: session?.currentCwd ?? undefined,
+        mouseShape: session?.mouseShape, atPrompt: session?.atPrompt,
+        status: session?.status, statusRevision: session?.statusRevision, shellPhase: session?.shellPhase,
       }]);
       if (focus) select(id);
     });
@@ -688,7 +719,9 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
     return {
       version: SNAPSHOT_VERSION,
       groups: groups().map(({ id, title, cwd, color, collapsed }) => ({ id, title, cwd, color, collapsed })),
-      tabs: tabs().map(({ id, title, cwd, groupId, pinned, customTitle }) => ({ id, title, cwd, groupId, pinned, customTitle: !!customTitle })),
+      tabs: tabs().map(({ id, title, cwd, liveCwd, groupId, pinned, customTitle }) => ({
+        id, title, cwd: liveCwd ?? cwd, groupId, pinned, customTitle: !!customTitle,
+      })),
       layouts: open,
       activeTabId: activeId(),
       workspaceKey: workspaceKey(),
@@ -700,8 +733,9 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
     };
   }
 
-  // Restoring is not a user selection: keep the saved focus and collapsed groups.
-  if (initialActiveId) select(initialActiveId);
+  // Restoring is not a user selection: keep the saved focus and collapsed groups,
+  // and do not acknowledge program status the user has not seen.
+  if (initialActiveId) select(initialActiveId, false);
   if (snapshot) {
     for (const saved of snapshot.groups) {
       if (saved.collapsed !== group(saved.id)?.collapsed) patchGroup(saved.id, { collapsed: saved.collapsed });

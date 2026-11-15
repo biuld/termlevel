@@ -3,7 +3,8 @@ import { nodeIds, panes, type LayoutNode, type TilingState } from "./tiling";
 
 /**
  * The persisted workspace structure. Sessions are not part of it: a tab keeps
- * its initial directory and title, and the next launch starts a fresh shell.
+ * its last live directory and title, and the next launch starts a fresh shell
+ * in that directory.
  * Additive preferences have defaults; incompatible schema versions are discarded.
  */
 export const SNAPSHOT_VERSION = 1;

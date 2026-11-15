@@ -13,7 +13,8 @@ use std::{
 };
 pub(crate) use termlevel_ghostty_vt::Color as Rgb;
 use termlevel_ghostty_vt::{
-    Cell as GridCell, Colors, Frame, RenderState, StyleColor, Terminal, raw,
+    Cell as GridCell, Colors, Frame, MouseShape, ProgramStatusReport, ProgressReport, RenderState,
+    SemanticPromptReport, StyleColor, Terminal, raw,
 };
 
 #[derive(Debug, Clone, PartialEq, Props)]
@@ -49,6 +50,12 @@ pub(crate) enum BackendEvent {
     Title(String),
     Bell,
     Notification { title: String, body: String },
+    Progress(ProgressReport),
+    ProgramStatus(ProgramStatusReport),
+    SemanticPrompt(SemanticPromptReport),
+    WorkingDirectoryChanged(String),
+    MouseShape(MouseShape),
+    Reset,
     Reply(Vec<u8>),
     Error(String),
 }
@@ -163,6 +170,8 @@ struct State {
     background: Rgb,
     /// When the playing Kitty animation next needs a frame. `None` if idle.
     next_image_frame: Option<u64>,
+    /// Last OSC 22 shape, used to publish only changes.
+    mouse_shape: MouseShape,
     errors: Vec<String>,
 }
 impl State {
@@ -282,6 +291,7 @@ impl GhosttyEmulator {
             terminal.set_clipboard(Arc::new(crate::clipboard::SystemClipboard))?;
             let colors = terminal.colors()?;
             let range = terminal.retained_range()?;
+            let mouse_shape = terminal.mouse_shape().unwrap_or(MouseShape::Text);
             Ok(Self {
                 state: RefCell::new(State {
                     terminal,
@@ -294,6 +304,7 @@ impl GhosttyEmulator {
                     foreground,
                     background,
                     next_image_frame: None,
+                    mouse_shape,
                     errors: Vec::new(),
                 }),
             })
@@ -340,17 +351,24 @@ impl GhosttyEmulator {
             .terminal
             .take_events()
             .into_iter()
-            .filter_map(|event| match event {
-                Event::TitleChanged(title) => Some(BackendEvent::Title(title)),
-                Event::Reset => Some(BackendEvent::Title(String::new())),
-                Event::Bell => Some(BackendEvent::Bell),
-                Event::Notification { title, body } => {
-                    Some(BackendEvent::Notification { title, body })
-                }
-                Event::WritePty(bytes) => Some(BackendEvent::Reply(bytes)),
-                Event::WorkingDirectoryChanged(_) => None,
+            .map(|event| match event {
+                Event::TitleChanged(title) => BackendEvent::Title(title),
+                Event::Reset => BackendEvent::Reset,
+                Event::Bell => BackendEvent::Bell,
+                Event::Notification { title, body } => BackendEvent::Notification { title, body },
+                Event::Progress(report) => BackendEvent::Progress(report),
+                Event::ProgramStatus(report) => BackendEvent::ProgramStatus(report),
+                Event::SemanticPrompt(report) => BackendEvent::SemanticPrompt(report),
+                Event::WorkingDirectoryChanged(pwd) => BackendEvent::WorkingDirectoryChanged(pwd),
+                Event::WritePty(bytes) => BackendEvent::Reply(bytes),
             })
             .collect();
+        if let Ok(shape) = state.terminal.mouse_shape()
+            && shape != state.mouse_shape
+        {
+            state.mouse_shape = shape;
+            events.push(BackendEvent::MouseShape(shape));
+        }
         events.extend(state.errors.drain(..).map(BackendEvent::Error));
         events
     }
@@ -990,6 +1008,12 @@ impl TerminalEmulator for GhosttyEmulator {
                 BackendEvent::Title(title) => Some(TerminalEmulatorEvent::Title(title)),
                 BackendEvent::Bell => Some(TerminalEmulatorEvent::Bell),
                 BackendEvent::Notification { .. } => None,
+                BackendEvent::Progress(_)
+                | BackendEvent::ProgramStatus(_)
+                | BackendEvent::SemanticPrompt(_)
+                | BackendEvent::WorkingDirectoryChanged(_)
+                | BackendEvent::MouseShape(_) => None,
+                BackendEvent::Reset => Some(TerminalEmulatorEvent::Title(String::new())),
                 BackendEvent::Reply(bytes) => Some(TerminalEmulatorEvent::Reply(bytes)),
                 BackendEvent::Error(error) => {
                     eprintln!("Ghostty preview: {error}");

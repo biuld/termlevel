@@ -1,7 +1,7 @@
-import { keymap, Scroll, signal, Text, token, View, type GestureResponderEvent, type Point, type Signal, type ViewRef } from "nsh";
-import { Button } from "nsh/base";
+import { reduceMotion, keymap, Scroll, signal, Text, token, View, type GestureResponderEvent, type Point, type Signal, type ViewRef } from "nsh";
+import { Button, Progress } from "nsh/base";
 import { Menu } from "nsh/desktop";
-import { Icon } from "../shared/icons";
+import { Icon, type IconName } from "../shared/icons";
 import { Hint, IconButton } from "../shared/controls";
 import type { Workspace } from "./workspace";
 import { groupColor, groupLine, groupTint } from "../shared/theme";
@@ -206,6 +206,53 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
       const groupId = tab()?.groupId;
       return active() && groupId ? groupColor(store.group(groupId)?.color) : null;
     };
+    const status = () => tab()?.status;
+    const progress = () => status()?.progress;
+    const lineIndeterminate = () => progress()?.indeterminate ?? false;
+    const animateLine = () => !!progress()?.animate && !reduceMotion();
+    const working = () => status()?.state === "working" && !progress() && !reduceMotion();
+    const statusIcon = (): IconName => {
+      switch (status()?.state) {
+        case "working": return "busy";
+        case "done": return "check";
+        case "blocked": return "alert";
+        case "error": case "hostError": case "exited": return "xCircle";
+        default: return tab()?.pinned ? "pin" : "terminal";
+      }
+    };
+    const statusColor = () => {
+      switch (status()?.state) {
+        case "working": case "blocked": return token("primary");
+        case "done": return token("subtle-foreground");
+        case "error": case "hostError": case "exited": return token("destructive");
+        default: return accent() ?? token(active() ? "icon-active" : "icon");
+      }
+    };
+    const summary = () => [tab()?.title ?? "Terminal", status()?.label, progress()?.label].filter(Boolean).join(", ");
+    const detail = () => [status()?.app, status()?.detail,
+      status()?.pendingCount ? `${status()!.pendingCount} more need attention` : ""].filter(Boolean).join(" · ");
+    const tabLabel = () => [summary(), detail(), tab()?.bell ? "terminal bell" : ""].filter(Boolean).join(", ");
+    const lineIndicator = () => progress()?.state === "error" ? "bg-destructive"
+      : progress()?.state === "pause" ? "bg-subtle-foreground" : "bg-primary";
+    const progressLine = (compact: boolean) => (
+      <If when={!!progress()}>
+        <View class={compact ? "mt-0.5 h-0.5 w-3" : "mt-0.5 h-0.5 w-full"}
+          style={{ pointerEvents: "none" }} testID={`tab-progress-${id}`}>
+          <If when={progress()?.percent != null || lineIndeterminate()}>
+            <Progress value={progress()?.percent ?? undefined} indeterminate={lineIndeterminate()}
+              accessibilityLabel={progress()?.label}
+              class="h-full w-full"
+              trackClass="h-full w-full overflow-hidden rounded-full bg-sidebar-border/50"
+              indicatorClass={`h-full rounded-full ${lineIndeterminate() ? "w-1/3 " : ""}${lineIndicator()}`}
+              indicatorStyle={animateLine() ? { animationName: "pulse", animationDuration: "1.2s", animationIterationCount: "infinite" } : undefined} />
+          </If>
+          <If when={progress()?.percent == null && !lineIndeterminate()}>
+            <View accessibilityLabel={progress()?.label}
+              class={`h-full w-full overflow-hidden rounded-full ${progress()?.state === "error" ? "bg-destructive/30" : "bg-sidebar-border/50"}`} />
+          </If>
+        </View>
+      </If>
+    );
     return <View testID={`tab-row-${id}`}
       ref={(ref) => register(`tab:${id}`, ref ? { ref, kind: "tab", id } : null)}
       class="group relative my-0.5 h-(--height-tab) flex-row items-center rounded-(--radius-tab) hover:bg-tab-hover"
@@ -234,14 +281,23 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
         <View testID="drop-line" accessibilityLabel="Insert terminal" class="absolute left-1 right-1 h-0.5 bg-primary" style={{ bottom: -1, pointerEvents: "none" }} />
       </If>
       <Button testID={`tab-${id}`} role="tab" selected={active()}
-        accessibilityLabel={`${tab()?.title ?? "Terminal"}${tab()?.bell ? ", terminal bell" : ""}`} onPress={() => store.select(id)}
-        tooltip={<Hint>{tab()?.title ?? "Terminal"}</Hint>}
+        accessibilityLabel={tabLabel()} onPress={() => store.select(id)}
+        tooltip={<View class="max-w-80"><Hint lines={2}>{[summary(), detail()].filter(Boolean).join("\n")}</Hint></View>}
         class="h-full min-w-0 flex-1 flex-row items-center gap-2 rounded-(--radius-tab) focus-visible:ring-2 ring-sidebar-ring"
         style={{ justifyContent: props.expanded() ? "flex-start" : "center", paddingHorizontal: props.expanded() ? 7 : 0 }}>
-        <Icon name={tab()?.pinned ? "pin" : "terminal"} size={13} color={accent() ?? token(active() ? "icon-active" : "icon")} />
+        <View class="flex-col items-center">
+          <View testID={`tab-status-${id}`}
+            style={working() ? { animationName: "pulse", animationDuration: "1.2s", animationIterationCount: "infinite", animationFrameRate: 30 } : undefined}>
+            <Icon name={statusIcon()} size={13} color={statusColor()} />
+          </View>
+          <If when={!props.expanded()}>{progressLine(true)}</If>
+        </View>
         <If when={props.expanded()}>
-          <Text class="min-w-0 flex-1 text-(length:--text-body)"
-            style={{ numberOfLines: 1, color: token(active() ? "tab-selected-foreground" : "sidebar-foreground") }}>{tab()?.title}</Text>
+          <View class="min-w-0 flex-1 flex-col justify-center">
+            <Text class="min-w-0 text-(length:--text-body)"
+              style={{ numberOfLines: 1, color: token(active() ? "tab-selected-foreground" : "sidebar-foreground") }}>{tab()?.title}</Text>
+            {progressLine(false)}
+          </View>
         </If>
       </Button>
       <If when={!!store.paneForSession(id) && !active()}>

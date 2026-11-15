@@ -39,6 +39,14 @@ impl Sessions {
         manager().lock().unwrap().close(&id);
     }
 
+    /// Marks done, blocked and error program status as seen by the user.
+    pub fn acknowledge(id: String, observed_revision: u64) {
+        manager()
+            .lock()
+            .unwrap()
+            .acknowledge(&id, observed_revision);
+    }
+
     /// Terminates all sessions on explicit window/application close.
     pub fn shutdown() {
         manager().lock().unwrap().shutdown();

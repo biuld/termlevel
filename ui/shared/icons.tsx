@@ -19,6 +19,10 @@ const paths = {
   arrow: "M5 12H19 M13 6L19 12L13 18",
   bell: "M6 10A6 6 0 0 1 18 10V15L20 18H4L6 15Z M10 21H14",
   book: "M4 4H10L12 6L14 4H20V19H14L12 21L10 19H4Z M12 6V21",
+  busy: "M4.5 12H8 M10.25 12H13.75 M16 12H19.5",
+  check: "M5 12L10 17L19 7",
+  alert: "M12 3A9 9 0 1 0 12 21A9 9 0 1 0 12 3 M12 8V13 M12 16.5V17",
+  xCircle: "M12 3A9 9 0 1 0 12 21A9 9 0 1 0 12 3 M9 9L15 15 M15 9L9 15",
 } as const;
 
 export type IconName = keyof typeof paths;

@@ -64,8 +64,10 @@ TSX 工作区 ── open / close / list / shutdown ── Rust SessionManager
                                         │
                                NSH 原生输入 → writer → PTY
 
-Rust → TSX：标题、运行/退出/错误状态、响铃；不发送终端 chunk 或 cell grid
+Rust → TSX：标题、运行/退出/错误状态、响铃、OSC 7501 程序状态摘要、OSC 9;4 进度、OSC 7 实时目录、OSC 22 鼠标形状与 OSC 133 prompt 状态；不发送终端 chunk 或 cell grid
 ```
+
+OSC 逐项盘点、状态业务规则与 UI / UX 统一见 [OSC 集成与终端状态设计](osc-support.md)。安全封装注册 `GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT` 与 `GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS`，在回调内复制有界 owned 文本；OSC 7501 的完整 id 记录表由 `Session` 持有，`SessionInfo` 只带聚合摘要，避免 16 ms 轮询克隆整张表。7501 记录保留状态代次和已读，版本确认不删除程序事实；blocked 仍可见，已读 done/error 不再参与聚合。Rust 的 `TerminalStatusInfo` 统一生命周期、活动与真实进度，侧栏、tooltip 和无障碍不再分别推导；`shellPhase` 区分未集成与已知阶段。注册 program status 回调后，libghostty-vt 会通过已注册的 write-PTY 回复 `OSC 7501;?` 查询，程序因此认为终端支持该协议。进度百分比在 Rust 侧合并发布，restart 不恢复这些运行期元数据。OSC 7 的实时目录写入 `SessionInfo.currentCwd`；UI 用运行期 `Tab.liveCwd` 显示和搜索，保存文档时写入 `cwd: liveCwd ?? cwd`，因此下次启动使用最后目录，schema 不变。OSC 22 形状和 OSC 133 prompt 状态同样是运行期元数据。
 
 每个会话有独立 Ghostty terminal、持久 parser、原生 RenderState 与 Rust 帧缓存。默认展示最新 10,000 行历史，设置可在 1,000 到 100,000 之间按 1,000 行调整；备用屏幕没有历史。Ghostty 底层按页回收，物理存储可能额外保留一页。安全层用两个屏幕各自的 tracked grid reference 记录逻辑起点，因此展示的上限精确，改小后再改大不会重新出现已丢弃的旧行。滚动历史上限随工作区文档持久化。
 
@@ -95,7 +97,7 @@ Settings → Terminal 的 Terminal identity 默认是 Termlevel，也可显式�
 
 标题栏铃铛提供应用内通知历史，侧栏收起后仍可使用。`src/notifications.rs` 是宿主进程内历史的唯一所有者，独立于会话视图挂载和会话关闭；不写入 workspace 文档，应用重启后清空。最多保留最新 100 条，每条记录来源、级别、session ID、时间和未读状态；同一会话相同内容在两秒内合并计数并重新置为未读。标题最多 160 字符、正文最多 4096 字符，控制字符过滤后保留换行和制表。
 
-Ghostty safe wrapper 注册官方 desktop notification 回调，复制 owned 标题和正文，再经 terminal BackendEvent 到 Session 写入历史；支持 libghostty-vt 1.0.1 回调覆盖的 OSC 9 和 OSC 777，未声明 OSC 99 或系统桌面通知支持。BEL 仍保留原有侧栏标记，同时记录终端响铃。会话启动 / I/O / 编码等错误、输入拒绝警告、非零进程退出与应用文件夹对话框错误以 app 来源进入同一历史。终端底部不再显示状态条；详细错误和输入拒绝仅进入通知面板。清空历史不会清除会话错误或结束进程。
+Ghostty safe wrapper 注册官方 desktop notification 回调，复制 owned 标题和正文，再经 terminal BackendEvent 到 Session 写入历史；支持 libghostty-vt 1.0.1 回调覆盖的 OSC 9 和 OSC 777，未声明 OSC 99 或系统桌面通知支持。OSC 7501 每条记录进入 blocked / error 的跃迁会额外写入一条带记录身份和代次的通知，working、done 和 OSC 9;4 进度不进入历史，详见 [OSC 集成与终端状态设计](osc-support.md)。BEL 仍保留原有侧栏标记，同时记录终端响铃。会话启动 / I/O / 编码等错误、输入拒绝警告、非零进程退出与应用文件夹对话框错误以 app 来源进入同一历史。终端底部不再显示状态条；详细错误和输入拒绝仅进入通知面板。清空历史不会清除会话错误或结束进程。
 
 `ui/notifications/notifications.ts` 在应用根生命周期按 250 ms 检查历史 revision，仅变化时读取 bounded 低频数据；不依赖任何 pane 的刷新或事件补发，隐藏会话也可通知。preview 不读取或修改真实通知历史。`NotificationPanel.tsx` 只负责表现与用户操作，通过应用传入的 session ID 回调选中已有标签，不创建会话。打开面板标记已读，支持逐项移除、清空、回到来源；来源已关闭时保留内容并禁用跳转。历史按内容高度展示最多三条，受窗口可用高度限制，更多内容可滚动且有提示与分隔线。面板打开期间阻止终端输入，Escape / 外部点击关闭后恢复。
 
@@ -104,7 +106,7 @@ Ghostty safe wrapper 注册官方 desktop notification 回调，复制 owned 标
 `SessionManager` 在 Rust 中独立于视图持有会话。只有 `Sessions.open` 创建进程；`SessionTerminal` 只能按 ID 获取已有会话，已关闭或丢失的 ID 返回错误，不会隐式重新创建进程。ID 由 Rust 生成，与标题、排序、分组、选择、PID 和视图位置无关。
 
 - 同一原生宿主进程内重建 TSX 工作区时，从 `Sessions.list()` 重新绑定仍存活或已退出的会话。应用启动则读取持久化文档：标签按保存的顺序、分组和分屏恢复，并为每个标签在保存的目录重新启动 shell；首次启动、没有文档时保持空白，不自动创建 shell。
-- 持久化文档带 schema 版本，保存标签组、标签顺序与固定状态、分屏树、选中标签、侧栏宽度与展开状态、字号、滚动历史、字体和外观。session ID 不跨进程恢复，布局中旧的 session ID 在还原时映射到新会话；进程 PID 从不写入文档。NSH Storage 在 macOS 上位于 `~/Library/Application Support/app.termlevel.desktop/storage.json`，损坏时应用以空工作区启动。剪贴板读取权限不持久化，重启复位。
+- 持久化文档带 schema 版本，保存标签组、标签顺序与固定状态、分屏树、选中标签、侧栏宽度与展开状态、字号、滚动历史、字体和外观。session ID 不跨进程恢复，布局中旧的 session ID 在还原时映射到新会话；进程 PID 从不写入文档。NSH Storage 在 macOS 上位于 `~/Library/Application Support/app.termlevel.desktop/storage.json`，损坏时应用以空工作区启动。剪贴板读取权限不持久化，重启复位。OSC 7501 状态、OSC 9;4 进度、OSC 22 形状和 OSC 133 prompt 状态是运行期元数据，不写入工作区文档；应用重启后为空，UI 热重载由 `Sessions.list()` 从当前会话恢复。实时目录不同：它通过 `liveCwd ?? cwd` 写入标签的 `cwd`，所以重启会从最后目录打开新 shell。
 - TSX 工作区销毁/重建以及原生终端视图卸载/重挂均不关闭会话。重新绑定读取当前 Rust 网格和状态，不依赖 JS 中的输出副本或事件补发。
 - 标签切换、分组折叠、重命名、排序与主题变更保留同一 session ID。工作区保留按 session ID 挂载的终端显示；布局树决定哪些会话同时展示，暂未展示的会话隐藏、禁用命中并移出无障碍遍历。焦点 pane 决定唯一输入目标，其他可见 pane 仍持续刷新。
 - 显式关闭标签调用 `Sessions.close`；关闭组逐个关闭其会话。Shell 退出码为 0（含空行 Ctrl+D）时同样关闭标签和 pane，不自动重启。非 0 退出和启动失败保留输出与状态。
@@ -150,7 +152,7 @@ reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I
 
 统一窗口栏固定在顶部；下方侧栏与终端作为独立圆角 pane，外边距和间距由 `gap-pane` 控制。Sidebar 唯一实例在窗口根层绝对定位，避免被 44 pt 原生分栏裁剪。分栏边界两侧各分配半个间距，根层侧栏扣除这半个间距，与终端 pane 顶底对齐。分栏内测量 View 的 `onLayout` 同步拖动中的实际宽度；`onResize` 只保存最终宽度。收起时鼠标悬停展开覆盖终端，不改变终端分配宽度和挂载位置；编辑组时保持展开。
 
-会话标题来自低频元数据，用户重命名后不再被程序标题覆盖。非活动会话响铃时显示标记，选择后清除。垂直拖动标签在侧栏内排序或放入分组。落到已有分组的标签上会加入该组，落到没有分组的标签上会组成新组，路径取被拖到的标签；放入折叠组时展开该组。分组保存自己的路径，组内新建的终端从这里启动，组名默认是路径名。取消拖动不改分组，session ID 不变。工具栏目录表示初始启动目录，tooltip 明确说明；尚未实现 shell integration 的实时 cwd 跟踪。退出码非 0 或启动失败时，pane 标题栏显示简短状态与新建终端入口，已有输出保留，详细信息进入通知历史。退出码 0 会关掉这个终端。
+会话标题来自低频元数据，用户重命名后不再被程序标题覆盖。非活动会话响铃时显示标记，选择后清除。垂直拖动标签在侧栏内排序或放入分组。落到已有分组的标签上会加入该组，落到没有分组的标签上会组成新组，路径取被拖到的标签；放入折叠组时展开该组。分组保存自己的路径，组内新建的终端从这里启动，组名默认是路径名。取消拖动不改分组，session ID 不变。工具栏目录使用 OSC 7 / ConEmu / iTerm2 报告的实时 cwd，没有实时值时回退到启动目录；tooltip 标明当前目录。退出码非 0 或启动失败时，pane 标题栏显示简短状态与新建终端入口，已有输出保留，详细信息进入通知历史。退出码 0 会关掉这个终端。
 
 ### 平铺状态与稳定展示
 

@@ -19,6 +19,13 @@ pub struct Notice {
     pub created_at: u64,
     pub unread: bool,
     pub count: u32,
+    pub program: Option<ProgramNotice>,
+}
+
+#[derive(Clone, Debug, PartialEq, JsObject)]
+pub struct ProgramNotice {
+    pub record_id: String,
+    pub version: u64,
 }
 
 #[derive(Default)]
@@ -45,6 +52,18 @@ impl History {
         body: &str,
         now: u64,
     ) {
+        self.push_with_program((source, level, session_id), title, body, now, None);
+    }
+
+    fn push_with_program(
+        &mut self,
+        origin: (&str, &str, Option<&str>),
+        title: &str,
+        body: &str,
+        now: u64,
+        program: Option<ProgramNotice>,
+    ) {
+        let (source, level, session_id) = origin;
         let title = bounded(title, 160);
         let body = bounded(body, 4096);
         if title.is_empty() && body.is_empty() {
@@ -55,6 +74,7 @@ impl History {
             && last.source == source
             && last.level == level
             && last.session_id.as_deref() == session_id
+            && last.program == program
             && last.title == title
             && last.body == body
             && now.saturating_sub(last.created_at) < 2000
@@ -75,6 +95,7 @@ impl History {
             created_at: now,
             unread: true,
             count: 1,
+            program,
         });
         self.entries.truncate(HISTORY_LIMIT);
     }
@@ -102,6 +123,31 @@ pub(crate) fn record(source: &str, level: &str, session_id: Option<&str>, title:
         .lock()
         .unwrap()
         .push(source, level, session_id, title, body, now);
+}
+
+/// A status transition is keyed by record and generation, not aggregate icon.
+pub(crate) fn record_program(
+    session_id: &str,
+    record_id: &str,
+    version: u64,
+    level: &str,
+    title: &str,
+    body: &str,
+) {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    history().lock().unwrap().push_with_program(
+        ("terminal", level, Some(session_id)),
+        title,
+        body,
+        now,
+        Some(ProgramNotice {
+            record_id: record_id.into(),
+            version,
+        }),
+    );
 }
 
 /// In-app notification history for this host process.

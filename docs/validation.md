@@ -656,3 +656,67 @@ Rust Session 独有的 InputQueue 改为 FIFO 总字节预算：4 MiB 待发送�
 - `./scripts/nsh check`、`./scripts/nsh build`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check` 通过；日志 artifacts/scrollbar-overlay-{check,build,clippy}.log。
 
 覆盖式方案取代上文历史记录中的预留 gutter 方案；当前行为以 architecture 和代码为准。人工长期手感验收仍与上述自动化分开。
+
+## 2026-11-15：侧栏终端状态与进度（OSC 7501 / OSC 9;4）
+
+基于 `2f1ae0c` 的未提交改动。侧栏 tab 现在同时显示三层信息：标题继续来自 OSC 0 / OSC 2；OSC 7501 的聚合成状态替换默认 terminal / pin 图标（working 使用三点呼吸图标，不用旋转圆环）；OSC 9;4 的进度作为标题列下方的 2 pt 细线，收起侧栏时缩到图标下方。working 同时有 9;4 和 7501 百分比时以 9;4 为准，7501 百分比只在 9;4 缺失时兜底；working 没有显式百分比时不合成 indeterminate 线，blocked / error 保留满格状态线。视觉、优先级和生命周期见 [OSC 集成与终端状态设计](osc-support.md)。7501 的完整 id 记录表只存在于 Rust `Session`，`SessionInfo` 发送聚合摘要；blocked / error 的进入跃迁各写入一条通知，working、done 和 9;4 不写。选中 tab 调用 `Sessions.acknowledge` 清除 done / blocked / error，应用恢复时的初始选中不算用户确认。运行期字段不进入 workspace 文档。
+
+验证使用 `GHOSTTY_VT_ARCHIVE=/tmp/termlevel-ghostty-vt-1.0.1.xcframework.zip CARGO_NET_OFFLINE=true`：
+
+- `cargo test -p termlevel-native`：86/86，日志 artifacts/terminal-status-rust.log。新增聚合优先级与 app 继承、子树清除、真实 `/bin/sh` 下 9;4 / 7501 进入 `SessionInfo`、acknowledge 以及退出清除 working 的用例。
+- `cargo test -p termlevel-ghostty-vt --test native`：23/23，日志 artifacts/terminal-status-wrapper.log。新增 9;4 五种状态与缺失百分比、分块输入、连续进度合并、7501 blocked 解码、子记录 clear、`OSC 7501;?` 支持回复、RIS 先 clear 后 reset，以及 9;4 不产生通知的用例。
+- `./scripts/nsh test --junit artifacts/terminal-status-headless.xml`：179/179，日志 artifacts/terminal-status-headless.log。新增 tests/terminal/Status.test.tsx 四项真实 PTY 用例：42% / indeterminate / remove 的进度线；working → done → blocked 的图标与可访问标签、9;4 优先于 7501 百分比、blocked 未读通知和选中确认；working 无百分比时不合成进度线；error 通知与确认。Snapshot 用例同时确认持久化 JSON 中的 `progress` / `activity` 被丢弃。
+- `./scripts/nsh test tests/terminal/Status.test.tsx --target macos --junit artifacts/terminal-status-native.xml`：4/4，日志 artifacts/terminal-status-native.log。原生宿主仍有一条既有链接警告。最终调整进度线轨道高度与 9;4 / 7501 百分比优先级后，`./scripts/nsh test tests/terminal/Status.test.tsx --junit artifacts/terminal-status-focused.xml` 复验 4/4，日志 artifacts/terminal-status-focused.log。
+- `./scripts/test-native status`：1/1，日志 artifacts/terminal-status-native-acceptance.log。已查看 artifacts/native-status-progress.png、native-status-working.png、native-status-blocked.png、native-status-collapsed.png：42% 进度线位于标题文字下方；working 使用三点呼吸图标，不再出现旋转圆环；blocked 使用圆圈感叹号与整条强调线，标题栏出现未读通知；收起侧栏后图标下方保留短进度线。原生宿主仍有一条既有链接警告。
+- `./scripts/nsh check`、`./scripts/nsh build`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check` 通过；日志 artifacts/terminal-status-{check,build,clippy,fmt,diff}.log。
+
+未完成项与边界：静态截图不能证明三点 pulse 的实际呼吸效果、系统减少动态效果下的退化、不同字号和窄侧栏下的 2 pt 线可读性，也未做键盘 / 读屏的完整人工走查；没有用真实 cargo / terraform / coding agent 的长任务验证 7501 策略，也没有验证高频 9;4 更新下的长期 CPU / 重绘表现。preview 仍不接这两个协议，不作为证据。未接 OSC 133 提示符生命周期，因此 working / blocked 目前只在进程退出和 RIS 时自动清除；记录列表、按 app 图标和窗口级聚合留待后续。真实程序支持与长期日用仍需人工验收。
+
+## 2026-11-15：OSC 支持盘点与 PWD / OSC 22 / OSC 133 映射
+
+基于 `2f1ae0c` 的未提交改动（含上一节侧栏状态与进度）。新增 [OSC 集成与终端状态设计](osc-support.md)，逐项列出 libghostty-vt 1.0.1 识别、内部处理、需要应用回调和不支持/不接入的 OSC。应用新增三处映射：
+
+- OSC 7 / ConEmu 9;9 / iTerm2 1337 CurrentDir：解码 `file://` URI 与裸绝对路径，拒绝远程 host、query/fragment、控制字符和超长值；写入 `SessionInfo.currentCwd`，UI 用运行期 `Tab.liveCwd` 更新工具栏、Cmd-K 搜索、分组路径建议、从该 tab 新建终端和下次保存。`Tab.cwd` 仍是启动目录，分组 cwd 不变。
+- OSC 22：安全封装读取 `DATA_MOUSE_SHAPE`，`GhosttyEmulator` 仅在形状变化时发布；`SessionInfo.mouseShape` 传到 `SessionTerminal` 的 host cursor，grid 与 scrollbar 各自保持光标。
+- OSC 133：注册 `SEMANTIC_PROMPT`，回调内复制 kind、prompt kind、exit code、command、error 和 `CURSOR_AT_PROMPT`；`PROMPT_START` 清除 7501 的 working/blocked，`done`/`error` 保留到确认；`SessionInfo.atPrompt` 只作为运行期元数据，未新增可见 UI。
+
+验证：
+
+- `cargo test -p termlevel-native`：89/89，日志 artifacts/osc-rust.log。新增 PWD URI/裸路径校验、真实 `/bin/sh` 的 PWD / OSC 22 / OSC 133 生命周期，以及 backend 映射用例。
+- `cargo test -p termlevel-ghostty-vt --test native`：25/25，日志 artifacts/osc-wrapper.log。新增 OSC 22 全部关键形状、空值/reset，OSC 133 四种 kind 与 `cursor_at_prompt`。
+- `./scripts/nsh test --junit artifacts/osc-headless.xml`：186/186，日志 artifacts/osc-headless.log。新增 tests/terminal/Osc.test.tsx 两项真实 PTY 用例：OSC 7 更新工具栏/保存/新终端目录；OSC 133 清除 working 并暴露 prompt 状态，OSC 22 暴露 shape。
+- `./scripts/nsh test tests/terminal/Osc.test.tsx --target macos --junit artifacts/osc-native.xml`：2/2，日志 artifacts/osc-native.log；原生宿主仍有一条既有链接警告。
+- `./scripts/test-native osc`：1/1，日志 artifacts/osc-native-acceptance.log，JUnit artifacts/osc-native-acceptance.xml。已查看 artifacts/native-osc-live-cwd.png（工具栏从项目目录更新为 `/private/tmp`）和 native-osc-prompt.png（OSC 133 A 后 working 图标消失）。
+- `./scripts/nsh check`、`./scripts/nsh build`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check` 通过；日志 artifacts/osc-{check,build,clippy,fmt,diff}.log。
+
+未完成项与边界：OSC 22 的实际 NSCursor 形状未在原生截图中验证（截图不包含指针），且 NSH 可能只在指针下次移动时更新 cursor，需人工在终端内运行 `printf '\033]22;pointer\007'` 后移动指针确认；滚动条/工具栏光标隔离同样需人工验收。OSC 1、99、ConEmu 非进度键、OSC 66/72/3008、OSC 1337 其他键和不支持的 OSC 5522 授权/MIME 细节按盘点文档保持未接入。OSC 133 需要 shell integration；本机 `/bin/sh` 用例用 printf 模拟协议，不代表用户 shell 已配置。旧验证章节中“工具栏仍是启动路径 / 不做 OSC 7”的历史记录保留为当时证据，本节及当前 architecture/terminal-tiling 为准。未提交或重启用户会话。
+
+
+## 2026-11-15 · OSC 状态 UI / UX 重设计落地
+
+基于 `c2f9488` 的未提交工作树，保留此前 OSC、目录整理等未提交改动。设计统一在 [OSC 集成与终端状态设计](osc-support.md)，此前状态 / OSC 章节仍记录旧版实现的历史证据。
+
+本次把程序报告和用户已读分开：7501 记录带状态代次，`Sessions.acknowledge(id, observedRevision)` 只确认已呈现版本；blocked 查看后继续存在，已读 done/error 不再遮挡 working，重复同状态报告不会重新置未读。通知改为记录级跃迁并附带记录身份 / 代次，同文案的不同任务不会因聚合仍为 blocked 而漏掉。`TerminalStatusInfo` 在 Rust 统一生命周期、活动和真实进度，Sidebar、tooltip 与无障碍共用摘要；取消 blocked/error 和未知 pause 的伪满格线。新 prompt 清理上一轮 9;4，shellPhase 区分 unknown 与已知阶段。原生 FocusRequest 区分用户操作与自动输入焦点，重挂不确认结果。
+
+自动化证据（真实 PTY 均为受控 `/bin/sh`，不是 preview，也不是实际 agent 日用验收）：
+
+- `./scripts/nsh test --junit artifacts/status-redesign-headless.xml`：192/192，日志 `artifacts/status-redesign-headless.log`。包含 Rust 应用测试 93 项、安全封装 native 25 项、ABI、doc tests 与 TSX；这里的 Rust native 测试名称不代表前台 AppKit GUI 验收。
+- 状态 TSX 六项：双协议进度一致、9;4 remove / indeterminate、blocked 查看仍保留、error 确认后不压住新 working、未知 pause/error 不虚构百分比、生产 TerminalSurface 重挂保留未读 done。日志 `artifacts/status-redesign-focused.log`，报告 `artifacts/status-redesign-focused.xml`。
+- Rust 新增记录级通知、旧版本确认不能吞掉新代次、确认保留原始记录、reset 后不复用代次、prompt / exit 清理、100% 不等于 done、记录整体替换与 256 条淘汰；全量套件通过。此前单独 `cargo test -p termlevel-native --lib` 为 92/92（新增容量测试前），日志 `artifacts/status-redesign-rust-unsandboxed.log`；以最终全量中的 93 项为最终代码证据。
+- `./scripts/nsh check`、`./scripts/nsh build`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check` 通过。日志 `artifacts/status-redesign-{check,build,clippy}.log`；fmt / diff 直接执行，无单独日志。文档本地链接检查通过。
+
+前台 AppKit 原生自动化，均串行执行：
+
+- `./scripts/test-native status`：1/1，日志 `artifacts/status-redesign-native.log`，报告 `artifacts/status-native.xml`。已查看 `native-status-progress.png`、`native-status-working.png`、`native-status-blocked.png`、`native-status-collapsed.png`、`native-status-blocked-no-progress.png`、`native-status-tooltip.png`、`native-status-blocked-read.png`、`native-status-error.png`、`native-status-done.png`、`native-status-paused.png`（均在 artifacts）。确认暗色原生窗口下的展开 / 收起、真实进度短线、blocked 无伪满格且查看后仍有图标、失败 / 完成图标、静态未知暂停轨道，以及可读两行 tooltip。
+- `./scripts/test-native osc`：1/1，日志 `artifacts/status-redesign-native-osc.log`，报告 `artifacts/osc-native-acceptance.xml`。实时 cwd 与新 prompt 清理活动标签复验通过。OSC 22 实际 NSCursor 形状仍需人工检查，截图不能证明。
+- 原生宿主构建仍有一条既有链接警告；未把无详细 warning 文本的摘要推断为新问题。
+
+验证期间的失败及处理：
+
+- 首次 Cargo 构建无法解析 `release.files.ghostty.org`。后续命令使用 `GHOSTTY_VT_ARCHIVE=/tmp/termlevel-ghostty-vt-1.0.1.xcframework.zip CARGO_NET_OFFLINE=true`，build.rs 校验固定 SHA256，不跳过库校验。
+- 沙箱内已有 `clipboard::tests::osc52_bytes_reach_the_pasteboard_as_unicode` 因 `pbcopy rejected the sample` 失败：单独 Rust 91/92，第一次全量 189/190。沙箱外访问系统 pasteboard 后该用例通过；保留 `artifacts/status-redesign-rust.log` 记录，不修改其断言。
+- 一轮验证时在运行中改变 FocusRequest 的事件签名，已启动的旧 runner 与新 JS 不匹配，9 项出现 `Cannot convert undefined or null to object`；停止修改生产源码并重建后消失。日志 `artifacts/status-redesign-headless-before-focus-rebuild.log`。
+- 新重挂 fixture 结束时仅 dispose，遗留 PTY 使后续平铺测试出现重复 Terminal 1；已增加显式 close，最终状态与平铺连续运行通过。失败日志 `artifacts/status-redesign-headless-before-fixture-cleanup.log`。
+- 原生状态首轮错误查询了仅 headless 可观察的空 Text 诊断节点，现改查实际产品标签并截图；已读语义由 Rust / headless 直接检查，原生截图确认图标保留。原生 OSC 首轮仍查询旧版 working 文案，已同步新可读标签。失败日志分别为 `artifacts/status-redesign-native-fixture-diagnostic.log` 和 `artifacts/status-redesign-native-osc-old-label.log`，没有靠提高超时修复。
+
+未完成的人工验收：真实 cargo / terraform / agent 的持续报告；系统减少动态效果开关、VoiceOver 实听；明暗主题 / 多字号 / 长消息和分组固定标签的完整组合；窗口激活和分屏切换的长期手感；高频进度与多会话长时间负载。本次已做原生截图审查，但未宣称上述日用项目通过。

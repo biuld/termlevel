@@ -69,6 +69,9 @@ pub struct SearchStatus {
 }
 
 /// Low-frequency updates only; PTY output and keystrokes stay in Rust.
+// The status payload is owned metadata, not terminal output. Boxing it would
+// change the generated event argument shape, so the variant keeps it inline.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Event)]
 pub enum SessionTerminalEvent {
     /// Initial status and changes to title, exit status or errors.
@@ -79,8 +82,9 @@ pub enum SessionTerminalEvent {
     SearchChange(SearchStatus),
     /// The program rang the terminal bell.
     Bell,
-    /// A displayed terminal was clicked or its native input acquired focus.
-    FocusRequest,
+    /// Pointer/drop actions may acknowledge; incidental native focus may not.
+    #[args(acknowledge)]
+    FocusRequest(bool),
 }
 
 /// Native view methods. Closing is an explicit Sessions.close operation.

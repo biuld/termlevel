@@ -185,7 +185,7 @@ export function WorkspaceApp(props: {
   ]);
 
   const searchResults = () => store.tabs().filter((tab) =>
-    `${tab.title} ${tab.cwd} ${store.groupTitle(tab.groupId)}`.toLowerCase().includes(query().toLowerCase()));
+    `${tab.title} ${tab.liveCwd ?? tab.cwd} ${store.groupTitle(tab.groupId)}`.toLowerCase().includes(query().toLowerCase()));
 
   return <TerminalEngine class="relative flex-1 bg-chrome font-sans text-foreground"
     onLayout={({ bounds }) => { if (windowHeight() !== bounds.size.height) windowHeight.set(bounds.size.height); }}>
@@ -298,10 +298,14 @@ export function WorkspaceApp(props: {
     </AppDialog>
 
     <GroupPathDialog open={choosingPath()} error={pathError()} dismiss={() => choosingPath.set(false)}
-      paths={[...new Set([store.activeTab()?.cwd, ...store.tabs().map((tab) => tab.cwd), Runtime.home()].filter((cwd): cwd is string => !!cwd))]}
+      paths={[...new Set([
+        store.activeTab()?.liveCwd ?? store.activeTab()?.cwd,
+        ...store.tabs().map((tab) => tab.liveCwd ?? tab.cwd),
+        Runtime.home(),
+      ].filter((cwd): cwd is string => !!cwd))]}
       onChoose={(cwd) => { choosingPath.set(false); store.addGroup(cwd); }}
       onBrowse={() => {
-        const start = store.activeTab()?.cwd ?? "";
+        const start = store.activeTab()?.liveCwd ?? store.activeTab()?.cwd ?? "";
         void Runtime.pickFolder(start).then((picked) => {
           if (!choosingPath()) return;
           if (picked) { choosingPath.set(false); store.addGroup(picked); }

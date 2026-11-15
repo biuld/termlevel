@@ -60,6 +60,163 @@ fn finished(session: &Session) -> bool {
         .all(thread::JoinHandle::is_finished)
 }
 
+fn status_record(state: ProgramStatusState, app: &str, updated: u64) -> StatusRecord {
+    StatusRecord {
+        state,
+        kind: ProgramStatusKind::None,
+        percent: None,
+        app: app.into(),
+        title: String::new(),
+        message: String::new(),
+        updated,
+        version: updated,
+        acknowledged: false,
+    }
+}
+
+#[test]
+fn program_status_aggregate_prefers_actionable_records_and_inherits_app() {
+    let mut records = BTreeMap::new();
+    records.insert(
+        String::new(),
+        status_record(ProgramStatusState::Working, "deploy", 1),
+    );
+    records.insert(
+        "us-east".into(),
+        status_record(ProgramStatusState::Blocked, "", 2),
+    );
+    let activity = aggregate(&records).unwrap();
+    assert_eq!(activity.state, "blocked");
+    assert_eq!(activity.app.as_deref(), Some("deploy"));
+}
+
+#[test]
+fn clearing_one_status_record_removes_children_and_keeps_siblings() {
+    let mut records = BTreeMap::new();
+    records.insert(
+        "build".into(),
+        status_record(ProgramStatusState::Working, "", 1),
+    );
+    records.insert(
+        "build/test".into(),
+        status_record(ProgramStatusState::Working, "", 2),
+    );
+    records.insert(
+        "deploy".into(),
+        status_record(ProgramStatusState::Done, "", 3),
+    );
+    clear_status_subtree(&mut records, "build");
+    assert!(!records.contains_key("build"));
+    assert!(!records.contains_key("build/test"));
+    assert!(records.contains_key("deploy"));
+}
+
+#[test]
+fn real_shell_progress_and_program_status_update_info_and_acknowledge() {
+    let mut manager = SessionManager::default();
+    let session = shell(&mut manager);
+    session.input(
+        b"printf '\\033]9;4;1;42\\007\\033]7501;state=working:app=cargo:progress=40\\007'\n",
+    );
+    wait_for(|| {
+        let info = session.info();
+        info.progress
+            .as_ref()
+            .is_some_and(|progress| progress.percent == Some(42))
+            && info
+                .activity
+                .as_ref()
+                .is_some_and(|activity| activity.state == "working")
+    });
+    let activity = session.info().activity.unwrap();
+    assert_eq!(activity.app.as_deref(), Some("cargo"));
+    assert_eq!(activity.percent, Some(40));
+
+    session.input(
+        b"printf '\\033]7501;state=blocked:kind=permission:app=terraform:msg=QXBwbHk/\\007'\n",
+    );
+    wait_for(|| {
+        session
+            .info()
+            .activity
+            .as_ref()
+            .is_some_and(|activity| activity.state == "blocked")
+    });
+    session.acknowledge(session.info().status_revision);
+    let activity = session.info().activity.unwrap();
+    assert_eq!(activity.state, "blocked");
+    assert!(!activity.unread);
+    session.input(b"printf '\\033]7501;state=clear\\007'\n");
+    wait_for(|| session.info().activity.is_none());
+
+    session.input(b"printf '\\033]9;4;1;55\\007\\033]7501;state=working:id=build\\007'\n");
+    wait_for(|| {
+        session
+            .info()
+            .activity
+            .as_ref()
+            .is_some_and(|activity| activity.state == "working")
+    });
+    session.input(b"exit 7\n");
+    wait_for(|| session.info().exit_code == Some(7));
+    let info = session.info();
+    assert!(info.progress.is_none());
+    assert!(
+        info.activity.is_none(),
+        "working records are removed on exit"
+    );
+    manager.shutdown();
+    wait_for(|| finished(&session));
+}
+
+#[test]
+fn pwd_uris_and_bare_paths_are_decoded_and_validated() {
+    assert_eq!(
+        decode_pwd("file://localhost/tmp/a%20b"),
+        Some("/tmp/a b".into())
+    );
+    assert_eq!(decode_pwd("file:///tmp/x"), Some("/tmp/x".into()));
+    assert_eq!(decode_pwd("/tmp/x"), Some("/tmp/x".into()));
+    assert_eq!(decode_pwd("file://server/tmp"), None);
+    assert_eq!(decode_pwd("http://example.com/x"), None);
+    assert_eq!(decode_pwd("relative/path"), None);
+    assert_eq!(decode_pwd(""), None);
+    assert_eq!(decode_pwd("/tmp/\n"), None);
+}
+
+#[test]
+fn real_shell_pwd_prompt_and_mouse_shape_reach_info() {
+    let mut manager = SessionManager::default();
+    let session = shell(&mut manager);
+    session.input(b"printf '\\033]7;file://localhost/tmp\\007'\n");
+    wait_for(|| session.info().current_cwd.as_deref() == Some("/tmp"));
+    session.input(b"printf '\\033]22;pointer\\007'\n");
+    wait_for(|| session.info().mouse_shape == "pointer");
+    session.input(b"printf '\\033]7501;state=working:id=build\\007'\n");
+    wait_for(|| {
+        session
+            .info()
+            .activity
+            .as_ref()
+            .is_some_and(|activity| activity.state == "working")
+    });
+    session.input(b"printf '\\033]133;A\\007'\n");
+    wait_for(|| session.info().at_prompt);
+    assert!(session.info().activity.is_none());
+    session.input(b"printf '\\033]133;C\\007'\n");
+    wait_for(|| !session.info().at_prompt);
+    session.input(b"printf '\\033]7;\\007'\n");
+    wait_for(|| session.info().current_cwd.is_none());
+    session.input(b"exit 7\n");
+    wait_for(|| session.info().exit_code == Some(7));
+    let info = session.info();
+    assert!(info.current_cwd.is_none());
+    assert!(!info.at_prompt);
+    assert_eq!(info.mouse_shape, "text");
+    manager.shutdown();
+    wait_for(|| finished(&session));
+}
+
 #[test]
 fn real_shell_utf8_resize_title_and_exit_status() {
     let mut manager = SessionManager::default();
@@ -443,4 +600,213 @@ fn notifications_survive_session_close_without_a_mounted_view() {
                 |entry| entry.session_id.as_deref() == Some(&id) && entry.body == "Background done"
             )
     );
+}
+
+fn report(id: &str, state: ProgramStatusState) -> ProgramStatusReport {
+    ProgramStatusReport {
+        id: id.into(),
+        state,
+        kind: ProgramStatusKind::Permission,
+        percent: None,
+        app: "agent".into(),
+        title: String::new(),
+        message: "Apply?".into(),
+    }
+}
+
+#[test]
+fn acknowledgement_preserves_facts_and_cannot_consume_later_results() {
+    let mut manager = SessionManager::default();
+    let session = shell(&mut manager);
+    assert_eq!(session.info().shell_phase, "unknown");
+    session.apply_program_status(report("task", ProgramStatusState::Blocked));
+    let seen = session.info().status_revision;
+    session.acknowledge(seen);
+    assert_eq!(session.info().status.state, "blocked");
+    assert!(!session.info().activity.unwrap().unread);
+    session.apply_program_status(report("task", ProgramStatusState::Blocked));
+    assert!(
+        !session.info().activity.unwrap().unread,
+        "same state stays read"
+    );
+    session.apply_program_status(report("task", ProgramStatusState::Working));
+    session.apply_program_status(report("task", ProgramStatusState::Blocked));
+    session.acknowledge(seen);
+    assert!(
+        session.info().activity.unwrap().unread,
+        "old snapshot cannot consume new generation"
+    );
+    session.apply_program_status(report("task", ProgramStatusState::Error));
+    let error_seen = session.info().status_revision;
+    session.apply_program_status(report("next", ProgramStatusState::Done));
+    session.acknowledge(error_seen);
+    assert_eq!(
+        session.info().status.state,
+        "done",
+        "later result is still pending"
+    );
+    session.acknowledge(session.info().status_revision);
+    assert!(session.info().activity.is_none());
+    assert_eq!(
+        session.status.lock().unwrap().records.len(),
+        2,
+        "ack does not delete reports"
+    );
+    session.apply_program_status(report("task", ProgramStatusState::Error));
+    assert!(
+        session.info().activity.is_none(),
+        "identical repeated error stays acknowledged"
+    );
+    session.apply_program_status(report("task", ProgramStatusState::Working));
+    assert_eq!(session.info().status.state, "working");
+    // Root clear and RIS must not reuse a version accepted before the reset.
+    session.apply_program_status(report("", ProgramStatusState::Clear));
+    session.handle_events(vec![BackendEvent::Reset]);
+    session.apply_program_status(report("task", ProgramStatusState::Error));
+    session.acknowledge(error_seen);
+    assert_eq!(session.info().status.state, "error");
+    manager.shutdown();
+    wait_for(|| finished(&session));
+}
+
+#[test]
+fn record_transitions_notify_even_when_aggregate_state_is_unchanged() {
+    let mut manager = SessionManager::default();
+    let session = shell(&mut manager);
+    let id = session.info().id;
+    let notices = || {
+        crate::notifications::Notifications::list()
+            .into_iter()
+            .filter(|n| n.session_id.as_deref() == Some(&id) && n.program.is_some())
+            .collect::<Vec<_>>()
+    };
+    session.apply_program_status(report("a", ProgramStatusState::Blocked));
+    session.apply_program_status(report("b", ProgramStatusState::Blocked));
+    assert_eq!(
+        notices().len(),
+        2,
+        "two tasks with identical text do not coalesce"
+    );
+    assert_eq!(session.info().status.pending_count, 1);
+    assert_eq!(session.info().status.label, "Needs approval");
+    session.acknowledge(session.info().status_revision);
+    session.apply_program_status(report("b", ProgramStatusState::Blocked));
+    assert_eq!(notices().len(), 2, "ack + repeated report never renotifies");
+    session.apply_program_status(report("a", ProgramStatusState::Working));
+    session.apply_program_status(report("a", ProgramStatusState::Blocked));
+    assert_eq!(notices().len(), 3, "new blocked generation notifies again");
+    session.apply_program_status(report("error", ProgramStatusState::Error));
+    assert_eq!(
+        notices().len(),
+        4,
+        "error cannot be hidden by blocked aggregation"
+    );
+    assert!(notices().iter().any(|n| n.title.starts_with("Task failed")));
+    session.apply_program_status(report("b", ProgramStatusState::Clear));
+    assert_eq!(
+        notices().len(),
+        4,
+        "revealing an old state is not a new transition"
+    );
+    manager.shutdown();
+    wait_for(|| finished(&session));
+}
+
+#[test]
+fn resolved_progress_and_lifecycle_do_not_invent_completion() {
+    let mut manager = SessionManager::default();
+    let session = shell(&mut manager);
+    session.apply_program_status(ProgramStatusReport {
+        percent: Some(40),
+        ..report("", ProgramStatusState::Working)
+    });
+    assert_eq!(session.info().status.progress.unwrap().percent, Some(40));
+    session.apply_progress(ProgressReport {
+        state: ProgressState::Set,
+        percent: Some(42),
+    });
+    let resolved = session.info().status.progress.unwrap();
+    assert_eq!(resolved.source, "osc9");
+    assert_eq!(resolved.label, "Terminal progress 42%");
+    session.apply_program_status(report("", ProgramStatusState::Blocked));
+    assert_eq!(session.info().status.progress.unwrap().percent, Some(42));
+    session.apply_progress(ProgressReport {
+        state: ProgressState::Remove,
+        percent: None,
+    });
+    assert!(
+        session.info().status.progress.is_none(),
+        "blocked never invents a line"
+    );
+    for state in [ProgressState::Pause, ProgressState::Error] {
+        session.apply_progress(ProgressReport {
+            state,
+            percent: None,
+        });
+        let resolved = session.info().status.progress.unwrap();
+        assert!(resolved.percent.is_none());
+        assert!(!resolved.animate && !resolved.indeterminate);
+    }
+    session.apply_progress(ProgressReport {
+        state: ProgressState::Indeterminate,
+        percent: Some(91),
+    });
+    let resolved = session.info().status.progress.unwrap();
+    assert!(resolved.indeterminate && !resolved.animate && resolved.percent.is_none());
+    session.apply_program_status(report("", ProgramStatusState::Working));
+    assert!(session.info().status.progress.unwrap().animate);
+    session.apply_progress(ProgressReport {
+        state: ProgressState::Set,
+        percent: Some(100),
+    });
+    assert_eq!(session.info().status.state, "working");
+    session.input(b"printf '\\033]133;A\\007'\n");
+    wait_for(|| session.info().shell_phase == "prompt");
+    assert!(session.info().status.progress.is_none());
+    assert!(session.info().activity.is_none());
+    session.apply_program_status(report("result", ProgramStatusState::Done));
+    session.input(b"exit 9\n");
+    wait_for(|| session.info().exit_code == Some(9));
+    assert_eq!(session.info().status.label, "Exited (code 9)");
+    session.acknowledge(session.info().status_revision);
+    assert_eq!(session.info().status.state, "exited");
+    manager.shutdown();
+    wait_for(|| finished(&session));
+}
+
+#[test]
+fn record_replacement_and_eviction_keep_only_bounded_current_facts() {
+    let mut manager = SessionManager::default();
+    let session = shell(&mut manager);
+    for index in 0..STATUS_RECORD_LIMIT {
+        session.apply_program_status(report(
+            &format!("task/{index}"),
+            ProgramStatusState::Working,
+        ));
+    }
+    session.apply_program_status(ProgramStatusReport {
+        app: String::new(),
+        title: String::new(),
+        message: String::new(),
+        ..report("task/0", ProgramStatusState::Working)
+    });
+    let activity = session.info().activity.unwrap();
+    assert!(
+        activity.app.is_none() && activity.message.is_none(),
+        "replacement drops omitted display fields"
+    );
+    session.apply_program_status(report("new", ProgramStatusState::Working));
+    {
+        let status = session.status.lock().unwrap();
+        assert_eq!(status.records.len(), STATUS_RECORD_LIMIT);
+        assert!(status.records.contains_key("task/0"));
+        assert!(
+            !status.records.contains_key("task/1"),
+            "evict least recently updated record"
+        );
+    }
+    session.apply_program_status(report("task", ProgramStatusState::Clear));
+    assert_eq!(session.status.lock().unwrap().records.len(), 1);
+    manager.shutdown();
+    wait_for(|| finished(&session));
 }

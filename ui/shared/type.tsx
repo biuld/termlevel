@@ -48,12 +48,14 @@ export function Type(props: {
   family?: "ui" | "mono";
   tone?: "foreground" | "muted-foreground" | "subtle-foreground" | "popover-foreground";
   testID?: string;
+  label?: string;
   tooltip?: JSX.Element;
   children?: JSX.Element;
   lines?: number;
 }) {
   return <Text
     testID={props.testID}
+    accessibilityLabel={props.label}
     tooltip={props.tooltip}
     class={`${weight[props.role]} ${props.class ?? ""}`}
     style={{

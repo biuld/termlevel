@@ -2,7 +2,7 @@
 
 ## 文档入口
 
-README 负责安装、运行和产品能力；本指南负责目录与开发约定；architecture 负责当前所有权与数据通路；roadmap 负责尚待完成的工作；design 负责视觉规范。terminal-grid、terminal-surface、terminal-tiling 记录各自设计细节。
+README 负责安装、运行和产品能力；本指南负责目录与开发约定；architecture 负责当前所有权与数据通路；roadmap 负责尚待完成的工作；design 负责视觉规范。terminal-grid、terminal-surface、terminal-tiling 记录终端展示设计；osc-support 统一记录 OSC 能力、终端状态的业务语义与 UI / UX。
 
 validation 按日期保留验证证据，不作为当前模块路径索引。带 handoff 的文件是历史交接快照，不覆盖当前架构。移动文件时更新当前文档与代码引用；历史命令、日志路径和提交信息保留原样。
 
@@ -68,6 +68,8 @@ git diff --check
 ./scripts/test-native-tiling
 ./scripts/test-native-protocols
 ./scripts/test-native-ghostty
+./scripts/test-native status
+./scripts/test-native osc
 ```
 
 这些入口保持兼容，也可用 `./scripts/test-native <类别>`。完整 headless 发现不得与 scripts/test-native 并行：后者在仓库根目录生成临时 *.test.tsx，会被前者误发现。原生测试需要前台窗口，不能由类型检查或 headless 成功替代。系统输入法候选窗、拖动手感、选区和长期负载的人工验收另记。

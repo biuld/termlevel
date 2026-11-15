@@ -73,7 +73,8 @@ export function TilingCanvas(props: {
     let lastFrame: Rect = { x: 0, y: 0, width: 640, height: 400 };
     const frame = () => { const next = store.frameForSession(id); if (next) lastFrame = next; return lastFrame; };
     const showPath = () => store.paneList().length === 1 && frame().width >= 520;
-    const title = () => showPath() ? tab()?.cwd : tab()?.title;
+    const cwd = () => tab()?.liveCwd ?? tab()?.cwd;
+    const title = () => showPath() ? cwd() : tab()?.title;
     const endDrag = () => { store.finishPaneDrag(); };
     return <View testID={`pane-${id}`} class="absolute overflow-hidden rounded-(--radius-panel) bg-terminal-background"
       accessibilityElementsHidden={!shown()}
@@ -98,8 +99,9 @@ export function TilingCanvas(props: {
           </If>
           <Icon name="terminal" size={14} color={token(focused() ? "icon-active" : "icon")} />
           <Type testID={showPath() && focused() ? "session-path" : `pane-name-${id}`}
+            label={showPath() ? `Current directory ${cwd()}` : undefined}
             role="body" family={showPath() ? "mono" : "ui"} tone="muted-foreground" lines={1} class="min-w-0 flex-1"
-            tooltip={<Hint>{`${tab()?.title} · ${store.groupTitle(tab()?.groupId ?? null)} · ${props.preview ? "Demo directory" : "Initial directory"}: ${tab()?.cwd}`}</Hint>}>{title()}</Type>
+            tooltip={<Hint>{`${tab()?.title} · ${store.groupTitle(tab()?.groupId ?? null)} · ${props.preview ? "Demo directory" : "Current directory"}: ${cwd()}`}</Hint>}>{title()}</Type>
           <If when={tab()?.bell}><View testID={`pane-bell-${id}`} class="h-1.5 w-1.5 rounded-full bg-primary" /></If>
         </View>
         <View class="flex-row items-center">

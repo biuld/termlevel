@@ -1,4 +1,4 @@
-import { effect, signal, token, View, type Signal } from "nsh";
+import { effect, signal, token, View, type Signal, type ViewStyle } from "nsh";
 import { SessionTerminal, type SessionTerminalRef } from "termlevel/native";
 import { monoFont } from "../shared/fonts";
 import type { Workspace } from "../workspace/workspace";
@@ -16,6 +16,7 @@ export function TerminalSurface(props: {
   const store = props.workspace;
   const id = props.id;
   const tab = () => store.tab(id);
+  const mouseCursor = () => (tab()?.mouseShape ?? "text") as ViewStyle["cursor"];
   let session: SessionTerminalRef | undefined;
   const matchCount = signal(0);
   const matchIndex = signal(0);
@@ -60,8 +61,9 @@ export function TerminalSurface(props: {
     <SessionTerminal ref={(ref) => { session = ref; }} testID={`terminal-${id}`} sessionId={id} active={store.activeId() === id && !store.inputBlocked() && !props.finding()}
       visible={!!store.frameForSession(id)}
       inputBlocked={store.inputBlocked() || props.finding()}
-      onFocusRequest={() => { if (!store.inputBlocked() && store.frameForSession(id)) store.select(id); }}
+      onFocusRequest={({ acknowledge }) => { if (!store.inputBlocked() && store.frameForSession(id)) store.select(id, acknowledge); }}
       accessibilityLabel={`Terminal ${tab()?.title ?? id}`}
+      style={{ cursor: mouseCursor() }}
       fontFamily={monoFont()} fontSize={store.fontSize()} scrollbarWidth={token("width-terminal-scrollbar")} scrollbarInset={token("inset-terminal-scrollbar")}
       lineHeight={store.fontSize() + token("line-gap-terminal")}
       cursorClass="bg-terminal-cursor/55"
@@ -81,6 +83,9 @@ export function TerminalSurface(props: {
         }
         store.patchTab(id, {
           state: info.state, exitCode: info.exitCode, error: info.error, inputWarning: info.inputWarning,
+          progress: info.progress ?? undefined, activity: info.activity ?? undefined,
+          status: info.status, statusRevision: info.statusRevision, shellPhase: info.shellPhase,
+          liveCwd: info.currentCwd ?? undefined, mouseShape: info.mouseShape, atPrompt: info.atPrompt,
           ...(!tab()?.customTitle && info.title ? { title: info.title } : {}),
         });
       }} />

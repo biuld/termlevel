@@ -1,4 +1,5 @@
 use super::*;
+use termlevel_ghostty_vt::{MouseShape, ProgramStatusState, ProgressState, SemanticPromptKind};
 
 fn emulator(cols: u16, rows: u16, history: usize) -> GhosttyEmulator {
     GhosttyEmulator::new(TerminalSize::new(cols, rows), history)
@@ -158,6 +159,56 @@ fn modes_title_bell_and_query_replies_are_forwarded_once() {
     term.feed(b"\x1b[?1l\x1b[?2004l\x1b[?25h");
     assert!(!term.modes().application_cursor && !term.modes().bracketed_paste);
     assert_eq!(term.cursor().unwrap().col, 2);
+}
+
+#[test]
+fn progress_and_program_status_map_to_backend_events_not_preview_events() {
+    let mut term = emulator(20, 3, 0);
+    term.feed(b"\x1b]9;4;1;42\x07\x1b]7501;state=working:app=cargo:progress=40\x07");
+    let events = term.backend_events();
+    assert!(matches!(
+        events.as_slice(),
+        [
+            BackendEvent::Progress(ProgressReport {
+                state: ProgressState::Set,
+                percent: Some(42),
+            }),
+            BackendEvent::ProgramStatus(ProgramStatusReport {
+                state: ProgramStatusState::Working,
+                percent: Some(40),
+                app,
+                ..
+            }),
+        ] if app == "cargo"
+    ));
+    assert!(term.take_events().is_empty());
+}
+
+#[test]
+fn pwd_prompt_and_mouse_shape_are_mapped_to_backend_events() {
+    let mut term = emulator(40, 6, 0);
+    term.feed(b"\x1b]7;file://localhost/tmp\x07\x1b]133;A\x07\x1b]22;pointer\x07");
+    let events = term.backend_events();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        BackendEvent::WorkingDirectoryChanged(value) if value == "file://localhost/tmp"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        BackendEvent::SemanticPrompt(report)
+            if report.kind == SemanticPromptKind::PromptStart && report.cursor_at_prompt
+    )));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, BackendEvent::MouseShape(MouseShape::Pointer)))
+    );
+    term.feed(b"\x1b]22;text\x07");
+    assert!(
+        term.backend_events()
+            .iter()
+            .any(|event| matches!(event, BackendEvent::MouseShape(MouseShape::Text)))
+    );
 }
 
 #[test]

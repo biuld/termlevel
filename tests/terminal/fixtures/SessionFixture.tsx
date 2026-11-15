@@ -18,6 +18,10 @@ function SessionFixture() {
     </If>
     <Text testID="live-state">{info().state}</Text>
     <Text testID="live-exit">{info().exitCode ?? "no exit"}</Text>
+    <Text testID="live-cwd" accessibilityLabel={`cwd:${info().currentCwd ?? ""}`}>{info().currentCwd ?? "no cwd"}</Text>
+    <Text testID="live-prompt" accessibilityLabel={`prompt:${info().atPrompt ? "yes" : "no"}`}>{info().atPrompt ? "at prompt" : "busy"}</Text>
+    <Text testID="live-shape" accessibilityLabel={`shape:${info().mouseShape ?? "text"}`}>{info().mouseShape ?? "text"}</Text>
+    <Text testID="live-activity" accessibilityLabel={`activity:${info().activity?.state ?? "none"}`}>{info().activity?.state ?? "none"}</Text>
     <Button testID="detach-live" onPress={() => attached.set(!attached())}><Text>Toggle attachment</Text></Button>
     <Button testID="close-live" onPress={() => {
       Sessions.close(record.id);

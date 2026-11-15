@@ -15,6 +15,10 @@ use std::{
 use nsh_base::{TerminalEmulator, TerminalSize};
 use nsh_core::prelude::*;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use termlevel_ghostty_vt::{
+    ProgramStatusKind, ProgramStatusReport, ProgramStatusState, ProgressReport, ProgressState,
+    SemanticPromptKind, SemanticPromptReport,
+};
 
 fn env_nonempty(key: &str) -> Option<String> {
     std::env::var(key)
@@ -59,13 +63,67 @@ use crate::terminal::{BackendEvent, GhosttyEmulator, Rgb};
 mod input_queue;
 use input_queue::InputQueue;
 
+/// Latest OSC 9;4 snapshot for one terminal.
+#[derive(Debug, Clone, PartialEq, JsObject)]
+pub struct ProgressInfo {
+    /// set, error, indeterminate, or pause. Remove is represented by absence.
+    pub state: String,
+    /// 0 through 100 when the program reported one.
+    pub percent: Option<u32>,
+}
+
+/// Aggregate OSC 7501 state for one terminal. The full record map stays in Rust.
+#[derive(Debug, Clone, PartialEq, JsObject)]
+pub struct ActivityInfo {
+    /// idle, working, done, blocked, or error.
+    pub state: String,
+    pub id: String,
+    pub version: u64,
+    pub unread: bool,
+    pub pending_count: u32,
+    /// permission, question, or auth for a blocked record.
+    pub kind: Option<String>,
+    /// Stable program key, such as cargo or terraform.
+    pub app: Option<String>,
+    /// Short human label for the record.
+    pub title: Option<String>,
+    /// One line saying what the program is doing or needs.
+    pub message: Option<String>,
+    /// 0 through 100 when the selected record reported one.
+    pub percent: Option<u32>,
+}
+
+/// One resolved presentation, shared by the sidebar, tooltip and accessibility.
+#[derive(Debug, Clone, Default, PartialEq, JsObject)]
+pub struct TerminalStatusInfo {
+    pub state: String,
+    pub label: String,
+    pub detail: Option<String>,
+    pub app: Option<String>,
+    pub pending_count: u32,
+    pub progress: Option<ResolvedProgress>,
+}
+
+#[derive(Debug, Clone, PartialEq, JsObject)]
+pub struct ResolvedProgress {
+    /// osc9 or osc7501; the two reports need not describe the same task.
+    pub source: String,
+    pub state: String,
+    pub percent: Option<u32>,
+    pub indeterminate: bool,
+    pub animate: bool,
+    pub label: String,
+}
+
 /// Low-frequency session metadata. No terminal output crosses this interface.
 #[derive(Debug, Clone, PartialEq, JsObject)]
 pub struct SessionInfo {
     /// Stable application identity, independent of PID or view identity.
     pub id: String,
-    /// Initial working directory; shell integration may later track changes.
+    /// Launch directory. OSC 7 / ConEmu / iTerm2 updates go to `current_cwd`.
     pub cwd: String,
+    /// Latest decoded working directory reported by the shell.
+    pub current_cwd: Option<String>,
     /// Most recently reported terminal title.
     pub title: String,
     /// running, exited, error, or closed.
@@ -78,6 +136,19 @@ pub struct SessionInfo {
     pub input_warning: Option<String>,
     /// Diagnostic PID only. Never used as the session identity.
     pub pid: Option<u32>,
+    /// Latest OSC 9;4 progress, or None after remove/reset/exit.
+    pub progress: Option<ProgressInfo>,
+    /// Aggregate OSC 7501 state, or None when the program has no records.
+    pub activity: Option<ActivityInfo>,
+    /// OSC 22 pointer shape requested by the running program.
+    pub mouse_shape: String,
+    /// Whether OSC 133 says the cursor is on a shell prompt.
+    pub at_prompt: bool,
+    /// unknown, prompt, input, output, or commandEnd. Never inferred from silence.
+    pub shell_phase: String,
+    /// Monotonic report sequence, never reset within a session (avoids ABA).
+    pub status_revision: u64,
+    pub status: TerminalStatusInfo,
 }
 
 /// Outcome of the one ordered mouse input path.
@@ -94,6 +165,279 @@ struct Control {
     child: Box<dyn Child + Send + Sync>,
 }
 
+const STATUS_RECORD_LIMIT: usize = 256;
+
+#[derive(Clone)]
+struct StatusRecord {
+    state: ProgramStatusState,
+    kind: ProgramStatusKind,
+    percent: Option<u8>,
+    app: String,
+    title: String,
+    message: String,
+    updated: u64,
+    version: u64,
+    acknowledged: bool,
+}
+
+#[derive(Default)]
+struct StatusState {
+    records: BTreeMap<String, StatusRecord>,
+    sequence: u64,
+}
+
+/// Program-supplied text is single-line display text, not markup. Strip
+/// control and invisible formatting characters before it leaves Rust.
+fn clean_status_text(text: &str, limit: usize) -> String {
+    text.chars()
+        .filter(|ch| !ch.is_control())
+        .filter(|ch| {
+            !matches!(
+                ch,
+                '\u{200b}'..='\u{200f}'
+                    | '\u{202a}'..='\u{202e}'
+                    | '\u{2060}'..='\u{2064}'
+                    | '\u{2066}'..='\u{2069}'
+                    | '\u{feff}'
+            )
+        })
+        .take(limit)
+        .collect()
+}
+
+/// Decode OSC 7 URIs and ConEmu/iTerm2 bare paths into an absolute local path.
+fn decode_pwd(raw: &str) -> Option<String> {
+    if raw.is_empty() || raw.len() > 4096 {
+        return None;
+    }
+    let path = if raw.starts_with("file:") {
+        let url = url::Url::parse(raw).ok()?;
+        if url.scheme() != "file" {
+            return None;
+        }
+        let host = url.host_str().unwrap_or("");
+        if !host.is_empty() && host != "localhost" {
+            return None;
+        }
+        if url.query().is_some() || url.fragment().is_some() {
+            return None;
+        }
+        url.to_file_path().ok()?.to_str()?.to_owned()
+    } else {
+        if raw.contains("://") {
+            return None;
+        }
+        raw.to_owned()
+    };
+    if !path.starts_with('/') || path.chars().any(char::is_control) {
+        return None;
+    }
+    Some(path)
+}
+
+fn status_rank(state: ProgramStatusState) -> u8 {
+    match state {
+        ProgramStatusState::Blocked => 4,
+        ProgramStatusState::Error => 3,
+        ProgramStatusState::Working => 2,
+        ProgramStatusState::Done => 1,
+        ProgramStatusState::Idle | ProgramStatusState::Clear => 0,
+    }
+}
+
+fn status_name(state: ProgramStatusState) -> &'static str {
+    match state {
+        ProgramStatusState::Idle => "idle",
+        ProgramStatusState::Working => "working",
+        ProgramStatusState::Done => "done",
+        ProgramStatusState::Blocked => "blocked",
+        ProgramStatusState::Error => "error",
+        ProgramStatusState::Clear => "clear",
+    }
+}
+
+fn status_kind_name(kind: ProgramStatusKind) -> Option<&'static str> {
+    match kind {
+        ProgramStatusKind::None => None,
+        ProgramStatusKind::Permission => Some("permission"),
+        ProgramStatusKind::Question => Some("question"),
+        ProgramStatusKind::Auth => Some("auth"),
+    }
+}
+
+fn progress_name(state: ProgressState) -> &'static str {
+    match state {
+        ProgressState::Remove => "remove",
+        ProgressState::Set => "set",
+        ProgressState::Error => "error",
+        ProgressState::Indeterminate => "indeterminate",
+        ProgressState::Pause => "pause",
+    }
+}
+
+fn effective_app(records: &BTreeMap<String, StatusRecord>, id: &str) -> String {
+    if let Some(record) = records.get(id)
+        && !record.app.is_empty()
+    {
+        return record.app.clone();
+    }
+    let mut current = id;
+    while let Some(index) = current.rfind('/') {
+        current = &current[..index];
+        if let Some(parent) = records.get(current)
+            && !parent.app.is_empty()
+        {
+            return parent.app.clone();
+        }
+    }
+    records
+        .get("")
+        .map(|record| record.app.clone())
+        .unwrap_or_default()
+}
+
+fn result_state(state: ProgramStatusState) -> bool {
+    matches!(state, ProgramStatusState::Done | ProgramStatusState::Error)
+}
+
+fn record_activity(records: &BTreeMap<String, StatusRecord>, id: &str) -> Option<ActivityInfo> {
+    let record = records.get(id)?;
+    let app = effective_app(records, id);
+    Some(ActivityInfo {
+        state: status_name(record.state).into(),
+        id: id.into(),
+        version: record.version,
+        unread: !record.acknowledged,
+        pending_count: 0,
+        kind: status_kind_name(record.kind).map(str::to_owned),
+        app: (!app.is_empty()).then_some(app),
+        title: (!record.title.is_empty()).then(|| record.title.clone()),
+        message: (!record.message.is_empty()).then(|| record.message.clone()),
+        percent: record.percent.map(u32::from),
+    })
+}
+
+fn aggregate(records: &BTreeMap<String, StatusRecord>) -> Option<ActivityInfo> {
+    let (id, _) = records
+        .iter()
+        .filter(|(_, record)| !(result_state(record.state) && record.acknowledged))
+        .max_by(|(_, a), (_, b)| {
+            status_rank(a.state)
+                .cmp(&status_rank(b.state))
+                .then(a.updated.cmp(&b.updated))
+        })?;
+    let mut activity = record_activity(records, id)?;
+    activity.pending_count = records
+        .iter()
+        .filter(|(key, record)| {
+            *key != id
+                && (record.state == ProgramStatusState::Blocked
+                    || (record.state == ProgramStatusState::Error && !record.acknowledged))
+        })
+        .count() as u32;
+    Some(activity)
+}
+
+fn blocked_label(kind: Option<&str>) -> &'static str {
+    match kind {
+        Some("permission") => "Needs approval",
+        Some("question") => "Needs answer",
+        Some("auth") => "Sign in required",
+        _ => "Needs input",
+    }
+}
+
+fn resolve_status(info: &SessionInfo) -> TerminalStatusInfo {
+    let activity = info.activity.as_ref();
+    let mut status = TerminalStatusInfo::default();
+    if info.state == "error" || info.error.is_some() {
+        status.state = "hostError".into();
+        status.label = "Terminal error".into();
+        status.detail = info.error.clone();
+    } else if info.state == "exited" || info.state == "closed" {
+        status.state = "exited".into();
+        status.label = info
+            .exit_code
+            .map(|code| format!("Exited (code {code})"))
+            .unwrap_or_else(|| "Closed".into());
+    } else {
+        status.state = activity
+            .map(|a| a.state.clone())
+            .unwrap_or_else(|| "idle".into());
+        status.label = match status.state.as_str() {
+            "blocked" => blocked_label(activity.and_then(|a| a.kind.as_deref())),
+            "error" => "Task failed",
+            "working" => "Working",
+            "done" => "Done",
+            _ => "",
+        }
+        .into();
+        if let Some(activity) = activity {
+            status.detail = activity.message.clone().or_else(|| activity.title.clone());
+            status.app = activity.app.clone();
+            status.pending_count = activity.pending_count;
+        }
+        let progress = info.progress.clone().map(|p| ("osc9", p)).or_else(|| {
+            activity
+                .filter(|a| a.state == "working")
+                .and_then(|a| a.percent)
+                .map(|percent| {
+                    (
+                        "osc7501",
+                        ProgressInfo {
+                            state: "set".into(),
+                            percent: Some(percent),
+                        },
+                    )
+                })
+        });
+        status.progress = progress.map(|(source, progress)| {
+            let indeterminate = progress.state == "indeterminate"
+                || (progress.state == "set" && progress.percent.is_none());
+            let percent = if indeterminate {
+                None
+            } else {
+                progress.percent
+            };
+            let value = percent
+                .map(|v| format!("{v}%"))
+                .unwrap_or_else(|| "unknown".into());
+            let label = match progress.state.as_str() {
+                "pause" => format!("Terminal progress paused · {value}"),
+                "error" => format!("Terminal progress error · {value}"),
+                _ if indeterminate => "Terminal progress unknown".into(),
+                _ => format!("Terminal progress {value}"),
+            };
+            ResolvedProgress {
+                source: source.into(),
+                state: progress.state,
+                percent,
+                indeterminate,
+                animate: indeterminate && !matches!(status.state.as_str(), "blocked" | "error"),
+                label,
+            }
+        });
+    }
+    status
+}
+
+impl SessionInfo {
+    fn resolved(mut self) -> Self {
+        self.status = resolve_status(&self);
+        self
+    }
+}
+
+fn clear_status_subtree(records: &mut BTreeMap<String, StatusRecord>, id: &str) {
+    if id.is_empty() {
+        records.clear();
+        return;
+    }
+    records.remove(id);
+    let prefix = format!("{id}/");
+    records.retain(|key, _| !key.starts_with(&prefix));
+}
+
 pub(crate) struct Session {
     pub(crate) emulator: Mutex<GhosttyEmulator>,
     pub(crate) revision: AtomicU64,
@@ -104,6 +448,7 @@ pub(crate) struct Session {
     input_count: AtomicU64,
     input: InputQueue,
     info: Mutex<SessionInfo>,
+    status: Mutex<StatusState>,
     control: Mutex<Control>,
     closed: AtomicBool,
     workers: Mutex<Vec<thread::JoinHandle<()>>>,
@@ -173,7 +518,16 @@ impl Session {
                 error: None,
                 input_warning: None,
                 pid,
+                progress: None,
+                activity: None,
+                current_cwd: None,
+                mouse_shape: "text".into(),
+                at_prompt: false,
+                shell_phase: "unknown".into(),
+                status_revision: 0,
+                status: TerminalStatusInfo::default(),
             }),
+            status: Mutex::new(StatusState::default()),
             control: Mutex::new(Control {
                 master: Some(pair.master),
                 child,
@@ -256,8 +610,17 @@ impl Session {
                 let mut control = wait_session.control.lock().unwrap();
                 match control.child.try_wait() {
                     Ok(Some(status)) => {
+                        let mut programs = wait_session.status.lock().unwrap();
+                        programs
+                            .records
+                            .retain(|_, record| result_state(record.state));
                         let mut info = wait_session.info.lock().unwrap();
                         info.exit_code = Some(status.exit_code());
+                        info.progress = None;
+                        info.activity = aggregate(&programs.records);
+                        info.mouse_shape = "text".into();
+                        info.at_prompt = false;
+                        info.shell_phase = "unknown".into();
                         if !wait_session.closed.load(Ordering::Acquire) {
                             info.state = "exited".into();
                             if status.exit_code() != 0 {
@@ -344,6 +707,27 @@ impl Session {
             match event {
                 BackendEvent::Title(title) => self.info.lock().unwrap().title = title,
                 BackendEvent::Reply(bytes) => self.input(&bytes),
+                BackendEvent::Progress(report) => self.apply_progress(report),
+                BackendEvent::ProgramStatus(report) => self.apply_program_status(report),
+                BackendEvent::SemanticPrompt(report) => self.apply_semantic_prompt(report),
+                BackendEvent::WorkingDirectoryChanged(raw) => {
+                    self.info.lock().unwrap().current_cwd = decode_pwd(&raw);
+                }
+                BackendEvent::MouseShape(shape) => {
+                    self.info.lock().unwrap().mouse_shape = shape.name().into();
+                }
+                BackendEvent::Reset => {
+                    let mut status = self.status.lock().unwrap();
+                    status.records.clear();
+                    let mut info = self.info.lock().unwrap();
+                    info.title.clear();
+                    info.progress = None;
+                    info.activity = None;
+                    info.current_cwd = None;
+                    info.mouse_shape = "text".into();
+                    info.at_prompt = false;
+                    info.shell_phase = "unknown".into();
+                }
                 BackendEvent::Bell => {
                     self.bells.fetch_add(1, Ordering::Release);
                     let id = self.info.lock().unwrap().id.clone();
@@ -374,10 +758,169 @@ impl Session {
         }
     }
 
+    fn apply_progress(&self, report: ProgressReport) {
+        let next = (report.state != ProgressState::Remove).then(|| ProgressInfo {
+            state: progress_name(report.state).into(),
+            percent: report.percent.map(u32::from),
+        });
+        let mut info = self.info.lock().unwrap();
+        if info.state == "running" {
+            info.progress = next;
+        }
+    }
+
+    fn apply_program_status(&self, report: ProgramStatusReport) {
+        // IDs are opaque protocol keys, not display text. Sanitizing them could
+        // alias two records or turn a nonempty clear into a root clear.
+        let id = report.id;
+        let mut status = self.status.lock().unwrap();
+        let mut info = self.info.lock().unwrap();
+        // The reader may drain final output after the reaper. Preserve final
+        // results, but never resurrect work/progress on a dead session.
+        if info.state != "running"
+            && !(info.state == "exited"
+                && (result_state(report.state) || report.state == ProgramStatusState::Clear))
+        {
+            return;
+        }
+        status.sequence += 1;
+        let sequence = status.sequence;
+        let mut notify = None;
+        if report.state == ProgramStatusState::Clear {
+            clear_status_subtree(&mut status.records, &id);
+        } else {
+            let previous = status.records.get(&id);
+            let entered = previous.is_none_or(|old| old.state != report.state);
+            let version = previous
+                .filter(|_| !entered)
+                .map(|old| old.version)
+                .unwrap_or(sequence);
+            let acknowledged = previous.is_some_and(|old| !entered && old.acknowledged);
+            status.records.insert(
+                id.clone(),
+                StatusRecord {
+                    state: report.state,
+                    kind: report.kind,
+                    percent: report.percent,
+                    app: clean_status_text(&report.app, 128),
+                    title: clean_status_text(&report.title, 640),
+                    message: clean_status_text(&report.message, 4096),
+                    updated: sequence,
+                    version,
+                    acknowledged,
+                },
+            );
+            if entered
+                && matches!(
+                    report.state,
+                    ProgramStatusState::Blocked | ProgramStatusState::Error
+                )
+            {
+                notify = record_activity(&status.records, &id);
+            }
+            while status.records.len() > STATUS_RECORD_LIMIT {
+                let oldest = status
+                    .records
+                    .iter()
+                    .min_by_key(|(_, r)| r.updated)
+                    .map(|(id, _)| id.clone());
+                let Some(oldest) = oldest else { break };
+                status.records.remove(&oldest);
+            }
+        }
+        // Keep status -> info publication under the same lock as acknowledge.
+        info.activity = aggregate(&status.records);
+        info.status_revision = sequence;
+        if let Some(activity) = notify {
+            let headline = if activity.state == "error" {
+                "Task failed"
+            } else {
+                blocked_label(activity.kind.as_deref())
+            };
+            let terminal = clean_status_text(&info.title, 160);
+            let terminal = if terminal.is_empty() {
+                "Terminal"
+            } else {
+                &terminal
+            };
+            let body = [
+                activity.app.as_deref(),
+                activity.message.as_deref().or(activity.title.as_deref()),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ");
+            crate::notifications::record_program(
+                &info.id,
+                &activity.id,
+                activity.version,
+                if activity.state == "error" {
+                    "error"
+                } else {
+                    "warning"
+                },
+                &format!("{headline} · {terminal}"),
+                &body,
+            );
+        }
+    }
+
+    fn apply_semantic_prompt(&self, report: SemanticPromptReport) {
+        let mut status = self.status.lock().unwrap();
+        let mut info = self.info.lock().unwrap();
+        if info.state != "running" {
+            return;
+        }
+        if report.kind == SemanticPromptKind::PromptStart {
+            status
+                .records
+                .retain(|_, record| result_state(record.state));
+        }
+        if report.kind == SemanticPromptKind::PromptStart {
+            info.activity = aggregate(&status.records);
+            info.progress = None;
+        }
+        info.at_prompt = match report.kind {
+            SemanticPromptKind::PromptStart => true,
+            SemanticPromptKind::InputStart => report.cursor_at_prompt,
+            SemanticPromptKind::OutputStart | SemanticPromptKind::CommandEnd => false,
+        };
+        info.shell_phase = match report.kind {
+            SemanticPromptKind::PromptStart => "prompt",
+            SemanticPromptKind::InputStart => "input",
+            SemanticPromptKind::OutputStart => "output",
+            SemanticPromptKind::CommandEnd => "commandEnd",
+        }
+        .into();
+    }
+
+    pub(crate) fn acknowledge(&self, observed_revision: u64) {
+        let mut status = self.status.lock().unwrap();
+        // A caller cannot acknowledge a snapshot it has not received.
+        if observed_revision > status.sequence {
+            return;
+        }
+        let mut changed = false;
+        for record in status.records.values_mut() {
+            if record.version <= observed_revision
+                && !record.acknowledged
+                && (result_state(record.state) || record.state == ProgramStatusState::Blocked)
+            {
+                record.acknowledged = true;
+                changed = true;
+            }
+        }
+        if changed {
+            self.info.lock().unwrap().activity = aggregate(&status.records);
+            self.revision.fetch_add(1, Ordering::Release);
+        }
+    }
+
     pub(crate) fn info(&self) -> SessionInfo {
         let mut info = self.info.lock().unwrap().clone();
         info.input_warning = self.input.warning();
-        info
+        info.resolved()
     }
 
     pub(crate) fn set_colors(&self, foreground: Option<&str>, background: Option<&str>) {
@@ -568,14 +1111,21 @@ impl Session {
     }
 
     pub(crate) fn fail(&self, error: String) {
-        let mut info = self.info.lock().unwrap();
         if self.closed.load(Ordering::Acquire) {
             return;
         }
+        let mut status = self.status.lock().unwrap();
+        status.records.clear();
+        let mut info = self.info.lock().unwrap();
         let id = info.id.clone();
         let changed = info.error.as_ref() != Some(&error);
         info.state = "error".into();
         info.error = Some(error.clone());
+        info.progress = None;
+        info.activity = None;
+        info.mouse_shape = "text".into();
+        info.at_prompt = false;
+        info.shell_phase = "unknown".into();
         drop(info);
         if changed {
             crate::notifications::record("app", "error", Some(&id), "Terminal error", &error);
@@ -615,7 +1165,18 @@ impl Session {
         }
         self.input.close();
         control.master.take();
-        self.info.lock().unwrap().state = "closed".into();
+        let mut status = self.status.lock().unwrap();
+        status.records.clear();
+        {
+            let mut info = self.info.lock().unwrap();
+            info.state = "closed".into();
+            info.progress = None;
+            info.activity = None;
+            info.current_cwd = None;
+            info.mouse_shape = "text".into();
+            info.at_prompt = false;
+            info.shell_phase = "unknown".into();
+        }
         self.revision.fetch_add(1, Ordering::Release);
     }
 }
@@ -644,7 +1205,7 @@ fn interruptible_reader(master: &dyn MasterPty) -> Result<std::fs::File, String>
 
 enum Entry {
     Session(Arc<Session>),
-    Failed(SessionInfo),
+    Failed(Box<SessionInfo>),
 }
 
 pub(crate) struct SessionManager {
@@ -690,7 +1251,7 @@ impl SessionManager {
             .and_then(|cwd| Session::start(id.clone(), cwd, command, colors, scrollback, identity))
         {
             Ok(session) => Entry::Session(session),
-            Err(error) => Entry::Failed(SessionInfo {
+            Err(error) => Entry::Failed(Box::new(SessionInfo {
                 id: id.clone(),
                 cwd,
                 title: String::new(),
@@ -699,11 +1260,19 @@ impl SessionManager {
                 error: Some(error),
                 input_warning: None,
                 pid: None,
-            }),
+                progress: None,
+                activity: None,
+                current_cwd: None,
+                mouse_shape: "text".into(),
+                at_prompt: false,
+                shell_phase: "unknown".into(),
+                status_revision: 0,
+                status: TerminalStatusInfo::default(),
+            })),
         };
         let info = match &entry {
             Entry::Session(session) => session.info(),
-            Entry::Failed(info) => info.clone(),
+            Entry::Failed(info) => info.as_ref().clone().resolved(),
         };
         if let Some(error) = &info.error {
             crate::notifications::record(
@@ -726,6 +1295,12 @@ impl SessionManager {
         }
     }
 
+    pub(crate) fn acknowledge(&self, id: &str, observed_revision: u64) {
+        if let Ok(session) = self.get(id) {
+            session.acknowledge(observed_revision);
+        }
+    }
+
     pub(crate) fn scrollback(&self) -> usize {
         self.scrollback
     }
@@ -745,7 +1320,7 @@ impl SessionManager {
             .values()
             .map(|entry| match entry {
                 Entry::Session(session) => session.info(),
-                Entry::Failed(info) => info.clone(),
+                Entry::Failed(info) => info.as_ref().clone().resolved(),
             })
             .collect()
     }
