@@ -383,6 +383,33 @@ fn osc52_is_synchronous_and_denied_reads_do_not_leak() -> Result<()> {
 }
 
 #[test]
+fn osc52_delivers_utf8_text() -> Result<()> {
+    use base64::Engine;
+    use std::sync::{Arc, Mutex};
+    #[derive(Default)]
+    struct Host {
+        text: Mutex<String>,
+    }
+    impl Clipboard for Host {
+        fn read(&self) -> Result<String> {
+            Ok(self.text.lock().unwrap().clone())
+        }
+        fn write(&self, text: &str) -> Result<()> {
+            *self.text.lock().unwrap() = text.to_owned();
+            Ok(())
+        }
+    }
+    let host = Arc::new(Host::default());
+    let mut t = Terminal::new(20, 3)?;
+    t.set_clipboard(host.clone())?;
+    let chinese = "Grok 中文复制：你好，世界！ café 😀\n第二行";
+    let encoded = base64::engine::general_purpose::STANDARD.encode(chinese.as_bytes());
+    t.write(format!("\x1b]52;c;{encoded}\x07").as_bytes())?;
+    assert_eq!(host.text.lock().unwrap().as_str(), chinese);
+    Ok(())
+}
+
+#[test]
 fn png_images_and_history_placements_survive_viewport_capture() -> Result<()> {
     use base64::{Engine, engine::general_purpose::STANDARD};
     let mut png = Vec::new();

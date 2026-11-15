@@ -11,6 +11,24 @@ fn wait_for(mut condition: impl FnMut() -> bool) {
     }
 }
 
+#[test]
+fn a_missing_or_legacy_locale_becomes_utf8_and_an_existing_one_stays() {
+    assert_eq!(
+        utf8_locale_env(None, None, None),
+        vec![("LANG", "en_US.UTF-8")]
+    );
+    assert_eq!(
+        utf8_locale_env(Some("C".into()), Some("C".into()), None),
+        vec![
+            ("LC_ALL", "en_US.UTF-8"),
+            ("LC_CTYPE", "en_US.UTF-8"),
+            ("LANG", "en_US.UTF-8")
+        ]
+    );
+    assert!(utf8_locale_env(None, None, Some("zh_CN.UTF-8".into())).is_empty());
+    assert!(utf8_locale_env(Some("en_US.UTF-8".into()), Some("C".into()), None).is_empty());
+}
+
 fn output(session: &Session) -> String {
     let emulator = session.emulator.lock().unwrap();
     (0..emulator.line_count())

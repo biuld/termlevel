@@ -81,7 +81,7 @@ reader 直接将原始字节送入同一个 Rust/C parser，保留跨 chunk 的 
 
 Settings → Terminal 的 Terminal identity 默认是 Termlevel，也可显式选择 Ghostty compatibility。应用接线持有该偏好，随工作区文档保存，并在创建工作区前读取，以便启动恢复的新 shell 使用所选身份。旧文档缺少该字段或字段未知时回退 Termlevel，保留 schema v1 和既有布局。
 
-每次 `Sessions.open` 单独传入身份，由 Rust 在 spawn 前白名单映射：两种模式均设置 `TERM=xterm-256color` 和 `COLORTERM=truecolor`；默认设置 `TERM_PROGRAM=termlevel` 与应用版本，兼容模式设置 `TERM_PROGRAM=ghostty` 并移除 `TERM_PROGRAM_VERSION`，不伪造 Ghostty 版本。shell 启动文件仍可能覆盖环境。设置变化不修改已有会话、不创建或重启进程，也不改变 Ghostty 协议解析与原生 renderer。身份覆盖仅供客户端识别兼容，不代表被模拟终端的全部能力或真实 Codex Pets 已通过验收。
+每次 `Sessions.open` 单独传入身份，由 Rust 在 spawn 前白名单映射：两种模式均设置 `TERM=xterm-256color` 和 `COLORTERM=truecolor`；默认设置 `TERM_PROGRAM=termlevel` 与应用版本，兼容模式设置 `TERM_PROGRAM=ghostty` 并移除 `TERM_PROGRAM_VERSION`，不伪造 Ghostty 版本。继承的 `LC_ALL` / `LC_CTYPE` / `LANG` 都不是 UTF-8 时，补上 `en_US.UTF-8`，避免会话里的 `pbcopy` 把 OSC 52 同期写入的中文按 MacRoman 存盘。shell 启动文件仍可能覆盖环境。设置变化不修改已有会话、不创建或重启进程，也不改变 Ghostty 协议解析与原生 renderer。身份覆盖仅供客户端识别兼容，不代表被模拟终端的全部能力或真实 Codex Pets 已通过验收。
 
 ## 历史滚动与跨屏拖选
 

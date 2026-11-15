@@ -16,6 +16,12 @@ pub(crate) struct SystemClipboard;
 fn rejected() -> Error {
     Error(raw::GHOSTTY_REJECTED)
 }
+
+/// `__CF_USER_TEXT_ENCODING` is `uid:encoding:encoding`. `0x8000100` is UTF-8.
+fn cf_utf8_encoding() -> String {
+    let uid = unsafe { libc::getuid() };
+    format!("0x{uid:X}:0x8000100:0x8000100")
+}
 fn helper(read: bool, text: &str) -> Result<String> {
     if text.len() > LIMIT {
         return Err(rejected());
@@ -25,12 +31,13 @@ fn helper(read: bool, text: &str) -> Result<String> {
     } else {
         "/usr/bin/pbcopy"
     })
-    // These helpers interpret bytes using their locale, while our clipboard
-    // contract is always UTF-8. Finder launches and C/legacy parent locales
-    // must not make pbcopy decode UTF-8 as a legacy encoding (or pbpaste emit it).
+    // These helpers interpret stdin and stdout with the process text encoding.
+    // A GUI launch often has no UTF-8 locale, and CoreFoundation then treats
+    // the bytes as MacRoman (`中` becomes `‰∏≠`). OSC 52 always gives us UTF-8.
     .env("LC_ALL", "en_US.UTF-8")
     .env("LC_CTYPE", "en_US.UTF-8")
     .env("LANG", "en_US.UTF-8")
+    .env("__CF_USER_TEXT_ENCODING", cf_utf8_encoding())
     .stdin(if read { Stdio::null() } else { Stdio::piped() })
     .stdout(if read { Stdio::piped() } else { Stdio::null() })
     .stderr(Stdio::null())
@@ -51,7 +58,7 @@ fn helper(read: bool, text: &str) -> Result<String> {
             Ok(Vec::new())
         })
     };
-    let deadline = Instant::now() + Duration::from_millis(500);
+    let deadline = Instant::now() + Duration::from_secs(2);
     let status = loop {
         match child.try_wait() {
             Ok(Some(s)) => break Some(s),
@@ -72,6 +79,50 @@ fn helper(read: bool, text: &str) -> Result<String> {
     }
     String::from_utf8(bytes).map_err(|_| rejected())
 }
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    #[test]
+    fn osc52_bytes_reach_the_pasteboard_as_unicode() {
+        let sample = "Grok 中文复制：你好，世界！";
+        let previous = std::process::Command::new("/usr/bin/pbpaste")
+            .output()
+            .expect("save clipboard")
+            .stdout;
+        let saved = String::from_utf8_lossy(&previous).into_owned();
+        let restore = || {
+            let _ = std::process::Command::new("/usr/bin/pbcopy")
+                .env("LC_ALL", "en_US.UTF-8")
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .and_then(|mut child| {
+                    use std::io::Write;
+                    child.stdin.as_mut().unwrap().write_all(saved.as_bytes())?;
+                    child.wait()
+                });
+        };
+        let written = super::helper(false, sample);
+        if written.is_err() {
+            restore();
+            panic!("pbcopy rejected the sample");
+        }
+        let script = r#"use framework "AppKit"
+set pb to current application's NSPasteboard's generalPasteboard()
+set s to pb's stringForType:"public.utf8-plain-text"
+if s is missing value then return "MISSING"
+return s as text"#;
+        let out = std::process::Command::new("/usr/bin/osascript")
+            .arg("-e")
+            .arg(script)
+            .output()
+            .expect("read pasteboard");
+        let got = String::from_utf8_lossy(&out.stdout);
+        let got = got.trim_end_matches(['\n', '\r']);
+        restore();
+        assert!(out.status.success(), "osascript failed");
+        assert_eq!(got, sample);
+    }
+}
+
 impl Clipboard for SystemClipboard {
     fn read(&self) -> Result<String> {
         if !ALLOW_READ.load(Ordering::Acquire) {

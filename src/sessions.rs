@@ -16,6 +16,44 @@ use nsh_base::{TerminalEmulator, TerminalSize};
 use nsh_core::prelude::*;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
+fn env_nonempty(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn locale_is_utf8(value: &str) -> bool {
+    let value = value.trim().to_ascii_lowercase();
+    value == "utf-8" || value == "utf8" || value.ends_with(".utf-8") || value.ends_with(".utf8")
+}
+
+/// Locale assignments for a new shell. The effective charset is `LC_ALL`,
+/// then `LC_CTYPE`, then `LANG`. An existing UTF-8 locale is kept.
+fn utf8_locale_env(
+    lc_all: Option<String>,
+    lc_ctype: Option<String>,
+    lang: Option<String>,
+) -> Vec<(&'static str, &'static str)> {
+    let effective = lc_all
+        .as_deref()
+        .or(lc_ctype.as_deref())
+        .or(lang.as_deref());
+    if effective.is_some_and(locale_is_utf8) {
+        return Vec::new();
+    }
+    let mut assigned = Vec::new();
+    if lc_all.is_some() {
+        assigned.push(("LC_ALL", "en_US.UTF-8"));
+    }
+    if lc_ctype.is_some() {
+        assigned.push(("LC_CTYPE", "en_US.UTF-8"));
+    }
+    if !lang.as_deref().is_some_and(locale_is_utf8) {
+        assigned.push(("LANG", "en_US.UTF-8"));
+    }
+    assigned
+}
+
 use crate::terminal::{BackendEvent, GhosttyEmulator, Rgb};
 
 mod input_queue;
@@ -83,6 +121,16 @@ impl Session {
         command.cwd(&cwd);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
+        // Grok copies with both its own pbcopy and OSC 52. pbcopy uses the
+        // session locale; without a UTF-8 locale it stores MacRoman and the
+        // later paste is mojibake even when OSC 52 carried UTF-8.
+        for (key, value) in utf8_locale_env(
+            env_nonempty("LC_ALL"),
+            env_nonempty("LC_CTYPE"),
+            env_nonempty("LANG"),
+        ) {
+            command.env(key, value);
+        }
         // Identity is a compatibility hint, not a change of terminal engine.
         // Only known profiles are accepted, including at the native boundary.
         if identity == Some("ghostty") {
