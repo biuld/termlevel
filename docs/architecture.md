@@ -19,6 +19,9 @@ App.tsx                                      mount 工作区，仅作入口
   ui/workspace/tiling.ts                     布局树变换、约束、几何与方向导航
   ui/workspace/TilingCanvas.tsx              按 session ID 稳定挂载、pane 工具栏与分隔拖动
   ui/workspace/GroupSettings.tsx             组设置界面：组名、颜色和组操作
+  ui/git/GitWorkspace.tsx              仓库选择与任务组合
+  ui/git/scheduler.ts                 Git 视图周期任务调度
+  ui/git/operation-gate.ts            跨视图的仓库操作互斥
   ui/git/GitPanel.tsx                  变更文件树、单文件 diff、刷新与状态
   ui/git/HistoryPanel/index.ts         History 公共导出
   ui/git/HistoryPanel/panel.tsx        History 界面与组合入口
@@ -37,6 +40,7 @@ App.tsx                                      mount 工作区，仅作入口
 src/lib.rs                                   注册 termlevel/native 导出与原生 renderer factory
 src/runtime.rs                               版本、启动目录、显式预览开关与原生 cell 测量
 src/dialog_keys.rs                           对话框 Escape 与 pane 缩放模式的原生键盘优先级
+src/git_discovery.rs                         可取消的后台仓库扫描
 src/git.rs                                   只读 Git CLI：status、refs、worktree、log、diff、版本检查
 src/git_ops/                                 显式 Git 操作：fetch、fast-forward pull、push、checkout、建分支、worktree add/remove/lock/prune
 src/terminal.rs                              Ghostty 状态 / RenderState 到 NSH 的适配；预览 provider
@@ -99,6 +103,8 @@ Settings → Terminal 的 Terminal identity 默认是 Termlevel，也可显式�
 每次 `Sessions.open` 单独传入身份，由 Rust 在 spawn 前白名单映射：两种模式均设置 `TERM=xterm-256color` 和 `COLORTERM=truecolor`；默认设置 `TERM_PROGRAM=termlevel` 与应用版本，兼容模式设置 `TERM_PROGRAM=ghostty` 并移除 `TERM_PROGRAM_VERSION`，不伪造 Ghostty 版本。继承的 `LC_ALL` / `LC_CTYPE` / `LANG` 都不是 UTF-8 时，补上 `en_US.UTF-8`，避免会话里的 `pbcopy` 把 OSC 52 同期写入的中文按 MacRoman 存盘。shell 启动文件仍可能覆盖环境。设置变化不修改已有会话、不创建或重启进程，也不改变 Ghostty 协议解析与原生 renderer。身份覆盖仅供客户端识别兼容，不代表被模拟终端的全部能力或真实 Codex Pets 已通过验收。
 
 ## Git 视图数据通路
+
+GitWorkspace coordinates repository selection and background tasks. Discovery runs in Rust, publishes incremental results, and is cancelled on view disposal or replacement. A single view-scoped scheduler refreshes data every 5 seconds, scans repositories every 30 seconds, and fetches the selected repository every 5 minutes while the app is active. Manual refresh also scans. Preview runs no background tasks. A shared per-repository operation gate prevents overlapping Git mutations across view remounts. Automatic fetch failures are displayed without repeated notifications.
 
 Git 视图由系统 `git` CLI 提供数据，应用不内嵌 Git 实现。最低版本为 Git 2.20；版本过低、找不到 git 或仓库不可读时返回带说明的错误，由 UI 显示提示。读取集中在 `src/git.rs`，显式写操作集中在 `src/git_ops.rs`。
 

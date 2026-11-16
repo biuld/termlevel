@@ -212,7 +212,7 @@ libghostty 的独立 OSC parser 只暴露两类数据：标题字符串和未知
 
 blocked/error 与 9;4 可同时存在：图标表达活动，线继续表达原始进度，不覆盖成满格。如果 9;4 仍报告 indeterminate，blocked/error 下将光带静止，避免“等待我操作”仍显得正在推进；tooltip 保留“进度未知”。7501 不把 9;4 改写为 pause，也不清除它。两个协议无法证明属于同一个子任务，因此说明中称“终端进度”，不把它说成代表任务的进度。
 
-全行最多一个动画区域：有动态进度时 busy 图标静态；无进度时才 pulse busy。减少动态效果时全部静态；不确定进度以固定短段表达，不用假百分比。无 JS 动画定时器。主题 token 来自 theme.json，先复用 primary / destructive / subtle-foreground，不硬编码语义颜色。
+全行最多一个动画区域：有动态进度时 busy 图标静态；无进度时才 pulse busy。减少动态效果时全部静态；不确定进度以固定短段表达，不用假百分比。无 JS 动画定时器。正常进度与 working 图标跟随分组颜色，未分组使用 primary；blocked 图标使用 warning，error 使用 destructive，done 和暂停进度使用 subtle-foreground。主题 token 来自 theme.json，不硬编码语义颜色。
 
 ### 详情与可访问性
 

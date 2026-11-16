@@ -10,6 +10,7 @@ export function createHistoryData(state: HistoryState) {
     selectedFile, scope, query, selectedBranch, selectedWorktree, loading, logLoading, loadingMore,
     detailLoading, error, logError, busy, epoch,
   } = state;
+  let syncing = false;
   let loadGeneration = 0;
   let logGeneration = 0;
   let detailGeneration = 0;
@@ -106,7 +107,8 @@ export function createHistoryData(state: HistoryState) {
   }
 
   async function syncRefs() {
-    if (props.preview || busy() || loading() || logLoading()) return;
+    if (props.preview || busy() || loading() || logLoading() || syncing) return;
+    syncing = true;
     const path = cwd();
     const generation = loadGeneration;
     try {
@@ -133,6 +135,8 @@ export function createHistoryData(state: HistoryState) {
       }
     } catch {
       // A transient refresh failure keeps the last good snapshot.
+    } finally {
+      syncing = false;
     }
   }
 
@@ -154,6 +158,7 @@ export function createHistoryData(state: HistoryState) {
   }
 
   function refresh() {
+    props.rescan?.();
     epoch.update((value) => value + 1);
   }
 
@@ -163,7 +168,11 @@ export function createHistoryData(state: HistoryState) {
     void load();
   });
 
-  if (!props.preview) {
+  effect(() => {
+    if (props.refreshTick) { props.refreshTick(); untracked(() => { void syncRefs(); }); }
+  });
+
+  if (!props.preview && !props.refreshTick) {
     const timer = setInterval(() => {
       if (lifecycle() === "active") void syncRefs();
     }, 5000);

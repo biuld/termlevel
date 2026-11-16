@@ -9,8 +9,7 @@ import { Icon } from "../shared/icons";
 import { Type } from "../shared/type";
 import { groupColor } from "../shared/theme";
 import { GroupSettings } from "./GroupSettings";
-import { GitPanel } from "../git/GitPanel";
-import { HistoryPanel } from "../git/HistoryPanel";
+import { GitWorkspace } from "../git/GitWorkspace";
 import type { GitTransport } from "../git/git-types";
 import type { Workspace } from "./state";
 import type { Divider, Direction, Rect } from "./tiling";
@@ -225,8 +224,7 @@ export function TilingCanvas(props: {
     <If when={!store.dashboardOpen() && store.activeGitView() !== null}>
       <View testID="git-view" class="absolute inset-0 overflow-hidden rounded-(--radius-panel) bg-terminal-background">
         <If when={props.git}>{(git) => <>
-          <If when={store.activeGitView() === "changes"}><GitPanel workspace={store} preview={props.preview} git={git()} /></If>
-          <If when={store.activeGitView() === "history"}><HistoryPanel workspace={store} preview={props.preview} git={git()} notify={props.notify} /></If>
+          <GitWorkspace workspace={store} preview={props.preview} git={git()} notify={props.notify} />
         </>}</If>
         <If when={!props.git}><View class="flex-1 items-center justify-center"><Type role="body" tone="muted-foreground">Git is unavailable in preview.</Type></View></If>
       </View>

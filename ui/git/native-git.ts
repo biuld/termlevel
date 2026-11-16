@@ -1,8 +1,11 @@
-import { Git, GitOps } from "termlevel/native";
+import { Git, GitOps, GitDiscovery } from "termlevel/native";
 import type { GitTransport } from "./git-types";
 
 /** Real Git data from the system CLI through the Rust read-only module. */
 export const nativeGit: GitTransport = {
+  startDiscovery: (root) => GitDiscovery.start(root),
+  pollDiscovery: (id) => GitDiscovery.poll(id),
+  cancelDiscovery: (id) => GitDiscovery.cancel(id),
   status: (root) => Git.status(root),
   diff: (root, path, mode) => Git.diff(root, path, mode),
   branches: async (root) => {

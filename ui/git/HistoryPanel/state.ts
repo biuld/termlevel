@@ -9,7 +9,7 @@ export function createHistoryState(props: HistoryProps) {
   const store = props.workspace;
   const groupId = () => store.workspaceKey();
   const group = () => store.group(groupId());
-  const cwd = () => group()?.cwd ?? "~";
+  const cwd = () => props.root?.() ?? group()?.cwd ?? "~";
 
   const status = signal<GitRepoStatus | null>(null);
   const branches = signal<GitBranch[]>([]);

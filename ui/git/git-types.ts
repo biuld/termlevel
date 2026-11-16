@@ -103,6 +103,10 @@ export interface GitCommitDetail {
 
 /** Git data for group views. The native transport runs the system CLI; the preview transport is deterministic. */
 export interface GitTransport {
+  startDiscovery?(root: string): number;
+  pollDiscovery?(id: number): { paths: string[]; error?: string | null; done: boolean };
+  cancelDiscovery?(id: number): void;
+  discover?(root: string): Promise<{ paths: string[]; error?: string | null }>;
   status(root: string): Promise<GitRepoStatus>;
   diff(root: string, path: string, mode: GitDiffMode): Promise<string>;
   branches(root: string): Promise<GitBranches>;

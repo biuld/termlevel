@@ -178,4 +178,4 @@ export function RefChip(props: { label: string }) {
 
 /** Branches, worktrees, commit lanes and the selected commit's patch for one group. */
 
-export type HistoryProps = { workspace: Workspace; git: GitTransport; preview: boolean; notify: (level: "info" | "error", title: string, body: string) => void };
+export type HistoryProps = { root?: () => string; refreshTick?: () => number; rescan?: () => void; workspace: Workspace; git: GitTransport; preview: boolean; notify: (level: "info" | "error", title: string, body: string) => void };

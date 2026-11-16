@@ -228,7 +228,7 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
     const statusColor = () => {
       switch (status()?.state) {
         case "working": return workingAccent();
-        case "blocked": return token("primary");
+        case "blocked": return token("notification-warning");
         case "done": return token("subtle-foreground");
         case "error": case "hostError": case "exited": return token("destructive");
         default: return accent() ?? token(active() ? "icon-active" : "icon");
@@ -238,8 +238,8 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
     const detail = () => [status()?.app, status()?.detail,
       status()?.pendingCount ? `${status()!.pendingCount} more need attention` : ""].filter(Boolean).join(" · ");
     const tabLabel = () => [summary(), detail(), tab()?.bell ? "terminal bell" : ""].filter(Boolean).join(", ");
-    const lineIndicator = () => progress()?.state === "error" ? "bg-destructive"
-      : progress()?.state === "pause" ? "bg-subtle-foreground" : "bg-primary";
+    const lineColor = () => progress()?.state === "error" ? token("destructive")
+      : progress()?.state === "pause" ? token("subtle-foreground") : workingAccent();
     const progressLine = (compact: boolean) => (
       <If when={!!progress()}>
         <View class={compact ? "mt-0.5 h-0.5 w-3" : "mt-0.5 h-0.5 w-full"}
@@ -249,8 +249,9 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
               accessibilityLabel={progress()?.label}
               class="h-full w-full"
               trackClass="h-full w-full overflow-hidden rounded-full bg-sidebar-border/50"
-              indicatorClass={`h-full rounded-full ${lineIndeterminate() ? "w-1/3 " : ""}${lineIndicator()}`}
-              indicatorStyle={animateLine() ? { animationName: "pulse", animationDuration: "1.2s", animationIterationCount: "infinite" } : undefined} />
+              indicatorClass={`h-full rounded-full ${lineIndeterminate() ? "w-1/3" : ""}`}
+              indicatorStyle={{ backgroundColor: lineColor(), ...(animateLine()
+                ? { animationName: "pulse", animationDuration: "1.2s", animationIterationCount: "infinite" } : {}) }} />
           </If>
           <If when={progress()?.percent == null && !lineIndeterminate()}>
             <View accessibilityLabel={progress()?.label}

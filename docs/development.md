@@ -18,6 +18,7 @@ ui/notifications/           通知历史订阅与标题栏面板
 ui/terminal/                原生终端展示和查找
 ui/shared/                  通用控件、图标、字体、文字和主题映射
 src/                        Rust 应用 crate
+  git_discovery.rs          可取消的后台仓库扫描
   git.rs                    只读 Git 查询：status、refs、worktree、log、commit、diff
   git_ops/                  显式 Git 操作：fetch、fast-forward pull、push、checkout、建分支、worktree 管理
   sessions/                 显式会话 API 与进程生命周期测试

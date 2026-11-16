@@ -95,7 +95,7 @@ function errorMessage(error: unknown) {
 }
 
 /** Changed files and the selected patch for one group. */
-export function GitPanel(props: { workspace: Workspace; git: GitTransport; preview: boolean }) {
+export function GitPanel(props: { workspace: Workspace; git: GitTransport; preview: boolean; root?: () => string; refreshTick?: () => number; rescan?: () => void }) {
   const store = props.workspace;
   const groupId = () => store.workspaceKey();
 
@@ -127,6 +127,7 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; previ
   const conflictCount = () => changes().filter((item) => item.conflicted).length;
   const clean = () => !!status()?.repo && changes().length === 0;
 
+  let lastRoot = "";
   let statusGeneration = 0;
   let diffGeneration = 0;
   let foldersInitialized = false;
@@ -144,7 +145,7 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; previ
     loading.set(true);
     refreshing.set(true);
     try {
-      const next = await props.git.status(group.cwd);
+      const next = await props.git.status(props.root?.() ?? group.cwd);
       if (generation !== statusGeneration) return;
       status.set(next);
       statusError.set("");
@@ -177,11 +178,23 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; previ
 
   effect(() => {
     store.group(groupId())?.cwd;
+    const root = props.root?.() ?? store.group(groupId())?.cwd ?? "";
     epoch();
-    void loadStatus();
+    untracked(() => {
+      if (root !== lastRoot) {
+        lastRoot = root;
+        diffGeneration++;
+        selected.set(null);
+        status.set(null);
+        patch.set("");
+        foldersInitialized = false;
+        knownFolders.clear();
+      }
+      void loadStatus();
+    });
   });
 
-  if (!props.preview) {
+  if (!props.preview && !props.refreshTick) {
     const timer = setInterval(() => {
       if (lifecycle() === "active" && !loading()) epoch.update((value) => value + 1);
     }, 3000);
@@ -189,7 +202,12 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; previ
   }
 
   effect(() => {
+    if (props.refreshTick) { props.refreshTick(); untracked(() => { if (!loading()) epoch.update((value) => value + 1); }); }
+  });
+
+  effect(() => {
     const group = store.group(groupId());
+    props.root?.();
     const key = selectedKey();
     const requested = scope();
     diffEpoch();
@@ -207,7 +225,7 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; previ
     }
     const generation = ++diffGeneration;
     patchLoading.set(true);
-    void props.git.diff(group.cwd, item.path, mode).then((value) => {
+    void props.git.diff(props.root?.() ?? group.cwd, item.path, mode).then((value) => {
       if (generation !== diffGeneration) return;
       patch.set(value);
       patchError.set("");
@@ -221,6 +239,7 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; previ
   });
 
   function refresh() {
+    props.rescan?.();
     epoch.update((value) => value + 1);
     diffEpoch.update((value) => value + 1);
   }
@@ -320,10 +339,10 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; previ
             <IconButton icon="diffSplit" label="Side-by-side diff" testID="diff-layout-split" selected={diffLayout() === "split"} onPress={() => diffLayout.set("split")} />
           </View>
         </If>
-        <If when={refreshing()}>
-          <Type role="caption" tone="subtle-foreground">Refreshing…</Type>
-        </If>
-        <IconButton icon="refresh" label="Refresh changes" testID="dashboard-refresh" onPress={refresh} />
+        <View class="relative">
+          <IconButton icon="refresh" label={refreshing() ? "Refreshing changes…" : "Refresh changes"} testID="dashboard-refresh" onPress={refresh} />
+          <If when={refreshing()}><View testID="changes-refreshing" class="absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-primary" style={{ pointerEvents: "none" }} /></If>
+        </View>
       </View>
     </View>
 
@@ -349,7 +368,7 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; previ
           <Icon name="folder" size={18} />
         </View>
         <Type role="heading">No Git repository here.</Type>
-        <Type role="body" tone="muted-foreground" class="text-center">This folder is not inside a Git work tree.</Type>
+        <Type role="body" tone="muted-foreground" class="text-center">No Git working tree was found in this folder.</Type>
         <Type role="body" family="mono" tone="subtle-foreground" lines={1}>{store.group(groupId())?.cwd ?? ""}</Type>
       </View>
     </If>
