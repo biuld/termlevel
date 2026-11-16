@@ -16,7 +16,7 @@ export function createHistoryViews(state: HistoryState, data: HistoryData, actio
   const {
     props, branches, worktrees, commits, hasMore, logTruncated, selectedOid, detail, selectedFile,
     commitWidth, scope, query, selectedWorktree, expanded, logLoading, loadingMore, detailLoading,
-    logError, visibleRows, selectedIndex, selectedPatch, selectedFileInfo, fileRows,
+    logError, visibleRows, selectedIndex, selectedRefs, selectedPatch, selectedFileInfo, fileRows,
     selectedFileIndex, columnWidths, commitLayoutKey, wide,
   } = state;
   const { loadMore } = data;
@@ -90,39 +90,40 @@ export function createHistoryViews(state: HistoryState, data: HistoryData, actio
     ], event.pagePosition);
   }
 
-  function CommitRowView(props: { row: CommitRow }) {
+  function CommitRowView(props: { row: () => CommitRow }) {
+    // SHA is stable while decorations and graph metadata can change.
     const row = props.row;
-    const active = row.active;
-    const widths = columnWidths();
-    return <View class="w-full" onContextMenu={(event) => commitMenu(row, event)}>
-      <View testID={`history-commit-row-${row.commit.short}`} class="w-full">
-        <Button testID={`history-commit-${row.commit.short}`}
-        accessibilityLabel={`${row.commit.short} ${row.commit.subject}`}
-        selected={active}
-        onPress={() => selectedOid.set(row.commit.oid)}
+    const active = () => row().active;
+    const widths = columnWidths;
+    return <View class="w-full" onContextMenu={(event) => commitMenu(row(), event)}>
+      <View testID={`history-commit-row-${row().commit.short}`} class="w-full">
+        <Button testID={`history-commit-${row().commit.short}`}
+        accessibilityLabel={`${row().commit.short} ${row().commit.subject}`}
+        selected={active()}
+        onPress={() => selectedOid.set(row().commit.oid)}
         class="h-[30px] w-full shrink-0 flex-row items-center border-b border-border hover:bg-tab-selected active:bg-control-pressed focus-visible:ring-1 ring-ring">
-        <Canvas style={{ width: widths.graph, height: ROW_HEIGHT }}
-          draw={(cx, size) => drawGraph(cx, size, row)} />
+        <Canvas style={{ width: widths().graph, height: ROW_HEIGHT }}
+          draw={(cx, size) => drawGraph(cx, size, row())} />
         <View class="min-w-0 flex-1 flex-row items-center gap-1.5 px-2">
-          <Type role="body" class="min-w-0 flex-1" lines={1}>{row.commit.subject}</Type>
-          <Each of={row.commit.refs.slice(0, 2)}>{(ref) => <RefChip label={ref()} />}</Each>
-          <If when={row.commit.refs.length > 2}>
-            <Type role="caption" tone="subtle-foreground">{`+${row.commit.refs.length - 2}`}</Type>
+          <Type role="body" class="min-w-0 flex-1" lines={1}>{row().commit.subject}</Type>
+          <Each of={row().commit.refs.slice(0, 2)}>{(ref) => <RefChip label={ref()} />}</Each>
+          <If when={row().commit.refs.length > 2}>
+            <Type role="caption" tone="subtle-foreground">{`+${row().commit.refs.length - 2}`}</Type>
           </If>
         </View>
-        <If when={widths.author > 0}>
-          <View style={{ width: widths.author }} class="shrink-0 px-2">
-            <Type role="body" lines={1}>{row.author}</Type>
+        <If when={widths().author > 0}>
+          <View style={{ width: widths().author }} class="shrink-0 px-2">
+            <Type role="body" lines={1}>{row().author}</Type>
           </View>
         </If>
-        <If when={widths.date > 0}>
-          <View style={{ width: widths.date }} class="shrink-0 px-2">
-            <Type role="caption" tone="subtle-foreground" lines={1}>{row.date}</Type>
+        <If when={widths().date > 0}>
+          <View style={{ width: widths().date }} class="shrink-0 px-2">
+            <Type role="caption" tone="subtle-foreground" lines={1}>{row().date}</Type>
           </View>
         </If>
-        <If when={widths.hash > 0}>
-          <View style={{ width: widths.hash }} class="shrink-0 px-2">
-            <Type role="mono" family="mono" tone="subtle-foreground" lines={1}>{row.commit.short}</Type>
+        <If when={widths().hash > 0}>
+          <View style={{ width: widths().hash }} class="shrink-0 px-2">
+            <Type role="mono" family="mono" tone="subtle-foreground" lines={1}>{row().commit.short}</Type>
           </View>
         </If>
         </Button>
@@ -161,7 +162,7 @@ export function createHistoryViews(state: HistoryState, data: HistoryData, actio
               class="min-h-0 flex-1" contentClass="flex-col">
               <View class="relative flex-col">
                 <Each of={visibleRows()} key={(row) => row.commit.oid}>
-                  {(row) => <CommitRowView row={row()} />}
+                  {(row) => <CommitRowView row={row} />}
                 </Each>
                 <If when={selectedIndex() >= 0}>
                   <View class="absolute left-0 right-0 bg-primary/20"
@@ -228,9 +229,9 @@ export function createHistoryViews(state: HistoryState, data: HistoryData, actio
         </View>
       </If>
       <View class="flex-row flex-wrap items-center gap-1">
-        <Each of={compact ? item.commit.refs.slice(0, 2) : item.commit.refs}>{(ref) => <RefChip label={ref()} />}</Each>
-        <If when={compact && item.commit.refs.length > 2}>
-          <Type role="caption" tone="subtle-foreground">{`+${item.commit.refs.length - 2}`}</Type>
+        <Each of={compact ? selectedRefs().slice(0, 2) : selectedRefs()}>{(ref) => <RefChip label={ref()} />}</Each>
+        <If when={compact && selectedRefs().length > 2}>
+          <Type role="caption" tone="subtle-foreground">{`+${selectedRefs().length - 2}`}</Type>
         </If>
       </View>
       <If when={!compact && !!item.body}>

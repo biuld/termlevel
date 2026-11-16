@@ -1,8 +1,13 @@
 import { batch, cleanup, effect, lifecycle, untracked } from "nsh";
 
-import type { GitLog } from "../git-types";
+import type { GitLog, GitBranch, GitRepoStatus } from "../git-types";
 import { LOG_PAGE, errorMessage } from "./common";
 import type { HistoryState } from "./state";
+
+// HEAD can change without any branch target moving (e.g. detaching at HEAD).
+function refsKey(status: GitRepoStatus | null, branches: GitBranch[]) {
+  return JSON.stringify([status?.branch, status?.detached, branches.map(branch => [branch.fullName, branch.target, branch.current])]);
+}
 
 export function createHistoryData(state: HistoryState) {
   const {
@@ -118,8 +123,8 @@ export function createHistoryData(state: HistoryState) {
         props.git.worktrees(path),
       ]);
       if (generation !== loadGeneration || path !== cwd()) return;
-      const previousRefs = untracked(() => branches().map((branch) => `${branch.fullName}:${branch.target}`).join("|"));
-      const nextRefs = branchData.branches.map((branch) => `${branch.fullName}:${branch.target}`).join("|");
+      const previousRefs = untracked(() => refsKey(status(), branches()));
+      const nextRefs = refsKey(nextStatus, branchData.branches);
       status.set(nextStatus);
       branches.set(branchData.branches);
       worktrees.set(worktreeData.worktrees);

@@ -140,6 +140,8 @@ TSX HistoryPanel  ── fetch / pull / push / checkout / createBranch / worktre
 
 ### History 视图
 
+提交 SHA 只标识稳定的列表行身份，不表示行上的 refs 不变。行组件保留 keyed Each 提供的数据访问器，刷新后读取最新 decorations；详情区的标记同样来自当前提交日志快照，避免所选 SHA 未变时继续显示旧 `git show` 标记。定时刷新比较完整 ref 指向、current 标记和 HEAD 的 attached/detached 状态；即使分支指向不变，HEAD 状态变化也会重载日志。该刷新不重建提交列表容器，也不为了更新标记重读所选提交的 patch。
+
 Changes 与 History 是按需打开的分组视图，标题栏 Git 菜单创建或选择当前组中的唯一对应 tab；侧栏关闭它们不影响终端或分屏。工作区快照记录每组打开的视图和所选视图，旧概览状态迁移为 Changes。未选择组时菜单提示先选择组。`HistoryPanel` 左栏用 `Tree` 展示 Local / Remote / Tags 并限定提交 scope，用 `Scroll` + `Each` 展示 worktree；中栏用 `Scroll` + `Each` 渲染提交行（每页 200 条，底部 Load more），首列由 `Canvas` 绘制车道，表头与行按实际分栏宽度计算并让 Commit 列吃掉剩余空间，所以拖动分栏或缩放窗口时列宽和可见列都会跟着变化；列集合变化时重挂载提交列表，避免行沿用旧宽度。右栏是提交信息、变更路径和 `DiffView` patch。画布宽度 ≥1000 pt 时为左中右三栏；更窄时隐藏右栏，把提交信息 / 变更文件与 patch 放到提交列表下方的可调分栏，避免三栏被压到不可用。提交行整行是可点击的按钮，hover 使用 native 的 tab-selected 底色；选中行由内容层按选中 index 绝对定位一层 primary overlay 绘制，不依赖行组件随选中信号重渲染，因此滚动和行复用不会让背景留在旧行。Changed files 也用 `Scroll` + `Each`，同样有选中 overlay 和 hover；选中文件后右侧只显示该文件的 patch，默认选中第一个文件，patch 由提交 diff 按文件段切分。`DiffView` 的 patch 不再 `trimEnd`，否则末尾的空 context 行被删掉会让 hunk 计数不完整而不显示。`commit-graph.ts` 只根据 `GitCommit.parents` 计算每行的 lane、穿行车道和父边：第一个父提交延续当前 lane，其余父提交新建或并入另一条 lane；两条车道预期同一提交时合并到第一条，避免同一段历史画两条线。车道宽度随可见历史的最大 lane 数变化，只绘制视口内的行。提交列表同样虚拟化并按页加载，搜索按钮按需展开输入框，显示已加载提交内的匹配数；关闭或 Escape 清除筛选，搜索只在已加载的提交上过滤。History 每 5 秒只轻量刷新 status / branches / worktrees；当前 HEAD 目标变化或 scope 失效时才重新加载提交，避免在输入、滚动或查看 patch 时重置列表。分支切换是显式动作：Git 自己拒绝 dirty 冲突，Termlevel 不自动 stash、不 force；删除分支同样交给 `git branch -d` 判断是否已合并。worktree 的 “Open in new group” 走 `Workspace.addGroup`，为该路径创建新分组和新 shell，不移动现有分组。
 
 ## 历史滚动与跨屏拖选

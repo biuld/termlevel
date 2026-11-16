@@ -164,13 +164,13 @@ export function drawGraph(cx: CanvasContext, size: { width: number; height: numb
 }
 
 export function RefChip(props: { label: string }) {
-  const color = refColor(props.label);
-  return <View class="shrink-0 rounded-(--radius-tab) border px-1" style={{ borderColor: color }}>
+  const color = () => refColor(props.label);
+  return <View class="shrink-0 rounded-(--radius-tab) border px-1" style={{ borderColor: color() }}>
     <Text style={{
       fontFamily: monoFont(),
       fontSize: token("text-caption"),
       lineHeight: token("leading-caption"),
-      color,
+      color: color(),
       numberOfLines: 1,
     }}>{shortRef(props.label)}</Text>
   </View>;

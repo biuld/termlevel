@@ -1,5 +1,15 @@
 # Validation
 
+## 2026-11-16：push 后同 SHA 提交的分支标记更新
+
+基于 `0dff5c2` 的未提交修复。根因是 keyed 提交行保存了初始 row 对象，SHA 不变时仍显示旧 refs；详情区的旧 commit metadata 同样不会因 SHA 相同而重读。另一个遗漏是定时刷新只比较 ref 目标，没有比较 HEAD attached/detached 或 current 标记。
+
+- 新增同 SHA 的 push 标记移动、HEAD 原地 detach 回归，两项在修复前均失败。修复后列表和详情共用最新日志 decorations，保留所选旧提交，不为标记变化重读 patch。
+- `./scripts/nsh test tests/workspace/GitCommitRefresh.test.tsx` 4/4，通过新增 SHA、仅 refs 变化、HEAD-only 变化及所选旧提交移除标记的用例。
+- `./scripts/nsh test tests/workspace/History.test.tsx` 6/6、`GitActions.test.tsx` 1/1；本地 bare remote 的 `push_updates_only_the_current_upstream_and_rejects_divergence` 1/1。未向任何外部远端推送。
+- 原生窗口运行 `GitCommitRefresh.test.tsx --target macos --foreground` 的前三项用例通过；其 Git 数据为模拟快照，不代表真实远端 push。检查截图 `artifacts/git-ref-refresh-after-push.png`，确认顶行和详情均显示 origin/main，旧行已移除该标记。
+- `./scripts/nsh check`、`./scripts/nsh build`、`git diff --check` 通过。此次运行针对 Git History 及其操作测试，未重跑完整 headless 套件。此前侧栏拆分测试及严格 Clippy 的已有失败记录仍保留。
+
 ## 2026-11-16：内置终端字体与编程连字
 
 基于 `6fdd3a0` 的未提交工作区。最终使用标准版 JetBrains Mono 2.304（不是 NL）：常规、粗体、斜体、粗斜体；中文与缺失符号使用 Sarasa Term SC 1.0.43 常规/粗体。字体文件保持上游原样，版本、下载 URL、SHA-256、文件大小见 `assets/fonts/manifest.json`；两份 OFL 许可证和 JetBrains 作者声明随包分发。

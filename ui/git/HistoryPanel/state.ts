@@ -74,6 +74,8 @@ export function createHistoryState(props: HistoryProps) {
       active: row.commit.oid === activeOid,
     }));
   });
+  const selectedRefs = computed(() =>
+    commits().find(commit => commit.oid === selectedOid())?.refs ?? detail()?.commit.refs ?? []);
   const selectedIndex = computed(() => visibleRows().findIndex((row) => row.active));
   const selectedPatch = computed(() => {
     const item = detail();
@@ -182,7 +184,7 @@ export function createHistoryState(props: HistoryProps) {
     error, logError, opError, networkAction, busy, branchDialog, deleteDialog, worktreeDialog,
     removeDialog, newBranchName, newBranchCheckout, branchStart, newWorktreePath,
     newWorktreeBranch, removeTarget, deleteTarget, epoch, failure, repo, filtered, visibleGraph,
-    visibleRows, selectedIndex, selectedPatch, selectedFileInfo, fileRows, selectedFileIndex,
+    visibleRows, selectedIndex, selectedRefs, selectedPatch, selectedFileInfo, fileRows, selectedFileIndex,
     selectedWorktreeIndex, currentCommits, selectedBranchInfo, selectedBranchWorktree, canCheckout,
     canDeleteBranch, selectedWorktreeInfo, canRemoveWorktree, scopeLabel, startLabel,
     visibleGraphWidth, branchItems, columnWidths, commitLayoutKey, wide,
