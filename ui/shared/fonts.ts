@@ -13,6 +13,7 @@ export const interfaceFonts = [
 
 /** Monospace families for the terminal and the toolbar path. */
 export const monoFonts = [
+  { id: "JetBrains Mono, Sarasa Term SC, ui-monospace", label: "JetBrains Mono" },
   { id: "Menlo", label: "Menlo" },
   { id: "Monaco", label: "Monaco" },
   { id: "Courier New", label: "Courier New" },
@@ -21,7 +22,7 @@ export const monoFonts = [
 ] as const;
 
 export const interfaceFont = signal<string>(interfaceFonts[0].id);
-export const monoFont = signal<string>(monoFonts[0].id);
+export const monoFont = signal<string>(theme.cssVars.theme["font-mono"]);
 
 /** Point the theme tokens at the chosen families so `font-sans` and `font-mono` follow. */
 export function applyFonts() {

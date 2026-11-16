@@ -18,7 +18,7 @@ App.tsx                                      mount 工作区，仅作入口
   ui/workspace/state/initial.ts          工作区与布局恢复
   ui/workspace/tiling.ts                     布局树变换、约束、几何与方向导航
   ui/workspace/TilingCanvas.tsx              按 session ID 稳定挂载、pane 工具栏与分隔拖动
-  ui/workspace/GroupSettings.tsx             组设置界面：组名、颜色和组操作
+  ui/workspace/GroupEditor.tsx               侧栏锚定的小型分组编辑浮层：组名、颜色和组操作
   ui/git/GitWorkspace.tsx              仓库选择与任务组合
   ui/git/scheduler.ts                 Git 视图周期任务调度
   ui/git/operation-gate.ts            跨视图的仓库操作互斥
@@ -54,7 +54,7 @@ src/session_view.rs                          按 ID 绑定会话、低频状态�
   session_view/presentation.rs   平台无关的最新场景槽、弱注册表与原生属性绑定
   session_view/platform/mod.rs   编译期平台选择与终端挂载 / 输入 / 注册入口
     platform/macos/view.rs       NSView 容器、失效和主线程场景读取
-    platform/macos/renderer.rs   CoreText / Core Graphics 绘制与原生缓存
+    platform/macos/renderer/     CoreText / Core Graphics 绘制、字体布局与原生缓存
     platform/macos/keyboard.rs   AppKit local monitor 与 IME 按键仲裁
     platform/macos/probe.rs      debug-only 原生输入与绘制验收驱动
     platform/unsupported.rs      后续平台入口；明确显示 renderer 尚未实现
@@ -63,6 +63,8 @@ src/session_view.rs                          按 ID 绑定会话、低频状态�
 ```
 
 TSX 在 QuickJS 中执行，经 NSH 引擎由原生平台绘制。`termlevel/native` 是同进程 Rust 绑定，不是网络 RPC。类型声明由 NSH 生成到 `.nsh/types`，不手工维护。目录按职责划分，不为每个组件另建 crate。
+
+字体资源由 `src/lib.rs` 的 `Registry::assets(assets!())` 统一注册：NSH 在首次布局前以进程作用域加载，并在打包时包含原始字体、OFL 许可证、作者声明和来源校验清单。默认终端字体链为 JetBrains Mono 2.304 → Sarasa Term SC 1.0.43 → 系统等宽；字体与版本清单见 `assets/fonts/`。新工作区使用该默认值，已有字体选择不覆盖。renderer、格宽/输入测量共用 CSS family list 和 CoreText cascade；标准 JetBrains Mono 的编程连字保留多格 advance。
 
 ## 终端数据通路
 
@@ -104,7 +106,7 @@ Settings → Terminal 的 Terminal identity 默认是 Termlevel，也可显式�
 
 ## Git 视图数据通路
 
-GitWorkspace coordinates repository selection and background tasks. Discovery runs in Rust, publishes incremental results, and is cancelled on view disposal or replacement. A single view-scoped scheduler refreshes data every 5 seconds, scans repositories every 30 seconds, and fetches the selected repository every 5 minutes while the app is active. Manual refresh also scans. Preview runs no background tasks. A shared per-repository operation gate prevents overlapping Git mutations across view remounts. Automatic fetch failures are displayed without repeated notifications.
+GitWorkspace coordinates repository selection and background tasks. Discovery checks only the group directory and its direct child directories using git rev-parse --show-toplevel, accepts only working-tree roots, publishes incremental results, and is cancelled on view disposal or replacement. A single view-scoped scheduler refreshes data every 5 seconds, scans repositories every 30 seconds, and fetches the selected repository every 5 minutes while the app is active. Manual refresh also scans. Preview runs no background tasks. A shared per-repository operation gate prevents overlapping Git mutations across view remounts. Automatic fetch failures are displayed without repeated notifications.
 
 Git 视图由系统 `git` CLI 提供数据，应用不内嵌 Git 实现。最低版本为 Git 2.20；版本过低、找不到 git 或仓库不可读时返回带说明的错误，由 UI 显示提示。读取集中在 `src/git.rs`，显式写操作集中在 `src/git_ops.rs`。
 
@@ -174,7 +176,7 @@ reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I
 
 快照分成锁内复制 Frame/历史 cells/图片、锁外合并 run 与可访问文本两阶段。Rust 引擎以 Arc<Scene> 发布完整场景，主线程只短暂锁住场景槽以克隆最新 Arc，随后在无 emulator 锁时绘制；跨 NSH 属性只有槽 ID 与 revision。槽注册表保存 Weak，发布者和原生组件随挂载释放，不拥有会话。字体、CTLine 与 CGImage 留在主线程 renderer。
 
-原生 NSView 按图片层 0、单元格背景、图片层 1、搜索和字形、图片层 2 绘制。字体与字形排版有界缓存，图片按 owned 像素身份复用。run 按 Ghostty 列坐标锚定并独立裁剪，主字体基线一致，关闭可选连字。复杂 fallback、emoji 与细粒度 AX 仍需验收。一个无绘图操作的 Canvas Drawing 仅提供非空可见行 CanvasNode 语义给 NSH 测试模型；原生容器同时有整个窗口文本标签，不挂逐行视图。光标独立，闪烁不重绘字形。测试夹具可注入独立的终端模拟器。
+原生 NSView 按图片层 0、单元格背景、图片层 1、搜索和字形、图片层 2 绘制。字体与字形排版有界缓存，图片按 owned 像素身份复用。run 按 Ghostty 列坐标锚定并独立裁剪，主字体基线一致，启用字体连字；同样式 ASCII 片段中合成连字但不合并终端格子。跨样式/选区边界的连续连字 shaping、复杂 fallback、emoji 与细粒度 AX 仍需扩展或验收。一个无绘图操作的 Canvas Drawing 仅提供非空可见行 CanvasNode 语义给 NSH 测试模型；原生容器同时有整个窗口文本标签，不挂逐行视图。光标独立，闪烁不重绘字形。测试夹具可注入独立的终端模拟器。
 
 唯一原生 Input 与格子同一原点，位置来自展示快照的 input_cursor，y 夹在格子内；组合时显示 marked text 和系统输入法交互，平时文字透明。开始输入/组合请求贴底，hold 期间延后到下一次发布。DECTCEM 隐藏输出光标不移除输入锚点。
 

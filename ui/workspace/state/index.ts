@@ -10,16 +10,10 @@ export type { SessionTransport, Tab, TabActivity, TabGroup, TabProgress, TabStat
 export function createWorkspace(transport?: SessionTransport, options: WorkspaceOptions = {}) {
   const { snapshot, groups, tabs, NO_LAYOUT, layoutKey, layouts, initialActiveId, workspaceKey, ...counters } = initialWorkspace(transport, options);
   let { sequence, layoutSequence } = counters;
-  // A group's overview replaces the canvas without touching its sessions or layout.
-  const dashboardGroups = signal<string[]>(snapshot?.dashboards ?? []);
-  const dashboardOpen = computed(() => {
-    const key = workspaceKey();
-    return key !== "" && dashboardGroups().includes(key);
-  });
   const savedGitViews = snapshot?.gitViews ?? Object.fromEntries((snapshot?.dashboards ?? []).map(id => [id, { open: ["changes" as const], selected: "changes" as const }]));
   const gitViews = signal<Record<string, { open: GitView[]; selected: GitView | null }>>(savedGitViews);
   const activeGitView = computed(() => gitViews()[workspaceKey()]?.selected ?? null);
-  const canvasBlocked = computed(() => dashboardOpen() || activeGitView() !== null);
+  const canvasBlocked = computed(() => activeGitView() !== null);
   // A sidebar choice outside the current split fills the canvas alone. The split tree stays put.
   const foreground = signal<string | null>(null);
   const tiling = computed(() => {
@@ -123,30 +117,9 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
     }
   }
 
-  function closeDashboardFor(groupId: string | null | undefined) {
-    const key = layoutKey(groupId);
-    if (!key) return;
-    dashboardGroups.update(all => all.filter(id => id !== key));
-  }
-
-  function openDashboard(groupId: string) {
-    if (!group(groupId)) return;
-    batch(() => {
-      workspaceKey.set(groupId);
-      patchGroup(groupId, { collapsed: false });
-      dashboardGroups.update(all => all.includes(groupId) ? all : [...all, groupId]);
-    });
-  }
-
-  function closeDashboard() {
-    const key = workspaceKey();
-    if (key) closeDashboardFor(key);
-  }
-
   function selectGroup(id: string) {
     if (!group(id)) return;
     batch(() => {
-      dashboardGroups.set([]);
       workspaceKey.set(id);
       patchGroup(id, { collapsed: false });
       if (!gitViews()[id]?.selected && !layoutOf(id).root) {
@@ -158,7 +131,6 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
 
   function selectUngrouped() {
     batch(() => {
-      dashboardGroups.set([]);
       workspaceKey.set("");
       if (!layoutOf("").root) {
         const first = tabs().find(item => !item.groupId);
@@ -189,7 +161,6 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
     if (!tab(id)) return;
     const observedRevision = tab(id)?.statusRevision;
     batch(() => {
-      closeDashboardFor(tab(id)?.groupId);
       const key = layoutKey(tab(id)?.groupId);
       if (key && gitViews()[key]?.selected) gitViews.update(all => ({ ...all, [key]: { ...all[key], selected: null } }));
       if (workspaceKey() !== key) workspaceKey.set(key);
@@ -229,7 +200,6 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
     const id = session?.id ?? `tab-${sequence}`;
     const validGroup = destination ? groupId : null;
     batch(() => {
-      closeDashboardFor(validGroup);
       tabs.update((all) => [...all, {
         ...session, id, title: session?.title || `Terminal ${sequence}`, groupId: validGroup, pinned: false,
         cwd: session?.cwd ?? cwd, liveCwd: session?.currentCwd ?? undefined,
@@ -434,7 +404,7 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
 
   const { addGroup, ungroup, closeGroup, placeTab, inSplit, moveTab, combineTabs, togglePin, step, reorder } = groupOperations({
     groups, tabs, expanded, workspaceKey, layouts, gitViews, activeId, nextSequence: () => ++sequence,
-    tab, group, addTab, closeTabs, closeDashboardFor, layoutOf, layoutKey, layoutSessions, placeSplit,
+    tab, group, addTab, closeTabs, layoutOf, layoutKey, layoutSessions, placeSplit,
     select, forgetSession, patchGroup, nextPane, setLayout,
   });
 
@@ -467,9 +437,8 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
   // and do not acknowledge program status the user has not seen.
   if (initialActiveId) select(initialActiveId, false);
   if (snapshot) {
-    // Restoring the saved overview happens after the initial selection, which
+    // Restoring saved Git views happens after the initial selection, which
     // otherwise counts as choosing a terminal and closes it.
-    dashboardGroups.set([]);
     gitViews.set(savedGitViews);
     if (!snapshot.workspaceKey || group(snapshot.workspaceKey)) workspaceKey.set(snapshot.workspaceKey);
     for (const saved of snapshot.groups) {
@@ -479,7 +448,7 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
 
   return {
     tabs, groups, activeId, activeTab, expanded, sidebarWidth, fontSize, scrollback, clipboardRead, workspaceKey, snapshot: snapshotFile,
-    dashboardOpen, openDashboard, closeDashboard, gitViews, activeGitView, canvasBlocked, selectGroup, selectUngrouped, openGitView, closeGitView,
+    gitViews, activeGitView, canvasBlocked, selectGroup, selectUngrouped, openGitView, closeGitView,
     tiling, paneList, inputBlocked, cellWidth, canvasSize, setCanvasSize, paneMinimum, fullGeometry, constrained, projected,
     paneForSession, frameForSession, focusPane, canSplit, splitTerminal, hidePane, toggleZoom, focusDirection,
     layoutSessions, placeSplit, inSplit,

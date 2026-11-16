@@ -46,7 +46,7 @@ export function Type(props: {
   class?: string;
   /** `mono` uses the terminal family. Size still comes from `role`. */
   family?: "ui" | "mono";
-  tone?: "foreground" | "muted-foreground" | "subtle-foreground" | "popover-foreground";
+  tone?: "foreground" | "muted-foreground" | "subtle-foreground" | "popover-foreground" | "destructive";
   testID?: string;
   label?: string;
   tooltip?: JSX.Element;

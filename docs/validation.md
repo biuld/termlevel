@@ -1,5 +1,32 @@
 # Validation
 
+## 2026-11-16：内置终端字体与编程连字
+
+基于 `6fdd3a0` 的未提交工作区。最终使用标准版 JetBrains Mono 2.304（不是 NL）：常规、粗体、斜体、粗斜体；中文与缺失符号使用 Sarasa Term SC 1.0.43 常规/粗体。字体文件保持上游原样，版本、下载 URL、SHA-256、文件大小见 `assets/fonts/manifest.json`；两份 OFL 许可证和 JetBrains 作者声明随包分发。
+
+- CoreText 原生测试确认四种拉丁样式均来自 JetBrains Mono，中文、中文逗号与 ①②③ 均来自 Sarasa Term SC，在默认 13pt 下无需额外 fit。更纱字体内部 ①②③ advance 为 500/1000 em，汉字为 1000/1000 em；Ghostty 仍分别分配一列和两列。
+- 连字测试确认 `->`、`!=`、`=>`、`==`、`===`、`<=`、`>=` 的实际 glyph ID 不同于逐字符独立 shaping，总 advance 仍等于原字符数 × 单格宽度；覆盖四种主字体样式以及后接字符。
+- `./scripts/nsh build`、`./scripts/nsh check` 通过。`./scripts/nsh package --target macos --out artifacts/font-package` 生成 `artifacts/font-package/Termlevel.app`（约 117 MiB）。初次沙箱内 iconutil 转换失败，沙箱外重试成功。
+- 实际 `.app` 的 `Contents/Resources/nsh/assets/@termlevel-native/fonts/` 包含六个字体文件、许可证、作者声明和来源清单；所有文件按来源 manifest 校验通过，确认没有遗留 NL 文件。`codesign --verify --deep --strict` 通过。
+- 最终安装包以 `TERMLEVEL_PREVIEW=1` 启动检查通过，无字体加载错误，日志 `/tmp/termlevel-bundled-fonts-package-smoke.log`；该项仅为预览启动证据，不作为 shell 验收。
+- 最终完整 headless 测试 `./scripts/nsh test --junit artifacts/bundled-fonts-headless.xml` 为 245/246；唯一失败仍是 `tests/workspace/Tiling.test.tsx:154` 的既有侧栏拆分断言。日志 `/tmp/termlevel-bundled-fonts-headless-final.log`。Rust 字体回退与连字测试、默认字体相关界面及真实 PTY headless 测试均通过。
+- 最终 `cargo clippy --workspace --all-targets -- -D warnings` 仍只报告未修改的 `src/clipboard.rs:86` 的 `items_after_test_module`，未屏蔽该 lint。
+- 真实 PTY 原生自动化：`./scripts/test-native glyphs` 1/1、`./scripts/test-native input --filter 'native AppKit composition commits once'` 1/1、`./scripts/test-native selection` 3/3。已检查 `artifacts/glyphs-native.png` 中的连续带圈数字、中英紧邻、末列、普通/粗体/斜体连字。该截图现为最终内置字体组合，未保留先前 Menlo 临时适配后的独立截图；原始裁剪复现仍见 `artifacts/glyphs-before.png`。
+- 新工作区默认使用内置字体，已有字体设置保留。系统字体仍可选择。连字目前限于同样式 ASCII 片段，不跨颜色、选区和超链接边界；用户真实日用字体偏好与长期负载人工验收仍未完成。
+
+## 2026-11-16：带圈数字回退字形裁剪
+
+基于 `6fdd3a0` 的未提交工作区（同时包含仓库发现修正和分组编辑浮层恢复）。当前宿主 macOS arm64，NSH 0.5.0；测试字体为 Menlo / Monaco / Courier New / Andale Mono / System Mono，字号 11、13、18pt。用户截图的具体字体配置仍未取得。
+
+- 已在真实 `/bin/sh` PTY 复现：`①②③`、ASCII / 中文紧邻及末列均出现右侧截断。`artifacts/glyphs-before.png` 为修复前，`artifacts/glyphs-native.png` 为修复后；未使用 `TERMLEVEL_PREVIEW=1`。
+- CoreText 测量：Menlo 13pt 的 `0` advance 约 7.827pt；①②③ 实际使用 HiraginoSans-W3，ink x 约 0.273pt、宽约 12.454pt。Ghostty 为每个带圈数字提供一列、中文两列。临时测量输出在 `/tmp/termlevel-glyph-metrics.log`。
+- `renderer/shaping.rs` 仅对实际 fallback 且 advance、ink 都超过分配范围的字形进行等比 fit；主字体基线、终端列宽和选区数据保持原值。不借相邻空白格。具体来源与取舍见 terminal-grid。
+- 回归测试覆盖五种字体、三个字号、粗体/斜体、带圈数字与中文混排，以及普通斜体和组合重音的保留。
+- 原生自动化：`./scripts/test-native glyphs` 1/1、`./scripts/test-native selection` 3/3、`./scripts/test-native input --filter 'native AppKit composition commits once'` 1/1。后者记录 input/grid 光标坐标一致，并覆盖中文组字提交、取消及 resize。
+- `./scripts/nsh check`、`./scripts/nsh build`、format / diff 检查通过。严格 Clippy 被未修改的 `src/clipboard.rs:86` 的 `items_after_test_module` 阻挡，未放宽 lint。
+- 最终 `./scripts/nsh test --junit artifacts/glyphs-headless.xml` 为 243/244；唯一失败是此前记录过的 `tests/workspace/Tiling.test.tsx:154`（`a split is its own sidebar unit and can move into a tab group`）。日志 `/tmp/termlevel-glyphs-headless-final.log`；所有 renderer / 字形 / 真实 PTY 测试通过。浮层恢复后两处仍调用旧分组菜单的用例已改为实际浮层按钮，未更改行为断言。
+- 原生窗口截图已检查；用户真实配置下的人工 GUI 验收仍待进行。长时间负载及其他复杂 emoji 的完整字形适配不在本次证据范围。
+
 记录：2026-11-11 初始化，2026-11-12 更新侧栏贯顶布局。环境：macOS arm64，Rust / Cargo 1.99.0，NSH 0.5.0 (`f4d68f7`)。
 
 最新记录见本文末尾。默认真实会话和预览已接入 Ghostty 1.0.1；独立 Rust 封装、真实 PTY 和生产 UI 的原生验收分别记录，前文保留逐阶段历史。

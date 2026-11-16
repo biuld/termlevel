@@ -99,7 +99,11 @@ NSView 是透明、flipped 的绘制子视图，hitTest 返回 nil，NSH 容器�
 
 结构节点不随历史、行列或 run 数量增长。一个不含任何绘图操作的 Canvas Drawing 仅承载 CanvasNode 行语义，让 NSH 测试模型继续按 cell 坐标定位文字；它不画背景、字形或图片。原生组件容器带整个可见窗口的 accessibility label；AppKit 的细粒度 AX 行子元素仍未实现。隐藏样式不暴露文字。不为了测试重新挂载逐行视图。
 
-每个 run 的 x=col×cell_width，y=row×line_height。Core Graphics save→clip_to_rect→draw→restore 为每个 run 建立独立裁剪，不共享可变路径。颜色与 dim alpha 在当前场景设置；hidden 只保留背景。CoreText 文字翻转回 y 向上，以主字体统一基线绘制 fallback 字形，关闭可选连字。ASCII 同样式 run 合并，非 ASCII grapheme 保留 Ghostty 给出的格子起点和跨度。
+每个 run 的 x=col×cell_width，y=row×line_height。Core Graphics save→clip_to_rect→draw→restore 为每个 run 建立独立裁剪，不共享可变路径。颜色与 dim alpha 在当前场景设置；hidden 只保留背景。CoreText 文字翻转回 y 向上，以主字体统一基线绘制 fallback 字形，启用字体提供的连字。ASCII 同样式 run 合并，非 ASCII grapheme 保留 Ghostty 给出的格子起点和跨度。
+
+回退字形适配由 `platform/macos/renderer/shaping.rs` 拥有：缓存 CTLine 的实际字体身份、advance 和 ink 边界。只有实际使用回退字体且 advance 超过分配格宽时，且 ink 超出格子时，才按 ink 范围等比缩小并水平平移，保持主字体基线。普通字体的斜体外伸、重音符号不因 ink 单独超边而缩放；不改 Ghostty 列数、光标、背景或选区。该规则不依赖 ①②③ 等字符白名单，也不允许借用相邻格。图形块仍走独立参考平面。
+
+设计对照：[Ghostty Glyph.Constraint](https://github.com/ghostty-org/ghostty/blob/main/src/font/Glyph.zig) 提供保留宽高比的 fit；[WezTerm glyphcache](https://github.com/wezterm/wezterm/blob/main/wezterm-gui/src/glyphcache.rs) 对过宽的 scalable fallback glyph 进行缩放，并另有借用右侧空白格的策略。Termlevel 当前使用固定分配格范围，不实现借格策略；不声称与上述终端所有字体策略相同。
 
 背景不跟随文字 shaping 分段：每行相邻且有效背景色相同的 run（含 inverse 与宿主选区）合并为连续色带。背景矩形的共享边界经当前 CGContext 转到 device space 后统一取整，再转回 point；只在背景阶段关闭几何抗锯齿，之后恢复 CGContext 状态。这样小数 cell 宽高、Retina scale 与视图原点偏移不会在文字分段或相邻行之间产生透明缝，文字仍保留原有抗锯齿和格子定位。不同背景色共用同一像素边界，不用矩形重叠掩盖缝隙。
 
@@ -109,11 +113,15 @@ U+2500–U+259F 的单标量画线 / 块字符使用系统等宽字体提供的�
 
 这是应用 renderer 的字形适配，不是调用 Ghostty 应用的 sprite renderer。固定 libghostty-vt 1.0.1 的 C ABI 未导出后者；后续若接入另一套字形渲染后端，应在平台 renderer 内替换，保持终端数据与 scene 契约。
 
+默认字体链为随包提供的 JetBrains Mono 2.304、Sarasa Term SC 1.0.43，再到系统等宽字体。JetBrains Mono 的四种样式负责拉丁字符及编程连字，更纱常规/粗体负责中文和缺失符号；没有中文斜体时保持直立回退。原始字体、许可证和来源 hash 由 NSH 的资源注册统一随包携带，不要求系统安装。字体选择、测量 CSS 列表与 CoreText cascade 使用相同顺序；不把整个 family list 引为一个字体名。
+
+连字只发生在已有同样式 ASCII run 内。`->`、`!=`、`=>` 等组合仍按原字符数占格，保留 Ghostty 的列定义；CoreText 测试验证四种主字体样式下的实际字形替换及总 advance。当前不跨颜色、选区或超链接边界重组连字。
+
 renderer 缓存所选字体的普通/粗体/斜体/粗斜体，缓存 CTLine 的键为文字与字面样式。family 或 size 改变时清掉字体和文字缓存；颜色、选区、搜索不参与 shaping 键。文字缓存最多 2048 项和 256 KiB 源文字，按最近使用淘汰。缓存上限不是 CoreText 对象的绝对内存上限，CoreText 自身内存需要持续输出压力测试。
 
 图片继续消费已复制 RGBA；原生 CGImage 按 Arc<Pixels> 身份缓存，仅保留当前快照引用的像素。源裁剪、偏移、缩放和三层顺序保留，动画 generation 换像素时重建。没有每帧整屏 raster、图片编码或 ImageSrc 上传。Kitty file/temp/shared-memory medium 继续关闭。
 
-复杂 emoji、字体回退列表、粗斜体合成、曲线下划线与下划线颜色仍需分别扩展或验收；这次替换不声称已经具备 Ghostty 应用的完整文字 renderer。
+复杂 emoji、跨样式或选区边界的连字、粗斜体合成、曲线下划线与下划线颜色仍需分别扩展或验收；这次替换不声称已经具备 Ghostty 应用的完整文字 renderer。
 
 ## 输入与命中
 

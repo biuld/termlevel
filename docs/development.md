@@ -72,6 +72,7 @@ git diff --check
 ./scripts/test-native-tiling
 ./scripts/test-native-protocols
 ./scripts/test-native-ghostty
+./scripts/test-native glyphs
 ./scripts/test-native status
 ./scripts/test-native notifications
 ./scripts/test-native osc

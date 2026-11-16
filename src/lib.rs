@@ -19,6 +19,8 @@ fn native(registry: &mut Registry) {
     #[cfg(all(debug_assertions, target_os = "macos"))]
     registry.module::<session_view::platform::NativeInputProbe>();
     registry
+        // Fonts and their licenses are shipped and registered before layout.
+        .assets(assets!())
         .module::<runtime::Runtime>()
         .module::<notifications::Notifications>()
         .module::<git::Git>()

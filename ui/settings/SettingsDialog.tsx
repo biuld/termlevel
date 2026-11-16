@@ -199,7 +199,7 @@ export function SettingsDialog(props: {
               <FontChoices fonts={monoFonts} selected={monoFont} testID="mono-font" onSelect={(id) => { monoFont.set(id); applyFonts(); }} />
               <View class="rounded-(--radius-tab) bg-chrome px-3 py-2">
                 <Text style={{ fontFamily: monoFont(), fontSize: props.fontSize(), lineHeight: lineHeight(), color: token("terminal-prompt") }}>~/Projects/termlevel</Text>
-                <Text style={{ fontFamily: monoFont(), fontSize: props.fontSize(), lineHeight: lineHeight(), color: token("terminal-foreground") }}>echo typography</Text>
+                <Text style={{ fontFamily: monoFont(), fontSize: props.fontSize(), lineHeight: lineHeight(), color: token("terminal-foreground") }}>echo typography · 中文 ①②③</Text>
               </View>
             </View>
           </If>

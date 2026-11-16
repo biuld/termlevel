@@ -2,7 +2,7 @@
   "cssVars": {
     "theme": {
       "font-sans": "system-ui",
-      "font-mono": "Menlo",
+      "font-mono": "JetBrains Mono, Sarasa Term SC, ui-monospace",
       "radius": "6px",
       "radius-control": "5px",
       "radius-tab": "6px",

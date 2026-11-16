@@ -227,7 +227,7 @@ test("moves a terminal between groups and removes a group without closing termin
   await app.press("id:group-toggle-termlevel");
   expect(app.shows("id:tab-preview")).toBe(true);
   await app.rightClick("id:group-playground");
-  await app.chooseMenuItem("Ungroup terminals");
+  await app.press("id:group-editor-ungroup");
   expect(app.shows("id:group-playground")).toBe(false);
   expect(app.shows("id:tab-preview")).toBe(true);
   expect(app.shows("id:tab-colors")).toBe(true);
@@ -239,7 +239,7 @@ test("moves a terminal between groups and removes a group without closing termin
 test("closing an active group selects a remaining terminal and an empty workspace can recover", async () => {
   const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.rightClick("id:group-termlevel");
-  await app.chooseMenuItem("Delete group…");
+  await app.press("id:group-editor-delete");
   await app.press("id:confirm-close-group");
   expect(app.shows("id:group-termlevel")).toBe(false);
   expect(app.shows("id:tab-home")).toBe(true);
@@ -382,34 +382,32 @@ test("the session toolbar adapts to narrow windows while keeping its actions acc
 });
 
 
-test("the overview header changes color and name while keeping terminal output", async () => {
+test("the group editor changes color and name while keeping terminal output", async () => {
   const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.type("id:terminal-prototype", "echo group-editor-retains-output");
   await app.keyboard.press("enter");
   const before = app.spanStyle("id:group-termlevel >> text:termlevel").color;
   await app.rightClick("id:group-termlevel");
-  await app.chooseMenuItem("Group settings…");
-  await app.waitFor("id:dashboard");
+  await app.waitFor("id:group-editor");
   expect(app.value("id:group-name-input")).toBe("termlevel");
-  await app.press("id:group-color-trigger");
   for (const color of ["blue", "purple", "cyan", "orange", "yellow", "pink", "green", "gray", "red"]) {
     expect(app.count(`id:group-color-${color}`)).toBe(1);
   }
   await app.press("id:group-color-red");
-  expect(app.shows("id:dashboard")).toBe(true);
+  expect(app.shows("id:group-editor")).toBe(true);
   expect(app.shows("id:group-termlevel >> label:red group marker")).toBe(true);
   await app.clear("id:group-name-input");
   await app.type("id:group-name-input", "Release");
   // Color belongs to the marker; the name keeps its readable neutral color.
   expect(app.spanStyle("id:group-termlevel >> text:Release").color).toBe(before);
   await app.keyboard.press("escape");
-  expect(app.shows("id:dashboard")).toBe(false);
+  expect(app.shows("id:group-editor")).toBe(false);
   await app.waitFor("text:group-editor-retains-output");
 
   await app.press("id:group-termlevel");
   expect(app.shows("id:dashboard-new-terminal")).toBe(false);
   await app.press("id:titlebar-new-terminal");
-  expect(app.shows("id:dashboard")).toBe(false);
+  expect(app.shows("id:group-editor")).toBe(false);
   expect(app.shows("id:tab-tab-1")).toBe(true);
   await app.press("id:group-toggle-termlevel");
   expect(app.shows("id:tab-tab-1")).toBe(false);
@@ -419,19 +417,17 @@ test("the overview header changes color and name while keeping terminal output",
   expect(app.count("id:terminal-prototype")).toBe(1);
 });
 
-test("the group overview opens from the compact rail and closes with Escape", async () => {
+test("the group editor opens from the compact rail and closes with Escape", async () => {
   const app = await open("./fixtures/PreviewApp.tsx", options);
   await app.press("id:toggle-sidebar");
   await app.rightClick("id:group-termlevel");
-  await app.chooseMenuItem("Group settings…");
-  await app.waitFor("id:dashboard");
-  await app.press("id:group-color-trigger");
+  await app.waitFor("id:group-editor");
   await app.press("id:group-color-gray");
-  expect(app.shows("id:dashboard")).toBe(true);
+  expect(app.shows("id:group-editor")).toBe(true);
   await app.keyboard.press("escape");
-  expect(app.shows("id:dashboard")).toBe(false);
+  expect(app.shows("id:group-editor")).toBe(false);
   await app.press("id:group-termlevel");
-  expect(app.shows("id:dashboard")).toBe(false);
+  expect(app.shows("id:group-editor")).toBe(false);
   await app.press("id:toggle-sidebar");
   expect(app.count("id:terminal-prototype")).toBe(1);
 });

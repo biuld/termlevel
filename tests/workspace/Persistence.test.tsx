@@ -279,7 +279,7 @@ test("deleting a group with only a Git view clears its context", async () => {
   const app = await open("./fixtures/RestoreFixture.tsx", { ...options, storage: { workspace: JSON.stringify(stored) } });
   await app.waitFor("id:git-view");
   await app.rightClick("id:group-group-1");
-  await app.chooseMenuItem("Delete group…");
+  await app.press("id:group-editor-delete");
   await app.press("id:confirm-close-group");
   await app.waitFor("id:empty-state");
   await app.press("id:titlebar-new-terminal");

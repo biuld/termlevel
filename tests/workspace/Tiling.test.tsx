@@ -133,7 +133,7 @@ test("each tab group keeps its own tiling layout", async () => {
   expect(app.shows("id:terminal-prototype")).toBe(true);
   expect(app.shows("id:terminal-tab-1")).toBe(true);
   expect(app.shows("id:terminal-colors")).toBe(false);
-  await app.rightClick("id:group-termlevel"); await app.chooseMenuItem("Delete group…"); await app.press("id:confirm-close-group");
+  await app.rightClick("id:group-termlevel"); await app.press("id:group-editor-delete"); await app.press("id:confirm-close-group");
   expect(app.shows("id:terminal-prototype")).toBe(false);
   expect(app.shows("id:terminal-tab-1")).toBe(false);
   expect(app.shows("id:terminal-colors")).toBe(true);

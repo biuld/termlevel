@@ -1,4 +1,4 @@
-import { reduceMotion, keymap, Scroll, signal, Text, token, View, type GestureResponderEvent, type Point, type ViewRef } from "nsh";
+import { reduceMotion, keymap, Scroll, signal, Text, token, View, type GestureResponderEvent, type Point, type ViewRef, type Signal } from "nsh";
 import { Button, Progress } from "nsh/base";
 import { Menu } from "nsh/desktop";
 import { Icon, type IconName } from "../shared/icons";
@@ -6,6 +6,7 @@ import { WorkingIndicator, type WorkingIndicatorKind } from "../shared/WorkingIn
 import { Hint, IconButton } from "../shared/controls";
 import type { Workspace } from "./state";
 import { groupColor, groupLine, groupTint } from "../shared/theme";
+import { GroupEditor } from "./GroupEditor";
 import { Type } from "../shared/type";
 
 type DragSlot = { ref: ViewRef; kind: "tab" | "header" | "ungrouped"; id: string | null };
@@ -22,7 +23,7 @@ export interface SidebarActions {
   toggleSidebar(): void;
 }
 
-export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; expanded: () => boolean; indicator: () => WorkingIndicatorKind }) {
+export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; groupEditor: Signal<string | null>; expanded: () => boolean; indicator: () => WorkingIndicatorKind }) {
   const store = props.workspace;
   const actions = props.actions;
   const members = (groupId: string | null) => store.tabs().filter((t) => t.groupId === groupId).sort((a, b) => Number(b.pinned) - Number(a.pinned));
@@ -320,6 +321,12 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
 
   function GroupRow(row: { id: string }) {
     const id = row.id;
+    const anchor = signal<ViewRef | null>(null);
+    let trigger: ViewRef | undefined;
+    const close = (restoreFocus = false) => {
+      props.groupEditor.set(null);
+      if (restoreFocus) trigger?.focus();
+    };
     const visibleGit = () => (store.gitViews()[id]?.open ?? []).filter(kind =>
       !store.group(id)?.collapsed || (!props.expanded() && store.workspaceKey() === id && store.activeGitView() === kind));
     const shownSplit = () => {
@@ -337,16 +344,12 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
         <If when={!props.expanded()}>
           <View class="absolute w-px rounded-sm" style={{ left: 2, top: 2, bottom: 2, backgroundColor: groupLine(store.group(id)?.color) }} />
         </If>
-        <View ref={(ref) => register(`header:${id}`, ref ? { ref, kind: "header", id } : null)}
+        <View ref={(ref) => { anchor.set(ref); register(`header:${id}`, ref ? { ref, kind: "header", id } : null); }}
           testID={store.workspaceKey() === id ? `group-workspace-${id}` : undefined}
           class="group relative flex-row items-center rounded-(--radius-control)"
           classList={{ "mx-2": !props.expanded(), "bg-sidebar-accent": drop()?.headerId === id || store.workspaceKey() === id }}
           style={{ marginVertical: props.expanded() ? 0 : 2 }}
-          onContextMenu={() => { void Menu.popup([
-            { label: "Group settings…", onSelect: () => store.openDashboard(id) },
-            { label: "Ungroup terminals", onSelect: () => store.ungroup(id) },
-            { label: "Delete group…", onSelect: () => actions.closeGroup(id) },
-          ]); }}>
+          onContextMenu={() => props.groupEditor.set(id)}>
           <If when={drop()?.headerId === id}>
             <View testID={`drop-group-${id}`} class="absolute inset-0 rounded-(--radius-control) border border-primary" style={{ pointerEvents: "none" }} />
           </If>
@@ -358,7 +361,7 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
               <Icon name={store.group(id)?.collapsed ? "chevron" : "down"} size={11} color={token("subtle-foreground")} />
             </Button>
           </If>
-          <Button testID={`group-${id}`}
+          <Button ref={(ref) => { trigger = ref; }} testID={`group-${id}`}
             accessibilityLabel={`Open ${store.groupTitle(id)}${store.workspaceKey() === id ? ", current" : ""}`}
             onPress={() => store.selectGroup(id)}
             class="h-(--height-tab) min-w-0 flex-1 flex-row items-center gap-1.5 rounded-(--radius-control) focus-visible:ring-2 ring-sidebar-ring"
@@ -376,13 +379,21 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
                 style={{ color: token("sidebar-foreground"), numberOfLines: 1 }}>{store.groupTitle(id)}</Text>
             </If>
           </Button>
+          <If when={props.expanded()}>
+            <View class="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" style={{ opacity: props.groupEditor() === id ? 1 : undefined }}>
+              <IconButton icon="more" label={`Options for ${store.groupTitle(id)}`} testID={`group-menu-${id}`} onPress={() => props.groupEditor.set(props.groupEditor() === id ? null : id)} />
+            </View>
+          </If>
+          <If when={props.groupEditor() === id && anchor() !== null}>
+            <GroupEditor id={id} anchor={anchor()!} workspace={store} close={close} deleteGroup={() => actions.closeGroup(id)} />
+          </If>
         </View>
         <If when={shownSplit().length > 0 || visibleMembers().length > 0 || visibleGit().length > 0}>
           <View style={{ marginLeft: props.expanded() ? 10 : 0, paddingLeft: props.expanded() ? token("gap-group-guide") : 4, paddingRight: props.expanded() ? 0 : 4, borderLeftWidth: props.expanded() ? 1 : 0, borderColor: groupLine(store.group(id)?.color) }}>
             <Each of={visibleGit()}>{kind =>
               <View class="group relative my-0.5 h-(--height-tab) flex-row items-center rounded-(--radius-tab) hover:bg-tab-hover"
-                classList={{ "mx-1": !props.expanded(), "bg-tab-selected hover:bg-tab-selected": store.workspaceKey() === id && store.activeGitView() === kind() && !store.dashboardOpen() }}>
-                <Button testID={`git-tab-${id}-${kind()}`} role="tab" selected={store.workspaceKey() === id && store.activeGitView() === kind() && !store.dashboardOpen()} accessibilityLabel={`${kind() === "changes" ? "Changes" : "History"} in ${store.groupTitle(id)}`}
+                classList={{ "mx-1": !props.expanded(), "bg-tab-selected hover:bg-tab-selected": store.workspaceKey() === id && store.activeGitView() === kind() }}>
+                <Button testID={`git-tab-${id}-${kind()}`} role="tab" selected={store.workspaceKey() === id && store.activeGitView() === kind()} accessibilityLabel={`${kind() === "changes" ? "Changes" : "History"} in ${store.groupTitle(id)}`}
                   onPress={() => store.openGitView(kind(), id)}
                   tooltip={<Hint>{`${kind() === "changes" ? "Changes" : "History"} · ${store.groupTitle(id)}`}</Hint>}
                   class="h-full min-w-0 flex-1 flex-row items-center gap-2 rounded-(--radius-tab) focus-visible:ring-2 ring-sidebar-ring"
@@ -391,7 +402,7 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
                   <If when={props.expanded()}><Text class="min-w-0 flex-1 text-(length:--text-body) text-sidebar-foreground">{kind() === "changes" ? "Changes" : "History"}</Text></If>
                 </Button>
                 <If when={props.expanded()}><View class="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-                  style={{ opacity: store.workspaceKey() === id && store.activeGitView() === kind() && !store.dashboardOpen() ? 1 : undefined }}>
+                  style={{ opacity: store.workspaceKey() === id && store.activeGitView() === kind() ? 1 : undefined }}>
                   <IconButton icon="close" label={`Close ${kind() === "changes" ? "Changes" : "History"}`} testID={`close-git-${id}-${kind()}`} onPress={() => store.closeGitView(id, kind())} />
                 </View></If>
               </View>

@@ -1,0 +1,54 @@
+{
+  "sources": [
+    {
+      "project": "JetBrains Mono",
+      "version": "2.304",
+      "url": "https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip",
+      "archive_sha256": "6f6376c6ed2960ea8a963cd7387ec9d76e3f629125bc33d1fdcd7eb7012f7bbf"
+    },
+    {
+      "project": "Sarasa Term SC",
+      "version": "1.0.43",
+      "url": "https://github.com/be5invis/Sarasa-Gothic/releases/download/v1.0.43/SarasaTermSC-TTF-1.0.43.7z",
+      "archive_sha256": "c915ef316f0194a3f25185e0370b226e073abe68b877c6bd678ce3071e215567"
+    }
+  ],
+  "files": {
+    "jetbrains-mono/AUTHORS.txt": {
+      "sha256": "33f99c94ef0a0909d7584a5d4bde1fb9b1630daa620f5a788c28c43327e79412",
+      "bytes": 350
+    },
+    "jetbrains-mono/JetBrainsMono-Bold.ttf": {
+      "sha256": "5590990c82e097397517f275f430af4546e1c45cff408bde4255dad142479dcb",
+      "bytes": 277828
+    },
+    "jetbrains-mono/JetBrainsMono-BoldItalic.ttf": {
+      "sha256": "4039d5ce0ed225bf9c8b2c8c6436290ae2f356b7e90d70fa666227238324aa3b",
+      "bytes": 279832
+    },
+    "jetbrains-mono/JetBrainsMono-Italic.ttf": {
+      "sha256": "9d0a1f7a708e6af183f1193b7e81d40da294f5c67682c085d8401c60aac8ded4",
+      "bytes": 276840
+    },
+    "jetbrains-mono/JetBrainsMono-Regular.ttf": {
+      "sha256": "a0bf60ef0f83c5ed4d7a75d45838548b1f6873372dfac88f71804491898d138f",
+      "bytes": 273900
+    },
+    "jetbrains-mono/OFL.txt": {
+      "sha256": "30f0c136e3c88e422d0791acd97238870f9054a9729bc34cf2ff0d4ed8cac4ad",
+      "bytes": 4399
+    },
+    "sarasa-term-sc/OFL.txt": {
+      "sha256": "32c932e0dbae4f6e6386964bbc2d04178707665a05ca65cf636241af13d50a53",
+      "bytes": 4702
+    },
+    "sarasa-term-sc/SarasaTermSC-Bold.ttf": {
+      "sha256": "948cb77f672eab018708a376d1f1de1fc22afeee9be7d1f66bde1bf1005c02ae",
+      "bytes": 25422000
+    },
+    "sarasa-term-sc/SarasaTermSC-Regular.ttf": {
+      "sha256": "f23a56b66b8e4dfa9353113f3608bd215482fe2e3148309dac3753bfcacea665",
+      "bytes": 25610644
+    }
+  }
+}

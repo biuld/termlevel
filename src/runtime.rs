@@ -69,10 +69,9 @@ impl Runtime {
 }
 
 fn terminal_font_css(font: &str, size: f32) -> String {
-    match font {
-        "monospace" | "ui-monospace" => format!("{size}px {font}"),
-        _ => format!("{size}px \"{}\"", font.replace('"', "")),
-    }
+    // NSH accepts a CSS family list. Quoting the whole list would turn
+    // all fallbacks into one nonexistent family and break input/grid metrics.
+    format!("{size}px {font}")
 }
 
 pub(crate) fn terminal_cell_width(font: &str, size: f32) -> f32 {

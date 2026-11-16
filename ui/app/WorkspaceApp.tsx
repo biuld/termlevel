@@ -42,6 +42,7 @@ export function WorkspaceApp(props: {
   }, { snapshot: props.snapshot ?? null });
   const win = currentWindow();
   const editor = signal<Editor | null>(null);
+  const editingGroup = signal<string | null>(null);
   const draft = signal("");
   const searching = signal(false);
   const query = signal("");
@@ -101,14 +102,14 @@ export function WorkspaceApp(props: {
   const pathError = signal("");
   const version = Runtime.version();
   effect(() => {
-    const modal = editor() !== null || searching() || settings() || notifying() || closingGroup() !== null || choosingPath() || finding() || store.canvasBlocked();
+    const modal = editingGroup() !== null || editor() !== null || searching() || settings() || notifying() || closingGroup() !== null || choosingPath() || finding() || store.canvasBlocked();
     if (modal) { store.resizing.set(false); store.cancelPaneDrag(); }
     store.inputBlocked.set(modal || store.resizing());
   });
   const terminalAction = (action: () => void) => () => { if (!store.inputBlocked()) action(); };
   const sidebarHovered = signal(false);
   const sidebarLayoutWidth = signal(store.sidebarWidth() + token("gap-pane") / 2);
-  const sidebarOpen = () => store.expanded() || sidebarHovered();
+  const sidebarOpen = () => store.expanded() || sidebarHovered() || editingGroup() !== null;
   const sidebarFloating = () => !store.expanded() && sidebarOpen();
   function toggleSidebar() {
     sidebarHovered.set(false);
@@ -117,7 +118,7 @@ export function WorkspaceApp(props: {
 
   const titleGroup = () => {
     const name = store.groupTitle(store.workspaceKey() || null);
-    return store.dashboardOpen() ? name : name.replace(/^./u, (initial) => initial.toLocaleUpperCase());
+    return name.replace(/^./u, (initial) => initial.toLocaleUpperCase());
   };
 
   win.set({
@@ -126,7 +127,7 @@ export function WorkspaceApp(props: {
   });
   effect(() => win.set({
     title: store.canvasBlocked()
-      ? `${store.dashboardOpen() ? "Group settings" : store.activeGitView() === "changes" ? "Changes" : "History"} — ${titleGroup()} — Termlevel`
+      ? `${store.activeGitView() === "changes" ? "Changes" : "History"} — ${titleGroup()} — Termlevel`
       : `${store.activeTab()?.title ?? "Termlevel"} — Termlevel`,
   }));
 
@@ -154,7 +155,6 @@ export function WorkspaceApp(props: {
   const shortcuts: Record<string, () => void> = {
     "mod+t": actions.newTerminal,
     "mod+w": () => {
-      if (store.dashboardOpen()) { store.closeDashboard(); return; }
       const view = store.activeGitView(); if (view) { store.closeGitView(store.workspaceKey(), view); return; }
       const id = store.activeId(); if (id) store.closeTab(id);
     },
@@ -163,9 +163,8 @@ export function WorkspaceApp(props: {
     "mod+shift+d": terminalAction(() => { store.splitTerminal("down"); }),
     "mod+shift+enter": terminalAction(store.toggleZoom),
     "mod+shift+g": actions.newGroup,
-    "mod+shift+o": () => { const key = store.workspaceKey(); if (key) store.openDashboard(key); },
     "mod+k": actions.search,
-    "mod+f": () => { if (editor() === null && !searching() && !settings() && closingGroup() === null && !choosingPath() && !store.canvasBlocked()) finding.set(true); },
+    "mod+f": () => { if (editor() === null && !searching() && !settings() && editingGroup() === null && closingGroup() === null && !choosingPath() && !store.canvasBlocked()) finding.set(true); },
     "mod+,": actions.settings,
     "ctrl+tab": () => store.step(1),
     "ctrl+shift+tab": () => store.step(-1),
@@ -196,7 +195,6 @@ export function WorkspaceApp(props: {
     { label: "Edit", submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] },
     { label: "View", submenu: [
       { label: "Toggle sidebar", shortcut: "mod+b", onSelect: shortcuts["mod+b"] },
-      { label: "Group settings", shortcut: "mod+shift+o", onSelect: shortcuts["mod+shift+o"] },
       { label: "Find a terminal…", shortcut: "mod+k", onSelect: actions.search },
       { label: "Find in terminal…", shortcut: "mod+f", onSelect: () => finding.set(true) },
       { type: "separator" },
@@ -223,7 +221,7 @@ export function WorkspaceApp(props: {
           testID="toggle-sidebar" onPress={actions.toggleSidebar} />
       </View>
       <View class="absolute inset-0 items-center justify-center" style={{ pointerEvents: "none" }}>
-        <Type role="label">{store.canvasBlocked() ? `${store.dashboardOpen() ? "Group settings" : store.activeGitView() === "changes" ? "Changes" : "History"} · ${titleGroup()}` : "Termlevel"}</Type>
+        <Type role="label">{store.canvasBlocked() ? `${store.activeGitView() === "changes" ? "Changes" : "History"} · ${titleGroup()}` : "Termlevel"}</Type>
       </View>
       <View testID="global-actions" desktop={{ windowDrag: false }} class="ml-auto flex-row items-center gap-0.5">
         <IconButton icon="plus" label={store.workspaceKey() ? `New terminal in ${store.groupTitle(store.workspaceKey())}` : "New ungrouped terminal"} testID="titlebar-new-terminal" onPress={actions.newTerminal} />
@@ -265,7 +263,7 @@ export function WorkspaceApp(props: {
         <ResizablePanel minSize={320}>
           <View class="h-full min-w-0 flex-1" style={{ paddingLeft: token("gap-pane") / 2 }}>
             <TilingCanvas workspace={store} preview={preview} rename={actions.renameTab} newGroup={actions.newGroup}
-              closeGroup={actions.closeGroup} git={git} previewSurface={props.previewSurface} notify={notifications.publish} finding={finding} findQuery={findQuery} />
+              git={git} previewSurface={props.previewSurface} notify={notifications.publish} finding={finding} findQuery={findQuery} />
           </View>
         </ResizablePanel>
       </ResizablePanelGroup>
@@ -300,7 +298,7 @@ export function WorkspaceApp(props: {
         borderRadius: token("radius-panel"),
         boxShadow: sidebarFloating() ? [{ x: 6, y: 0, blur: 28, color: token("panel-shadow") }] : [],
       }}>
-      <Sidebar workspace={store} actions={actions} expanded={sidebarOpen} indicator={workingIndicator} />
+      <Sidebar workspace={store} actions={actions} groupEditor={editingGroup} expanded={sidebarOpen} indicator={workingIndicator} />
     </View>
 
     <AppDialog testID="name-dialog" open={editor() !== null} label={editor()?.title ?? "Edit name"} title={editor()?.title}

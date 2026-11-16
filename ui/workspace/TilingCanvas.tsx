@@ -8,7 +8,6 @@ import { Action, DialogKeys, Hint, IconButton } from "../shared/controls";
 import { Icon } from "../shared/icons";
 import { Type } from "../shared/type";
 import { groupColor } from "../shared/theme";
-import { GroupSettings } from "./GroupSettings";
 import { GitWorkspace } from "../git/GitWorkspace";
 import type { GitTransport } from "../git/git-types";
 import type { Workspace } from "./state";
@@ -19,7 +18,6 @@ export function TilingCanvas(props: {
   preview: boolean;
   rename: (id: string) => void;
   newGroup: () => void;
-  closeGroup: (id: string) => void;
   git?: GitTransport;
   previewSurface?: PreviewSurface;
   notify: (level: "info" | "error", title: string, body: string) => void;
@@ -221,16 +219,13 @@ export function TilingCanvas(props: {
           : "Cannot place terminal here"}</Type>
       </View>
     </If>
-    <If when={!store.dashboardOpen() && store.activeGitView() !== null}>
+    <If when={store.activeGitView() !== null}>
       <View testID="git-view" class="absolute inset-0 overflow-hidden rounded-(--radius-panel) bg-terminal-background">
         <If when={props.git}>{(git) => <>
           <GitWorkspace workspace={store} preview={props.preview} git={git()} notify={props.notify} />
         </>}</If>
         <If when={!props.git}><View class="flex-1 items-center justify-center"><Type role="body" tone="muted-foreground">Git is unavailable in preview.</Type></View></If>
       </View>
-    </If>
-    <If when={store.dashboardOpen()}>
-      <GroupSettings workspace={store} closeGroup={props.closeGroup} />
     </If>
   </View>;
 }

@@ -9,13 +9,14 @@ case "$kind" in
   tiling) fixture=Tiling; report=tiling-native ;;
   protocols) fixture=Protocols; report=protocols-native ;;
   ghostty) fixture=Ghostty; report=ghostty-production-native ;;
+  glyphs) fixture=Glyphs; report=glyphs-native ;;
   notifications) fixture=Notifications; report=notifications-native ;;
   status) fixture=Status; report=status-native ;;
   osc) fixture=Osc; report=osc-native-acceptance ;;
   gitlive) fixture=GitLive; report=git-live-native ;;
   history) fixture=History; report=history-native ;;
   settings) fixture=Settings; report=settings-native ;;
-  *) echo 'Usage: scripts/test-native {input|scroll|selection|tiling|protocols|ghostty|notifications|status|osc|gitlive|history|settings} [NSH test options]' >&2; exit 2 ;;
+  *) echo 'Usage: scripts/test-native {input|scroll|selection|tiling|protocols|ghostty|glyphs|notifications|status|osc|gitlive|history|settings} [NSH test options]' >&2; exit 2 ;;
 esac
 shift
 # NSH resolves open() relative to the test module. Acceptance sources use

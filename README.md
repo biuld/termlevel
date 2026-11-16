@@ -25,6 +25,7 @@
 - Changes 展示变更文件树和单文件 diff。History 按分支 scope 显示提交车道、提交详情；变更文件列表可点击，右侧只显示选中文件的 patch，默认第一个文件。工具栏可 Fetch 或 fast-forward Pull 当前分支；左栏管理 Local / Remote / Tags 与 worktree，可 checkout、新建 / 删除分支、新建 worktree、把 worktree 打开为新分组、删除或锁定 worktree。合并、rebase 与冲突解决尚未接入。
 - Firefox 风格分组编辑浮层：右键组头或点更多，直接改名称、选择九种颜色；新建组直接进入编辑。
 - 查找终端、字体大小调整、系统菜单与快捷键。
+- 内置 JetBrains Mono（支持编程连字）和更纱终端黑体 SC，中文与常用符号使用明确的回退链；无需额外安装字体，已有字体选择会保留。
 - 多终端定向分屏、方向焦点与位置交换；拖动侧栏标签或 pane 标题安排已有会话。
 - pane 缩放、键盘调整、均分与临时放大；收起 pane 保留进程，关闭 terminal 才结束会话。
 - 窗口过窄时临时展示焦点 terminal，空间恢复后还原布局。
