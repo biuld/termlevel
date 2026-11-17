@@ -27,7 +27,7 @@
       "height-status": "22px",
       "padding-terminal": "16px",
       "line-gap-terminal": "8px",
-      "width-repository-picker": "420px",
+      "width-repository-picker": "360px",
       "height-repository-picker": "288px",
       "width-git-ref-tooltip": "360px",
       "width-git-ref": "144px",

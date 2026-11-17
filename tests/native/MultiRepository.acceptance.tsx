@@ -9,7 +9,7 @@ test("native repository catalog discovers containers and enclosing roots and res
     await app.press(`id:git-repository-${path}`);
   }
   try {
-    await app.waitFor("text:4 repositories");
+    await app.waitFor("id:git-repository-selector");
     await choose("alpha"); await app.waitFor("text:alpha commit 600");
     await choose("beta"); await app.waitFor("text:beta commit 600");
     await choose("alpha"); await app.waitFor("text:alpha commit 600");
@@ -21,6 +21,13 @@ test("native repository catalog discovers containers and enclosing roots and res
     await app.press("id:repo-inside"); await app.waitFor("text:alpha commit 600");
     await app.press("id:repo-container");
     await app.press("id:git-repository-selector"); await app.waitFor("text:worktree");
+    await app.hover("id:git-discover-refresh");
     await app.screenshot("artifacts/multi-repository-native-picker.png");
+    await app.type("id:git-repository-search", "alpha-linked");
+    await app.waitFor("text:alpha-linked");
+    await app.screenshot("artifacts/multi-repository-native-filtered.png");
+    await app.press("id:git-add-repository-open");
+    await app.waitFor("id:git-add-repository-path");
+    await app.screenshot("artifacts/multi-repository-native-add.png");
   } finally { app.dispose(); }
 }, 60000);
