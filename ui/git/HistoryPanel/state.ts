@@ -1,33 +1,42 @@
 import { computed, signal } from "nsh";
 import type { TreeItem } from "nsh/base";
 
-import { layoutCommits } from "../commit-graph";
+import { layoutCommits, type GraphRow } from "../commit-graph";
 import type { GitBranch, GitCommit, GitCommitDetail, GitRepoStatus, GitWorktree } from "../git-types";
 import { LANE_GAP, GRAPH_LEFT, type CommitRow, type FileRow, type HistoryProps, formatDate, patchForFile } from "./common";
 
 export function createHistoryState(props: HistoryProps) {
   const store = props.workspace;
+  const sessionVersion = props.session?.version ?? 0;
+  const cached = props.session?.history?.version === sessionVersion ? props.session.history : undefined;
+  const saved = props.session?.historyPreferences;
+
   const groupId = () => store.workspaceKey();
   const group = () => store.group(groupId());
   const cwd = () => props.root?.() ?? group()?.cwd ?? "~";
 
-  const status = signal<GitRepoStatus | null>(null);
-  const branches = signal<GitBranch[]>([]);
-  const worktrees = signal<GitWorktree[]>([]);
-  const commits = signal<GitCommit[]>([]);
-  const hasMore = signal(false);
-  const logTruncated = signal(false);
-  const selectedOid = signal<string | null>(null);
-  const detail = signal<GitCommitDetail | null>(null);
-  const selectedFile = signal<string | null>(null);
+  const status = signal<GitRepoStatus | null>(cached?.status ?? null);
+  const branches = signal<GitBranch[]>(cached?.branches ?? []);
+  const worktrees = signal<GitWorktree[]>(cached?.worktrees ?? []);
+  const commits = signal<GitCommit[]>(cached?.commits ?? []);
+  const graphRows = signal<GraphRow[] | null>(cached?.graphRows ?? null);
+  const graphMaxLanes = signal(cached?.graphMaxLanes ?? 0);
+  const graphClipped = signal(cached?.graphClipped ?? false);
+  const hasMore = signal(cached?.hasMore ?? false);
+  const logTruncated = signal(cached?.logTruncated ?? false);
+  const selectedOid = signal<string | null>(cached?.selectedOid ?? saved?.selectedOid ?? null);
+  const detail = signal<GitCommitDetail | null>(cached?.detail ?? null);
+  const selectedFile = signal<string | null>(cached?.selectedFile ?? saved?.selectedFile ?? null);
   const commitWidth = signal(0);
-  const scope = signal("");
-  const query = signal("");
-  const searchOpen = signal(false);
-  const railTab = signal<"branches" | "worktrees">("branches");
-  const selectedBranch = signal<string | null>(null);
-  const selectedWorktree = signal<string | null>(null);
-  const expanded = signal<string[]>(["group:local", "group:remote", "group:tags"]);
+  const scrollOffset = signal(cached?.scrollOffset ?? saved?.scrollOffset ?? 0);
+  const scope = signal(cached?.scope ?? saved?.scope ?? "");
+  const query = signal(cached?.query ?? saved?.query ?? "");
+  const refMatches = signal<Set<string>>(new Set());
+  const searchOpen = signal(cached?.searchOpen ?? saved?.searchOpen ?? false);
+  const railTab = signal<"branches" | "worktrees">(cached?.railTab ?? saved?.railTab ?? "branches");
+  const selectedBranch = signal<string | null>(cached?.selectedBranch ?? saved?.selectedBranch ?? null);
+  const selectedWorktree = signal<string | null>(cached?.selectedWorktree ?? saved?.selectedWorktree ?? null);
+  const expanded = signal<string[]>(cached?.expanded ?? saved?.expanded ?? ["group:local", "group:remote", "group:tags"]);
   const loading = signal(true);
   const logLoading = signal(false);
   const loadingMore = signal(false);
@@ -56,27 +65,36 @@ export function createHistoryState(props: HistoryProps) {
     const text = query().trim().toLowerCase();
     if (!text) return commits();
     return commits().filter((commit) =>
-      commit.subject.toLowerCase().includes(text)
+      refMatches().has(commit.oid)
+      || commit.subject.toLowerCase().includes(text)
       || commit.author.toLowerCase().includes(text)
       || commit.short.toLowerCase().includes(text)
       || commit.refs.some((ref) => ref.toLowerCase().includes(text))
     );
   });
-  const visibleGraph = computed(() => layoutCommits(filtered()));
+  const loadedGraph = computed(() => {
+    const rows = graphRows();
+    return rows ? { rows, maxLanes: graphMaxLanes(), clipped: graphClipped() } : layoutCommits(commits());
+  });
+  const visibleGraph = computed(() => {
+    const graph = loadedGraph();
+    if (!query().trim()) return graph;
+    const matches = new Set(filtered().map(commit => commit.oid));
+    return { ...graph, rows: graph.rows.filter(row => matches.has(row.commit.oid)) };
+  });
   const visibleRows = computed<CommitRow[]>(() => {
-    const activeOid = selectedOid();
     return visibleGraph().rows.map((row) => ({
       ...row,
       author: row.commit.author,
       date: formatDate(row.commit.timestamp),
       short: row.commit.short,
       subject: row.commit.subject,
-      active: row.commit.oid === activeOid,
     }));
   });
-  const selectedRefs = computed(() =>
-    commits().find(commit => commit.oid === selectedOid())?.refs ?? detail()?.commit.refs ?? []);
-  const selectedIndex = computed(() => visibleRows().findIndex((row) => row.active));
+  const commitsByOid = computed(() => new Map(commits().map(commit => [commit.oid, commit])));
+  const selectedCommit = computed(() => commitsByOid().get(selectedOid() ?? "") ?? detail()?.commit);
+  const selectedRefs = computed(() => selectedCommit()?.refs ?? []);
+  const selectedRefCount = computed(() => selectedCommit()?.refCount ?? selectedRefs().length);
   const selectedPatch = computed(() => {
     const item = detail();
     const path = selectedFile();
@@ -91,21 +109,6 @@ export function createHistoryState(props: HistoryProps) {
   });
   const selectedFileIndex = computed(() => fileRows().findIndex((file) => file.active));
   const selectedWorktreeIndex = computed(() => worktrees().findIndex((worktree) => worktree.path === selectedWorktree()));
-  const currentCommits = computed(() => {
-    const reachable = new Set<string>();
-    const byOid = new Map(commits().map((commit) => [commit.oid, commit]));
-    const head = branches().find((branch) => branch.current)?.target;
-    if (!head) return reachable;
-    const pending = [head];
-    while (pending.length) {
-      const oid = pending.pop()!;
-      if (reachable.has(oid)) continue;
-      reachable.add(oid);
-      const commit = byOid.get(oid);
-      if (commit) pending.push(...commit.parents);
-    }
-    return reachable;
-  });
   const selectedBranchInfo = computed(() => branches().find((branch) => branch.fullName === selectedBranch()));
   const selectedBranchWorktree = computed(() => {
     const branch = selectedBranchInfo();
@@ -139,7 +142,9 @@ export function createHistoryState(props: HistoryProps) {
     if (full) return branches().find((branch) => branch.fullName === full)?.name ?? full;
     return status()?.branch ?? "HEAD";
   });
-  const visibleGraphWidth = computed(() => Math.max(46, GRAPH_LEFT + Math.max(1, visibleGraph().maxLanes) * LANE_GAP + 10));
+  const visibleGraphWidth = computed(() => query().trim() ? 46 : Math.max(46, GRAPH_LEFT + Math.max(1, visibleGraph().maxLanes) * LANE_GAP + 10));
+
+  const branchesByRef = computed(() => new Map(branches().map(branch => [branch.fullName, branch])));
 
   const branchItems = computed<TreeItem[]>(() => {
     const items: TreeItem[] = [{ id: "scope:all", label: "All branches" }];
@@ -163,31 +168,26 @@ export function createHistoryState(props: HistoryProps) {
   const columnWidths = computed(() => {
     const width = commitWidth() || store.canvasSize().width || 1200;
     return {
-      graph: visibleGraphWidth(),
+      graph: Math.min(visibleGraphWidth(), Math.max(46, width * 0.25)),
       author: width >= 500 ? 110 : 0,
       date: width >= 680 ? 100 : 0,
       hash: width >= 800 ? 74 : 0,
     };
   });
 
-  const commitLayoutKey = computed(() => {
-    const widths = columnWidths();
-    return `${widths.graph}:${widths.author}:${widths.date}:${widths.hash}`;
-  });
-
   const wide = computed(() => (store.canvasSize().width || 1200) >= 1000);
 
   return {
-    props, store, groupId, group, cwd, status, branches, worktrees, commits, hasMore, logTruncated,
-    selectedOid, detail, selectedFile, commitWidth, scope, query, searchOpen, railTab,
+    props, sessionVersion, cached, scrollOffset, store, groupId, group, cwd, status, branches, worktrees, commits, graphRows, graphMaxLanes, graphClipped, hasMore, logTruncated,
+    selectedOid, detail, selectedFile, commitWidth, scope, query, refMatches, searchOpen, railTab,
     selectedBranch, selectedWorktree, expanded, loading, logLoading, loadingMore, detailLoading,
     error, logError, opError, networkAction, busy, branchDialog, deleteDialog, worktreeDialog,
     removeDialog, newBranchName, newBranchCheckout, branchStart, newWorktreePath,
     newWorktreeBranch, removeTarget, deleteTarget, epoch, failure, repo, filtered, visibleGraph,
-    visibleRows, selectedIndex, selectedRefs, selectedPatch, selectedFileInfo, fileRows, selectedFileIndex,
-    selectedWorktreeIndex, currentCommits, selectedBranchInfo, selectedBranchWorktree, canCheckout,
+    visibleRows, selectedRefs, selectedRefCount, selectedPatch, selectedFileInfo, fileRows, selectedFileIndex,
+    selectedWorktreeIndex, selectedBranchInfo, selectedBranchWorktree, canCheckout,
     canDeleteBranch, selectedWorktreeInfo, canRemoveWorktree, scopeLabel, startLabel,
-    visibleGraphWidth, branchItems, columnWidths, commitLayoutKey, wide,
+    visibleGraphWidth, branchItems, branchesByRef, columnWidths, wide,
   };
 }
 

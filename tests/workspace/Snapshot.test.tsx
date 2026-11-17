@@ -131,3 +131,16 @@ test("working indicator defaults safely for old or unknown settings", () => {
     expect(parseSnapshot(JSON.stringify({ version: 1, workingIndicator }))!.workingIndicator).toBe(workingIndicator);
   }
 });
+
+test("repository choices restore only for existing groups and reject invalid paths", () => {
+  const snapshot = parseSnapshot(JSON.stringify({ version: 1,
+    groups: [{ id: "one", title: "One", cwd: "/work", color: "purple" }], tabs: [], layouts: {},
+    gitRepositories: {
+      one: { selectedRoot: " /work/alpha ", manual: true, addedRoots: ["/external", "/external", "", 7] },
+      missing: { selectedRoot: "/elsewhere", manual: true },
+    },
+  }));
+  expect(snapshot?.gitRepositories).toEqual({ one: { selectedRoot: "/work/alpha", manual: true, addedRoots: ["/external"] } });
+  const invalid = parseSnapshot(JSON.stringify({ ...snapshot, gitRepositories: { one: { selectedRoot: 7, manual: true, addedRoots: [] } } }));
+  expect(invalid?.gitRepositories?.one.manual).toBe(false);
+});

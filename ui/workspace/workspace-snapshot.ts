@@ -1,3 +1,4 @@
+import { parseRepositoryPreferences, type RepositoryPreferences } from "./repository-preferences";
 import { groupColorIds, type GroupColor } from "../shared/theme";
 import type { WorkingIndicatorKind } from "../shared/WorkingIndicator";
 import { nodeIds, panes, type LayoutNode, type TilingState } from "./tiling";
@@ -51,6 +52,7 @@ export interface WorkspaceSnapshot {
   dashboards: string[];
   /** Open Git views and last selected view for each group. */
   gitViews?: Record<string, { open: GitView[]; selected: GitView | null }>;
+  gitRepositories?: RepositoryPreferences;
   expanded: boolean;
   sidebarWidth: number | null;
   fontSize: number | null;
@@ -214,6 +216,7 @@ export function parseSnapshot(raw: string): WorkspaceSnapshot | null {
     workspaceKey: typeof document.workspaceKey === "string" ? document.workspaceKey : "",
     dashboards,
     gitViews,
+    gitRepositories: parseRepositoryPreferences(document.gitRepositories, groupIds),
     expanded: document.expanded !== false,
     sidebarWidth: finite(document.sidebarWidth),
     fontSize: finite(document.fontSize),

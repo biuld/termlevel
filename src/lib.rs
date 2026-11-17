@@ -24,6 +24,7 @@ fn native(registry: &mut Registry) {
         .module::<runtime::Runtime>()
         .module::<notifications::Notifications>()
         .module::<git::Git>()
+        .module::<git::requests::GitQueries>()
         .module::<git_discovery::GitDiscovery>()
         .module::<git_ops::GitOps>()
         .module::<sessions::Sessions>()

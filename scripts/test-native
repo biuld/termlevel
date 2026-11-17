@@ -14,11 +14,15 @@ case "$kind" in
   status) fixture=Status; report=status-native ;;
   osc) fixture=Osc; report=osc-native-acceptance ;;
   gitlive) fixture=GitLive; report=git-live-native ;;
+  repositories) fixture=MultiRepository; report=multi-repository-native ;;
+  gitscale) fixture=GitScale; report=git-scale-native ;;
   history) fixture=History; report=history-native ;;
   settings) fixture=Settings; report=settings-native ;;
-  *) echo 'Usage: scripts/test-native {input|scroll|selection|tiling|protocols|ghostty|glyphs|notifications|status|osc|gitlive|history|settings} [NSH test options]' >&2; exit 2 ;;
+  *) echo 'Usage: scripts/test-native {input|scroll|selection|tiling|protocols|ghostty|glyphs|notifications|status|osc|gitlive|gitscale|repositories|history|settings} [NSH test options]' >&2; exit 2 ;;
 esac
 shift
+if [ "$kind" = gitscale ]; then "$project_dir/scripts/prepare-git-scale"; fi
+if [ "$kind" = repositories ]; then "$project_dir/scripts/prepare-multi-repository"; fi
 # NSH resolves open() relative to the test module. Acceptance sources use
 # root-relative fixture paths and stay outside default *.test.tsx discovery.
 runner_base=$(mktemp "$project_dir/.native-$kind.XXXXXX")

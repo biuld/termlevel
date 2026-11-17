@@ -1,83 +1,45 @@
 import type { GitCommit } from "./git-types";
 
-/** A parent line leaving the commit's dot for another lane. */
-export interface GraphEdge {
-  from: number;
-  to: number;
-}
-
-/** One commit row with the lanes that enter and leave it. */
-export interface GraphRow {
-  commit: GitCommit;
-  /** The lane holding this commit's dot. */
+export interface GraphEdge { from: number; to: number }
+export interface GraphGeometry {
+  incoming: boolean;
   lane: number;
-  /** The commits each lane expects at the top of the row. */
-  before: string[];
-  /** The commits each lane expects at the bottom of the row. */
-  after: string[];
-  /** Lines from the dot to each parent at the bottom. */
-  edges: GraphEdge[];
-  /** Lanes that continue straight through this row. */
   through: number[];
+  edges: GraphEdge[];
 }
+export interface GraphRow extends GraphGeometry { commit: GitCommit }
+export interface GraphLayout { rows: GraphRow[]; maxLanes: number; clipped: boolean }
 
-export interface GraphLayout {
-  rows: GraphRow[];
-  maxLanes: number;
-}
-
-/**
- * Assigns stable lanes to a newest-first, topologically ordered log.
- *
- * A commit keeps the lane it was expected in; its first parent continues that
- * lane, and each further parent starts or joins another one. Lanes that expect
- * the same commit collapse into the first, so two branches that meet do not
- * draw two parallel lines for the same history.
- */
+/** Deterministic fallback for injected/preview transports. Production lays out pages in Rust. */
 export function layoutCommits(commits: GitCommit[]): GraphLayout {
-  let lanes: string[] = [];
-  const rows: GraphRow[] = [];
-  for (const commit of commits) {
-    let index = lanes.indexOf(commit.oid);
-    if (index < 0) {
-      index = lanes.length;
-      lanes.push(commit.oid);
-    }
-    const before = [...lanes];
-    const after = [...lanes];
-    after.splice(index, 1);
-    const edges: GraphEdge[] = [];
-    for (let parentIndex = 0; parentIndex < commit.parents.length; parentIndex++) {
-      const parent = commit.parents[parentIndex];
-      let lane = after.indexOf(parent);
-      if (lane < 0) {
-        lane = parentIndex === 0 ? Math.min(index, after.length) : after.length;
-        after.splice(lane, 0, parent);
-      }
-      edges.push({ from: index, to: lane });
-    }
-    // Two lanes expecting the same commit collapse into the first.
-    for (let lane = after.length - 1; lane >= 0; lane--) {
-      const first = after.indexOf(after[lane]);
-      if (first === lane) continue;
-      for (const edge of edges) {
-        if (edge.to === lane) edge.to = first;
-      }
-      after.splice(lane, 1);
-      for (const edge of edges) {
-        if (edge.to > lane) edge.to -= 1;
-      }
-    }
+  const targets = new Map<string, number>();
+  const slots: Array<string | null> = [];
+  const free = new Set<number>();
+  let maxLanes = 0;
+  let clipped = false;
+  const insert = (oid: string, preferred?: number) => {
+    const found = targets.get(oid);
+    if (found !== undefined) return found;
+    const lane = preferred !== undefined && free.has(preferred) ? preferred : free.values().next().value ?? slots.length;
+    free.delete(lane);
+    slots[lane] = oid;
+    targets.set(oid, lane);
+    maxLanes = Math.max(maxLanes, Math.min(lane + 1, 25));
+    clipped ||= lane >= 24;
+    return lane;
+  };
+  const rows = commits.map(commit => {
+    const incoming = targets.has(commit.oid);
+    const lane = insert(commit.oid);
     const through: number[] = [];
-    for (let lane = 0; lane < before.length; lane++) {
-      if (lane !== index && after.includes(before[lane])) through.push(lane);
+    for (let i = 0; i < Math.min(slots.length, 24); i++) {
+      if (i !== lane && slots[i] !== null) through.push(i);
     }
-    rows.push({ commit, lane: index, before, after, edges, through });
-    lanes = after;
-  }
-  const maxLanes = rows.reduce(
-    (max, row) => Math.max(max, row.before.length, row.after.length, row.lane + 1),
-    0,
-  );
-  return { rows, maxLanes };
+    targets.delete(commit.oid);
+    slots[lane] = null;
+    free.add(lane);
+    const edges = commit.parents.map((parent, index) => ({ from: Math.min(lane, 24), to: Math.min(insert(parent, index === 0 ? lane : undefined), 24) }));
+    return { commit, incoming, lane: Math.min(lane, 24), through, edges };
+  });
+  return { rows, maxLanes, clipped };
 }

@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""Create an owned, repeatable Git load fixture under ignored artifacts/."""
+from pathlib import Path
+import subprocess
+import tempfile
+
+project = Path(__file__).resolve().parent.parent
+root = project / "artifacts/git-scale-repo"
+marker = root / ".git/termlevel-scale-fixture"
+if root.exists():
+    if marker.is_file() and marker.read_text() == "v2:10000:20000\n":
+        print(root)
+        raise SystemExit(0)
+    raise SystemExit(f"Refusing to replace an unrecognized fixture: {root}")
+root.parent.mkdir(exist_ok=True)
+with tempfile.TemporaryDirectory(prefix="git-scale-build-", dir=root.parent) as temp:
+    repo = Path(temp) / "repo"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    commands = bytearray()
+    for index in range(1, 10001):
+        branch = "refs/heads/scale-side" if index == 9999 else "refs/heads/main"
+        parents = "from :9997\n" if index == 9999 else "merge :9999\n" if index == 10000 else ""
+        commands.extend((f"commit {branch}\nmark :{index}\n"
+                         f"committer Scale Test <scale@example.com> {1700000000 + index} +0000\n"
+                         f"data {len(f'Scale commit {index}')}\nScale commit {index}\n{parents}\n").encode())
+    commands.extend(b"reset refs/heads/scale-side\n\n")
+    for index in range(20000):
+        name = f"refs/remotes/origin/feature/large-repository-history-and-long-branch-names-{index:05}"
+        commands.extend(f"reset {name}\nfrom :{10000 - index % 1000}\n\n".encode())
+    subprocess.run(["git", "-C", str(repo), "fast-import", "--quiet"], input=commands, check=True)
+    subprocess.run(["git", "-C", str(repo), "tag", "release/2026.11.17-with-a-long-tag-name-for-layout-validation"], check=True)
+    # Keep metadata cost representative without checking out files or starting processes.
+    (repo / ".git/termlevel-scale-fixture").write_text("v2:10000:20000\n")
+    repo.rename(root)
+print(root)

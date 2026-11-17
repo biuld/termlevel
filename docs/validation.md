@@ -1,5 +1,68 @@
 # Validation
 
+## 2026-11-17 · 多仓库目录、选择与运行期缓存
+
+基于 `master` / `238d795`，与下文的 Git 性能修复共同保留为未提交改动。参考 Zed 的发现 / 激活 / 选择分离，Termlevel 使用终端 liveCwd 作为上下文；具体所有权与参考源码见 architecture 的「多仓库目录与选择」。
+
+- Rust 单个后台 worker 共享目录源，识别上级仓库、直接子仓库及显式 / 终端上下文中的深层仓库；canonical 工作树身份区分 linked worktree 与 submodule，common dir 用于写操作互斥。每次目录传输最多 256 条，revision 不同时重新组装；无变化不重传。前台最多四个 Git 读取任务，目录探测独立排队，不增加 Tokio runtime。
+- macOS 非递归 kqueue 监听替代定时全扫描，事件合并并取消过时探测；最多 1024 个监听目录，错误或超限显示 Rescan 提示。监听不可用时，更新终端上下文不会反复扫描所有直接子目录。无订阅时释放监听；一个订阅取消不影响其他订阅。首轮 FSEvents 后端在受控测试中无法收到新建仓库事件，最终 kqueue 用例通过。
+- 每组持久化手动选择与显式目录；手动模式不被 cwd 变化覆盖，选中仓库消失时保留选择并显示不可用。选择器采用虚拟 List / 路径搜索、重名消歧、完整路径提示与 worktree / submodule 标识；只对当前仓库加载 Git 数据。
+- 三个有界运行期会话保留 History 数据与原生游标；切回时核对 scope / count，游标不匹配则重新加载。搜索、选中提交 / 文件、展开目录、diff 布局及滚动位置按 group / root 隔离；超限只保留轻量偏好，删除组或逐出缓存会释放原生租约。不会因切组、隐藏 Git 或发现仓库而创建 / 关闭 PTY。
+
+### 自动化结果
+
+- `CARGO_NET_OFFLINE=true cargo test -p termlevel-native git -- --nocapture`：**29/29**。新增真实上级 / 深层上下文、路径别名、linked worktree 身份 / common dir、目录新建监听、共享订阅取消、分页版本切换及共享写 gate 验证。日志：`artifacts/multi-repository-rust.log`。
+- `./scripts/nsh test <文件> --junit <报告>`：MultiRepository、GitRepositories、History、GitCommitRefresh、GitActions、GitScheduler、Snapshot、Persistence 共 **35/35**。包含 1500 仓库的视口行数与搜索、每组手动 / 自动选择、丢失仓库不跳转、History 搜索 / 选择 / 游标恢复并继续分页，以及快照路径校验。日志 / 报告：`artifacts/multi-repository-<文件名>.log` / `.xml`。
+- `CARGO_NET_OFFLINE=true ./scripts/nsh build`、`CARGO_NET_OFFLINE=true ./scripts/nsh check`、`cargo fmt --all -- --check`、`git diff --check`：通过。新增及修改的源文件均未超过 500 行。构建 / 检查日志：`artifacts/multi-repository-build.log`、`artifacts/multi-repository-check.log`。
+- `cargo clippy --workspace --lib -- -D warnings`：通过。完整 all-targets 仍只失败于未修改的 `src/clipboard.rs:86` / `:136` 的 `items_after_test_module`，不记为完整 clippy 通过。日志：`artifacts/multi-repository-clippy-lib.log`、`artifacts/multi-repository-clippy.log`。
+
+依赖缓存完整；最初 crates.io DNS 不可用，后续关键检查使用 `CARGO_NET_OFFLINE=true`，未修改项目的网络 / Cargo 配置。没有执行整套终端 / PTY 回归。
+
+### 原生窗口
+
+`CARGO_NET_OFFLINE=true ./scripts/test-native repositories` 使用两个各 600 个真实提交的仓库和一个 linked worktree，测试夹具只注入会话元数据，不创建 PTY。目录本身位于 Termlevel 仓库内，因此同时验证上级 Termlevel 仓库的自动识别；未进行真实远程 fetch / push。
+
+原生验收 **1/1 通过**，已查看最终截图（包含深色输入框文字颜色）。流程验证切换 alpha / beta，切回 alpha 时复用首页（resume 成功且 log 次数不增加）、继续读取第二页、group 根为 `alpha/src` 时识别 alpha、返回原组保留选择，以及 worktree 标识。报告 / 日志：`artifacts/multi-repository-native.xml`、`artifacts/multi-repository-native.log`。截图：`artifacts/multi-repository-native-restored.png`、`artifacts/multi-repository-native-picker.png`。
+
+人工日用仓库验收未进行；网络文件系统监听、超过 1024 个目录的人工 Rescan 流程与长期频繁目录变化的负载仍需分别验证，不由这次受控原生自动化结果代替。
+
+## 2026-11-17 · Git 大仓库隔离、提交车道与长名称
+
+基于 `master` / `238d795` 的未提交修改。读取从超限的 `src/git.rs` 拆到 `src/git/`，本次修改的 Git 源文件均不超过 500 行。CLI / NSH crates 仍为 0.5.0，没有新增 Tokio 依赖或 runtime。
+
+### 实现与边界
+
+- Changes / History 各自拥有读取租约；全局最多 4 个读取任务，等待准入不占 blocking worker。替换查询、切仓库、卸载会取消旧任务；只读子进程组在后台终止并回收，管道排空也受 deadline 约束。缓存最终释放移到清理线程，避免在 engine future 结束时同步释放整张 refs 表。显式写操作与 PTY 生命周期不受读取取消影响。
+- refs 在 Rust 后台排序 / 计算版本，每批最多 256 条传入 JS；未变化仅返回版本标记。上限从 2 MiB 调整到 32 MiB，超过时明确报错，不再静默返回不完整分支列表。初次构建完整 Tree 仍有 engine 成本，下面的压力结果不代表 16 ms 帧预算已经达标。
+- 提交使用回收式原生 List，Rust 跨页维护车道；首屏固定不可变 revision tips，经 stdin 查询后续页，避免分支移动造成重复、漏项和车道错接。修复槽位收缩后的跳线、新 tip 的虚假 incoming，以及筛选隐藏中间提交后的误导连线。最多显示 24 条独立车道，超出共用末列并显示提示；提交仍完整保留。
+- 每个提交最多附带 8 个 refs 预览和完整数量，避免 `%D` 因数万分支指向同一提交而撑爆 log / show 元数据。完整 ref 名称匹配在 Rust 快照中执行，未显示在 chip 预览中的分支也可搜索。
+- 长分支 / tag 使用中间省略和有宽度上限的完整 tooltip；提交行 refs 总宽最多占标题区域 45%，最多显示 2 个 chip 和额外数量。详情 refs 在分栏内滚动，不越过 Changed files 边界；顶部摘要收缩以保留搜索和操作按钮。
+
+### 自动化结果
+
+- `cargo test -p termlevel-native git -- --nocapture`：**26/26**，包括真实 20,000 条长远程 refs、annotated tag peeled target、受限分页 / unchanged、完整 ref 搜索、移动分支后的固定 tips、宽图有界负载、跨页车道连续性、读取准入 / 替换 / 关闭取消，以及 helper 持有管道时的 deadline。日志：`artifacts/git-review-rust.log`。
+- `./scripts/nsh build`、`./scripts/nsh check`、`cargo fmt --all -- --check`、`git diff --check`：通过。日志：`artifacts/git-review-build.log`、`artifacts/git-review-check.log`。
+- 通过 `./scripts/nsh test <文件> --junit <报告>` 分别运行 History、GitCommitRefresh、GitActions、GitRepositories、GitScheduler、Git、commit-graph、GitScale：**22/22**（6 + 4 + 1 + 1 + 2 + 2 + 3 + 3）。报告 / 日志：`artifacts/git-review-<文件名>.xml` / `.log`。覆盖 4,000 条已加载提交的视口行数量、滚动后 unchanged 刷新、已加载提交搜索、迟到结果隔离及卸载释放租约；未运行整套终端 / PTY 回归。
+- `cargo clippy --workspace --lib -- -D warnings`：通过。完整 `cargo clippy --workspace --all-targets -- -D warnings` 仍失败于已有的 `src/clipboard.rs:86` / `:136`（`items_after_test_module`）；该文件未修改，不将完整 clippy 记为通过。日志：`artifacts/git-review-clippy-lib.log`、`artifacts/git-review-clippy-all-targets.log`。
+
+### 原生自动化与截图
+
+`./scripts/test-native gitscale`：**2/2**。`scripts/prepare-git-scale` 在忽略的 artifacts 下建立拥有标记的可复现仓库：**10,000 个真实提交（含分叉 / merge）、20,000 条远程 refs，加 main 和 tag 共 20,002 条 refs**。仓库仅供受控本地验收，没有真实远程网络操作。
+
+在 macOS 原生窗口使用 20 ms JS 心跳探针，最终运行首屏加载期间的最大间隔为 **103 ms**；未变化 refs 刷新阶段为 **35 ms**，log 调用仍为 1。另验证第二页加载、搜索不在 8 个预览 refs 中的 `19099` 分支命中，以及窄窗口 / 完整 tooltip。这里测的是 engine 心跳间隔，包含调度和提交开销，不是 AppKit 帧耗时；不能据此声称持续 60 FPS 或冷缓存 / 百万提交仓库已通过。
+
+报告 / 日志：`artifacts/git-scale-native.xml`、`artifacts/git-review-native.log`。已查看以下原生截图：
+
+- `artifacts/git-scale-native-loaded.png`：真实 merge 的两条父边、固定穿行槽位，以及详情 refs 分栏内滚动。
+- `artifacts/git-scale-native-page-two.png`、`artifacts/git-scale-native-ref-search.png`：分页与完整 ref 名称搜索。
+- `artifacts/git-long-refs-wide.png`、`artifacts/git-long-refs-narrow.png`、`artifacts/git-long-ref-tooltip.png`：长名称省略、标题空间和完整提示。
+- `artifacts/git-long-refs-search.png`：4,000 条提交中仅显示匹配项，隐藏断开的图连接。
+
+新增大列表夹具曾在 headless 的逐键输入路径中未观察到筛选更新；headless 压力用例现在通过粘贴路径验证相同结果，逐键输入另外由上述原生用例验证，不把该 headless 逐键路径记为通过。原生脚本最初的 30 秒总期限不足以覆盖长距离滚动、截图和搜索步骤，最终脚本使用 60 秒总期限；心跳验收上限仍为 500 ms，未放宽。
+
+人工验收边界：截图检查已完成；真实日用仓库的长期滚动、持续 fetch、人工输入手感、百万提交 / 更多 refs，以及严格 16 ms 帧预算仍需分别测量。
+
+
 ## 2026-11-16：push 后同 SHA 提交的分支标记更新
 
 基于 `0dff5c2` 的未提交修复。根因是 keyed 提交行保存了初始 row 对象，SHA 不变时仍显示旧 refs；详情区的旧 commit metadata 同样不会因 SHA 相同而重读。另一个遗漏是定时刷新只比较 ref 目标，没有比较 HEAD attached/detached 或 current 标记。

@@ -52,6 +52,7 @@ export function Type(props: {
   tooltip?: JSX.Element;
   children?: JSX.Element;
   lines?: number;
+  overflow?: "ellipsis" | "ellipsis-middle" | "ellipsis-start" | "clip";
 }) {
   return <Text
     testID={props.testID}
@@ -64,6 +65,7 @@ export function Type(props: {
       lineHeight: token(leading[props.role]),
       color: token(props.tone ?? color[props.role]),
       numberOfLines: props.lines,
+      textOverflow: props.overflow,
     }}
   >{props.children}</Text>;
 }

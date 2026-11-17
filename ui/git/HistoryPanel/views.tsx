@@ -1,23 +1,23 @@
-import { Canvas, Clipboard, Scroll, Text, token, View } from "nsh";
+import { Canvas, Clipboard, List, Scroll, Text, token, View } from "nsh";
 import { Button, DiffView, ResizablePanel, ResizablePanelGroup, type TreeEntry } from "nsh/base";
 import { Menu } from "nsh/desktop";
-import { IconButton } from "../../shared/controls";
+import { Hint, IconButton } from "../../shared/controls";
 import { monoFont } from "../../shared/fonts";
 import { Icon } from "../../shared/icons";
 import { Type } from "../../shared/type";
 
 import type { GitWorktree } from "../git-types";
-import { ROW_HEIGHT, type CommitRow, type FileRow, pathName, fullDate, statusColor, drawGraph, RefChip } from "./common";
+import { ROW_HEIGHT, type CommitRow, type FileRow, pathName, fullDate, statusColor, drawGraph, RefChip, RefHint } from "./common";
 import type { HistoryState } from "./state";
 import type { HistoryData } from "./data";
 import type { HistoryActions } from "./actions";
 
 export function createHistoryViews(state: HistoryState, data: HistoryData, actions: HistoryActions) {
   const {
-    props, branches, worktrees, commits, hasMore, logTruncated, selectedOid, detail, selectedFile,
-    commitWidth, scope, query, selectedWorktree, expanded, logLoading, loadingMore, detailLoading,
-    logError, visibleRows, selectedIndex, selectedRefs, selectedPatch, selectedFileInfo, fileRows,
-    selectedFileIndex, columnWidths, commitLayoutKey, wide,
+    props, branchesByRef, worktrees, commits, hasMore, logTruncated, selectedOid, detail, selectedFile,
+    commitWidth, scrollOffset, scope, query, selectedWorktree, expanded, logLoading, loadingMore, detailLoading,
+    logError, graphClipped, visibleGraph, visibleRows, selectedRefs, selectedRefCount, selectedPatch, selectedFileInfo, fileRows,
+    selectedFileIndex, columnWidths, wide,
   } = state;
   const { loadMore } = data;
   const { openBranchDialog } = actions;
@@ -39,18 +39,14 @@ export function createHistoryViews(state: HistoryState, data: HistoryData, actio
         <If when={!scope()}><Icon name="check" size={11} color={token("primary")} /></If>
       </View>;
     }
-    const branch = branches().find((item) => item.fullName === entry.id.slice("branch:".length));
-    if (!branch) return <View />;
-    const holder = worktrees().find((worktree) => worktree.branch === branch.name);
-    return <View class="h-(--height-tab) flex-row items-center gap-1.5" style={{ paddingLeft: 4, paddingRight: 8 }}>
-      <Icon name={branch.kind === "tag" ? "gitTag" : "gitBranch"} size={12} color={token("icon")} />
-      <Type role="body" class="min-w-0 flex-1" lines={1}>{branch.name}</Type>
-      <If when={branch.current}>
-        <Icon name="check" size={11} color={token("primary")} />
-      </If>
-      <If when={!branch.current && !!holder}>
-        <Icon name="gitWorktree" size={11} color={token("subtle-foreground")} />
-      </If>
+    const branch = () => branchesByRef().get(entry.id.slice("branch:".length));
+    const holder = () => worktrees().find(worktree => worktree.branch === branch()?.name);
+    return <View class="h-(--height-tab) flex-row items-center gap-1.5" style={{ paddingLeft: 4, paddingRight: 8 }}
+      tooltip={<RefHint label={branch()?.fullName ?? entry.label} />}>
+      <Icon name={branch()?.kind === "tag" ? "gitTag" : "gitBranch"} size={12} color={token("icon")} />
+      <Type role="body" class="min-w-0 flex-1" lines={1} overflow="ellipsis-middle">{branch()?.name ?? entry.label}</Type>
+      <If when={!!branch()?.current}><Icon name="check" size={11} color={token("primary")} /></If>
+      <If when={!branch()?.current && !!holder()}><Icon name="gitWorktree" size={11} color={token("subtle-foreground")} /></If>
     </View>;
   };
 
@@ -93,7 +89,7 @@ export function createHistoryViews(state: HistoryState, data: HistoryData, actio
   function CommitRowView(props: { row: () => CommitRow }) {
     // SHA is stable while decorations and graph metadata can change.
     const row = props.row;
-    const active = () => row().active;
+    const active = () => selectedOid() === row().commit.oid;
     const widths = columnWidths;
     return <View class="w-full" onContextMenu={(event) => commitMenu(row(), event)}>
       <View testID={`history-commit-row-${row().commit.short}`} class="w-full">
@@ -101,15 +97,18 @@ export function createHistoryViews(state: HistoryState, data: HistoryData, actio
         accessibilityLabel={`${row().commit.short} ${row().commit.subject}`}
         selected={active()}
         onPress={() => selectedOid.set(row().commit.oid)}
-        class="h-[30px] w-full shrink-0 flex-row items-center border-b border-border hover:bg-tab-selected active:bg-control-pressed focus-visible:ring-1 ring-ring">
+        class={`h-[30px] w-full shrink-0 flex-row items-center border-b border-border ${active() ? "bg-primary/20" : ""} hover:bg-tab-selected active:bg-control-pressed focus-visible:ring-1 ring-ring`}>
         <Canvas style={{ width: widths().graph, height: ROW_HEIGHT }}
-          draw={(cx, size) => drawGraph(cx, size, row())} />
+          draw={(cx, size) => drawGraph(cx, size, row(), visibleGraph().maxLanes, !query().trim())} />
         <View class="min-w-0 flex-1 flex-row items-center gap-1.5 px-2">
           <Type role="body" class="min-w-0 flex-1" lines={1}>{row().commit.subject}</Type>
-          <Each of={row().commit.refs.slice(0, 2)}>{(ref) => <RefChip label={ref()} />}</Each>
-          <If when={row().commit.refs.length > 2}>
-            <Type role="caption" tone="subtle-foreground">{`+${row().commit.refs.length - 2}`}</Type>
-          </If>
+          <View class="min-w-0 max-w-[45%] shrink flex-row items-center gap-1">
+            <Each of={row().commit.refs.slice(0, 2)}>{(ref) => <RefChip label={ref()} compact />}</Each>
+            <If when={(row().commit.refCount ?? row().commit.refs.length) > 2}>
+              <Type role="caption" tone="subtle-foreground" class="shrink-0"
+                tooltip={<Hint>Select this commit and use Branches or Tags to inspect its references.</Hint>}>{`+${(row().commit.refCount ?? row().commit.refs.length) - 2}`}</Type>
+            </If>
+          </View>
         </View>
         <If when={widths().author > 0}>
           <View style={{ width: widths().author }} class="shrink-0 px-2">
@@ -155,39 +154,28 @@ export function createHistoryViews(state: HistoryState, data: HistoryData, actio
           <View style={{ width: columnWidths().hash }} class="shrink-0 px-2"><Type role="label">Hash</Type></View>
         </If>
       </View>
+      <If when={!!query().trim()}>
+        <View class="shrink-0 px-3 py-1"><Type role="caption" tone="subtle-foreground">Connections are hidden while filtering commits.</Type></View>
+      </If>
+      <If when={graphClipped()}>
+        <View class="shrink-0 px-3 py-1"><Type role="caption" tone="subtle-foreground">Wide graph: lanes beyond 24 share the last column. Select a branch to narrow the history.</Type></View>
+      </If>
       <If when={visibleRows().length > 0}>
-        <Each of={[commitLayoutKey()]} key={(value) => value}>
-          {() =>
-            <Scroll testID="history-commits" accessibilityLabel="Commit history"
-              class="min-h-0 flex-1" contentClass="flex-col">
-              <View class="relative flex-col">
-                <Each of={visibleRows()} key={(row) => row.commit.oid}>
-                  {(row) => <CommitRowView row={row} />}
-                </Each>
-                <If when={selectedIndex() >= 0}>
-                  <View class="absolute left-0 right-0 bg-primary/20"
-                    style={{
-                      top: selectedIndex() * ROW_HEIGHT,
-                      height: ROW_HEIGHT,
-                      pointerEvents: "none",
-                      zIndex: 1,
-                    }} />
-                </If>
+            <List testID="history-commits" accessibilityLabel="Commit history"
+              class="min-h-0 flex-1" each={visibleRows()} keyExtractor={row => row.commit.oid}
+              estimatedItemSize={ROW_HEIGHT}
+              initialScrollIndex={Math.min(Math.floor(scrollOffset() / ROW_HEIGHT), Math.max(0, visibleRows().length - 1))}
+              onScrollEnd={({ offset }) => scrollOffset.set(Math.max(0, offset.y))}
+              footer={() => <View>
                 <If when={hasMore()}>
-                  <Button testID="history-load-more" onPress={() => { void loadMore(); }}
+                  <Button testID="history-load-more" disabled={loadingMore()} onPress={() => { void loadMore(); }}
                     class="h-8 w-full shrink-0 items-center justify-center border-t border-border hover:bg-tab-hover">
-                    <Type role="caption" tone="muted-foreground">Load more commits</Type>
+                    <Type role="caption" tone="muted-foreground">{loadingMore() ? "Loading more commits…" : "Load more commits"}</Type>
                   </Button>
                 </If>
-                <If when={loadingMore()}>
-                  <View class="shrink-0 items-center justify-center py-1">
-                    <Type role="caption" tone="subtle-foreground">Loading more commits…</Type>
-                  </View>
-                </If>
-              </View>
-            </Scroll>
-          }
-        </Each>
+              </View>}>
+              {(row) => <CommitRowView row={row} />}
+            </List>
       </If>
       <If when={visibleRows().length === 0}>
         <View class="flex-1 items-center justify-center gap-2 py-8">
@@ -229,9 +217,9 @@ export function createHistoryViews(state: HistoryState, data: HistoryData, actio
         </View>
       </If>
       <View class="flex-row flex-wrap items-center gap-1">
-        <Each of={compact ? selectedRefs().slice(0, 2) : selectedRefs()}>{(ref) => <RefChip label={ref()} />}</Each>
-        <If when={compact && selectedRefs().length > 2}>
-          <Type role="caption" tone="subtle-foreground">{`+${selectedRefs().length - 2}`}</Type>
+        <Each of={selectedRefs().slice(0, compact ? 2 : 8)}>{(ref) => <RefChip label={ref()} />}</Each>
+        <If when={selectedRefCount() > (compact ? 2 : 8)}>
+          <Type role="caption" tone="subtle-foreground">{`+${selectedRefCount() - (compact ? 2 : 8)}`}</Type>
         </If>
       </View>
       <If when={!compact && !!item.body}>
@@ -360,7 +348,7 @@ export function createHistoryViews(state: HistoryState, data: HistoryData, actio
         <ResizablePanelGroup axis="vertical" class="h-full min-h-0"
           handleClass="bg-transparent group-hover:bg-sidebar-border group-active:bg-ring"
           handleAccessibilityLabel="Resize commit details and patch">
-          <ResizablePanel size={182} minSize={110}>{commitInfo(false)}</ResizablePanel>
+          <ResizablePanel size={182} minSize={110}><Scroll class="h-full min-h-0" contentClass="flex-col">{commitInfo(false)}</Scroll></ResizablePanel>
           <ResizablePanel size={160} minSize={80}>{changedFiles()}</ResizablePanel>
           <ResizablePanel minSize={140}>{patchPane()}</ResizablePanel>
         </ResizablePanelGroup>

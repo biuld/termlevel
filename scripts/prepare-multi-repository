@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+"""Create owned, ignored real repositories for native catalog acceptance."""
+from pathlib import Path
+import subprocess
+root = Path(__file__).resolve().parent.parent / "artifacts/multi-repository-repos"
+marker = root / ".termlevel-fixture"
+if root.exists():
+    if marker.is_file() and marker.read_text() == "v1\n":
+        raise SystemExit(0)
+    raise SystemExit(f"Refusing to replace an unrecognized fixture: {root}")
+root.mkdir(parents=True)
+for name in ["alpha", "beta"]:
+    repo = root / name
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    data = bytearray()
+    for index in range(1, 601):
+        message = f"{name} commit {index}"
+        data.extend(f"commit refs/heads/main\ncommitter Test <test@example.com> {1700000000 + index} +0000\ndata {len(message)}\n{message}\n\n".encode())
+    subprocess.run(["git", "-C", str(repo), "fast-import", "--quiet"], input=data, check=True)
+    (repo / "src").mkdir()
+subprocess.run(["git", "-C", str(root / "alpha"), "worktree", "add", "-q", "--detach", str(root / "alpha-linked")], check=True)
+marker.write_text("v1\n")

@@ -10,6 +10,7 @@ use std::{
 };
 
 use crate::git;
+mod gate;
 
 const OP_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_OUTPUT: usize = 512 * 1024;
@@ -22,7 +23,7 @@ pub struct GitOps;
 impl GitOps {
     /// Fetches from the default remote configured for the current branch.
     pub async fn fetch(root: String) -> Result<String, String> {
-        match blocking(move || fetch_sync(&root)).await {
+        match blocking(move || gate::run(&root, || fetch_sync(&root))).await {
             Ok(result) => result,
             Err(_) => Err("The Git fetch task failed.".into()),
         }
@@ -30,14 +31,14 @@ impl GitOps {
 
     /// Fetches and fast-forwards the current branch from its upstream.
     pub async fn pull(root: String) -> Result<String, String> {
-        match blocking(move || pull_sync(&root)).await {
+        match blocking(move || gate::run(&root, || pull_sync(&root))).await {
             Ok(result) => result,
             Err(_) => Err("The Git pull task failed.".into()),
         }
     }
     /// Pushes the current branch to its configured upstream without forcing.
     pub async fn push(root: String) -> Result<String, String> {
-        match blocking(move || push_sync(&root)).await {
+        match blocking(move || gate::run(&root, || push_sync(&root))).await {
             Ok(result) => result,
             Err(_) => Err("The Git push task failed.".into()),
         }
@@ -46,7 +47,7 @@ impl GitOps {
     /// Switches the worktree that contains `root` to a local branch, or creates
     /// a tracking branch for a remote one.
     pub async fn checkout(root: String, branch: String) -> Result<String, String> {
-        match blocking(move || checkout_sync(&root, &branch)).await {
+        match blocking(move || gate::run(&root, || checkout_sync(&root, &branch))).await {
             Ok(result) => result,
             Err(_) => Err("The Git checkout task failed.".into()),
         }
@@ -60,7 +61,11 @@ impl GitOps {
         start: String,
         checkout: bool,
     ) -> Result<String, String> {
-        match blocking(move || create_branch_sync(&root, &name, &start, checkout)).await {
+        match blocking(move || {
+            gate::run(&root, || create_branch_sync(&root, &name, &start, checkout))
+        })
+        .await
+        {
             Ok(result) => result,
             Err(_) => Err("The Git branch task failed.".into()),
         }
@@ -69,7 +74,7 @@ impl GitOps {
     /// Deletes a local branch that Git considers merged. Git refuses a branch
     /// checked out in a worktree or not merged into its upstream/HEAD.
     pub async fn delete_branch(root: String, name: String) -> Result<String, String> {
-        match blocking(move || delete_branch_sync(&root, &name)).await {
+        match blocking(move || gate::run(&root, || delete_branch_sync(&root, &name))).await {
             Ok(result) => result,
             Err(_) => Err("The Git branch task failed.".into()),
         }
@@ -81,7 +86,8 @@ impl GitOps {
         path: String,
         branch: String,
     ) -> Result<String, String> {
-        match blocking(move || add_worktree_sync(&root, &path, &branch)).await {
+        match blocking(move || gate::run(&root, || add_worktree_sync(&root, &path, &branch))).await
+        {
             Ok(result) => result,
             Err(_) => Err("The Git worktree task failed.".into()),
         }
@@ -90,7 +96,7 @@ impl GitOps {
     /// Removes a linked worktree without force. Dirty worktrees are refused by
     /// Git and keep their directory.
     pub async fn remove_worktree(root: String, path: String) -> Result<String, String> {
-        match blocking(move || remove_worktree_sync(&root, &path)).await {
+        match blocking(move || gate::run(&root, || remove_worktree_sync(&root, &path))).await {
             Ok(result) => result,
             Err(_) => Err("The Git worktree task failed.".into()),
         }
@@ -98,7 +104,8 @@ impl GitOps {
 
     /// Prevents Git from pruning or removing a worktree.
     pub async fn lock_worktree(root: String, path: String) -> Result<String, String> {
-        match blocking(move || flag_worktree_sync(&root, &path, "lock")).await {
+        match blocking(move || gate::run(&root, || flag_worktree_sync(&root, &path, "lock"))).await
+        {
             Ok(result) => result,
             Err(_) => Err("The Git worktree task failed.".into()),
         }
@@ -106,7 +113,9 @@ impl GitOps {
 
     /// Allows a worktree to be pruned or removed again.
     pub async fn unlock_worktree(root: String, path: String) -> Result<String, String> {
-        match blocking(move || flag_worktree_sync(&root, &path, "unlock")).await {
+        match blocking(move || gate::run(&root, || flag_worktree_sync(&root, &path, "unlock")))
+            .await
+        {
             Ok(result) => result,
             Err(_) => Err("The Git worktree task failed.".into()),
         }
@@ -114,7 +123,7 @@ impl GitOps {
 
     /// Removes worktree administrative records whose folders are gone.
     pub async fn prune_worktrees(root: String) -> Result<String, String> {
-        match blocking(move || prune_worktrees_sync(&root)).await {
+        match blocking(move || gate::run(&root, || prune_worktrees_sync(&root))).await {
             Ok(result) => result,
             Err(_) => Err("The Git worktree task failed.".into()),
         }

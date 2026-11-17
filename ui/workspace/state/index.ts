@@ -2,6 +2,7 @@ import { batch, computed, effect, signal, token } from "nsh";
 import { Runtime, Sessions } from "termlevel/native";
 import { dropPosition, equalize, geometry, insertPane, minimum, neighbor, panes, removePane, siblings, updateNode, type Direction, type DropPosition, type LayoutNode, type Pane, type Rect, type Size, type TilingState } from "../tiling";
 import { SNAPSHOT_VERSION, type GitView, type SnapshotPreferences, type WorkspaceSnapshot } from "../workspace-snapshot";
+import { createRepositoryPreferences } from "../repository-preferences";
 import { initialWorkspace } from "./initial";
 import { groupOperations } from "./groups";
 import type { SessionTransport, Tab, TabGroup, WorkspaceOptions } from "./types";
@@ -12,6 +13,7 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
   let { sequence, layoutSequence } = counters;
   const savedGitViews = snapshot?.gitViews ?? Object.fromEntries((snapshot?.dashboards ?? []).map(id => [id, { open: ["changes" as const], selected: "changes" as const }]));
   const gitViews = signal<Record<string, { open: GitView[]; selected: GitView | null }>>(savedGitViews);
+  const repositories = createRepositoryPreferences(snapshot?.gitRepositories ?? {}, () => groups().map(group => group.id));
   const activeGitView = computed(() => gitViews()[workspaceKey()]?.selected ?? null);
   const canvasBlocked = computed(() => activeGitView() !== null);
   // A sidebar choice outside the current split fills the canvas alone. The split tree stays put.
@@ -424,6 +426,7 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
       activeTabId: activeId(),
       workspaceKey: workspaceKey(),
       dashboards: [],
+      gitRepositories: Object.fromEntries(Object.entries(repositories.repositoryPreferences()).filter(([id]) => !!group(id))),
       gitViews: Object.fromEntries(Object.entries(gitViews()).filter(([id]) => !!group(id))),
       expanded: expanded(),
       sidebarWidth: sidebarWidth(),
@@ -448,7 +451,7 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
 
   return {
     tabs, groups, activeId, activeTab, expanded, sidebarWidth, fontSize, scrollback, clipboardRead, workspaceKey, snapshot: snapshotFile,
-    gitViews, activeGitView, canvasBlocked, selectGroup, selectUngrouped, openGitView, closeGitView,
+    ...repositories, gitViews, activeGitView, canvasBlocked, selectGroup, selectUngrouped, openGitView, closeGitView,
     tiling, paneList, inputBlocked, cellWidth, canvasSize, setCanvasSize, paneMinimum, fullGeometry, constrained, projected,
     paneForSession, frameForSession, focusPane, canSplit, splitTerminal, hidePane, toggleZoom, focusDirection,
     layoutSessions, placeSplit, inSplit,

@@ -6,14 +6,16 @@ import { Action, AppDialog, DialogActions, DialogKeys, Hint, IconButton } from "
 import { Icon } from "../../shared/icons";
 import { Type } from "../../shared/type";
 
-import { pathName, type HistoryProps } from "./common";
+import { scopedGit } from "../scoped-git";
+
+import { pathName, RefHint, type HistoryProps } from "./common";
 import { createHistoryState } from "./state";
 import { createHistoryData } from "./data";
 import { createHistoryActions } from "./actions";
 import { createHistoryViews } from "./views";
 
 export function HistoryPanel(props: HistoryProps) {
-  const state = createHistoryState(props);
+  const state = createHistoryState({ ...props, git: scopedGit(props.git) });
   const data = createHistoryData(state);
   const actions = createHistoryActions(state, data);
   const views = createHistoryViews(state, data, actions);
@@ -36,7 +38,8 @@ export function HistoryPanel(props: HistoryProps) {
     <View class="h-(--height-toolbar) shrink-0 flex-row items-center gap-2 border-b border-border px-3">
       <If when={!(searchOpen() && (store.canvasSize().width || 1200) < 650)}><Icon name="gitBranch" size={14} color={token("icon")} /></If>
       <If when={repo() && !(searchOpen() && (store.canvasSize().width || 1200) < 650)}>
-        <Type role="body" family="mono" tone="foreground" class="min-w-0" lines={1}>{scopeLabel()}</Type>
+        <View class="min-w-0 flex-1 flex-row items-center gap-2">
+        <Type role="body" family="mono" tone="foreground" class={scope() ? "min-w-0 flex-1" : "shrink-0"} lines={1} overflow="ellipsis-middle" tooltip={<RefHint label={scopeLabel()} />}>{scopeLabel()}</Type>
         <If when={!!scope()}>
           <IconButton icon="close" label="Show all branches" testID="history-clear-scope"
             onPress={() => selectScope("scope:all")} />
@@ -46,7 +49,7 @@ export function HistoryPanel(props: HistoryProps) {
           <Type role="caption" tone="subtle-foreground">{`HEAD@${status()?.branch ?? ""}`}</Type>
         </If>
         <If when={!status()?.detached && !scope()}>
-          <Type role="caption" tone="subtle-foreground">{status()?.branch ?? ""}</Type>
+          <Type role="caption" tone="subtle-foreground" class="min-w-0 flex-1" lines={1} overflow="ellipsis-middle" tooltip={<RefHint label={status()?.branch ?? ""} />}>{status()?.branch ?? ""}</Type>
         </If>
         <If when={(status()?.ahead ?? 0) > 0 || (status()?.behind ?? 0) > 0}>
           <Type role="caption" tone="subtle-foreground">{`↑${status()?.ahead ?? 0} ↓${status()?.behind ?? 0}`}</Type>
@@ -58,8 +61,9 @@ export function HistoryPanel(props: HistoryProps) {
           <Type role="caption" tone="subtle-foreground" class="ml-1"
             tooltip={<Hint>History is deterministic in preview mode; Git commands do not run.</Hint>}>Preview</Type>
         </If>
+        </View>
       </If>
-      <View class="ml-auto flex-row items-center gap-1.5">
+      <View class="ml-auto shrink-0 flex-row items-center gap-1.5">
         <IconButton icon={networkAction() === "fetch" ? "refresh" : "gitFetch"} label={networkAction() === "fetch" ? "Fetching…" : "Fetch from remote"}
           testID="history-fetch" disabled={props.preview || busy() || loading() || !repo()} onPress={() => { void updateRemote("fetch"); }} />
         <IconButton icon={networkAction() === "pull" ? "refresh" : "gitPull"} label={networkAction() === "pull" ? "Pulling…" : "Pull current branch (fast-forward only)"}

@@ -15,6 +15,6 @@ test("discovers sibling repositories and shares the selection with history", asy
   await app.waitFor("text:branch-beta");
   await app.press("id:show-changes");
   await app.waitFor("text:branch-beta");
-  expect(app.texts().includes("/work/beta")).toBe(true);
+  expect(app.shows("id:git-repository-selector >> text:beta")).toBe(true);
   app.dispose();
 });

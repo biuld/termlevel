@@ -13,8 +13,8 @@ mount(() => {
   const git = { ...previewGit,
     startDiscovery: () => { polls = 0; return 1; },
     pollDiscovery: () => { polls++; return polls < 5
-      ? { paths: ["/work/alpha"], done: false, error: null }
-      : { paths: ["/work/alpha", "/work/beta"], done: true, error: null }; },
+      ? { paths: ["/work/alpha"], preferredRoot: "/work/alpha", done: false, error: null }
+      : { paths: ["/work/alpha", "/work/beta"], preferredRoot: "/work/alpha", done: true, error: null }; },
     cancelDiscovery: () => {},
     status: async (root: string) => ({ ...(await previewGit.status(root)), branch: root.endsWith("alpha") ? "branch-alpha" : "branch-beta" }),
   };

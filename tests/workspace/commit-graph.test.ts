@@ -24,7 +24,8 @@ test("a linear history stays in one lane", () => {
   expect(layout.maxLanes).toBe(1);
   expect(layout.rows.map((row) => row.lane)).toEqual([0, 0, 0]);
   expect(layout.rows[1].through).toEqual([]);
-  expect(layout.rows[2].after).toEqual([]);
+  expect(layout.rows[2].edges).toEqual([]);
+  expect(layout.rows.map(row => row.incoming)).toEqual([false, true, true]);
 });
 
 test("a merge keeps the first parent in the commit's lane", () => {
@@ -40,10 +41,20 @@ test("a merge keeps the first parent in the commit's lane", () => {
     { from: 0, to: 0 },
     { from: 0, to: 1 },
   ]);
-  expect(layout.rows[0].after).toEqual(["b", "c"]);
+  expect(layout.rows[0].incoming).toBe(false);
   expect(layout.rows[1].lane).toBe(1);
   expect(layout.rows[2].lane).toBe(0);
-  // Both children meet at the same parent; the lanes collapse into one.
-  expect(layout.rows[3].before).toHaveLength(1);
-  expect(layout.rows[3].before[0]).toBe("a");
+  // A shared ancestor keeps its slot: the through line and parent edge meet it.
+  expect(layout.rows[2].through).toEqual([1]);
+  expect(layout.rows[2].edges).toEqual([{ from: 0, to: 1 }]);
+  expect(layout.rows[3].lane).toBe(1);
+  expect(layout.rows[3].through).toEqual([]);
+});
+
+
+test("unrelated tips have no incoming line and wide graph payloads stay bounded", () => {
+  const layout = layoutCommits(Array.from({ length: 1000 }, (_, index) => commit(`tip-${index}`, [`parent-${index}`])));
+  expect(layout.clipped).toBe(true);
+  expect(layout.maxLanes).toBe(25);
+  expect(layout.rows.every(row => !row.incoming && row.through.length <= 24)).toBe(true);
 });

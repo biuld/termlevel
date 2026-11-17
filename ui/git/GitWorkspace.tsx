@@ -1,149 +1,90 @@
-import { cleanup, effect, signal, untracked, View } from "nsh";
-import { Button, Popover } from "nsh/base";
+import { computed, effect, signal, untracked, View } from "nsh";
+import { Button } from "nsh/base";
 import { Type } from "../shared/type";
 import type { Workspace } from "../workspace/state";
 import { GitPanel } from "./GitPanel";
 import { HistoryPanel } from "./HistoryPanel";
 import type { GitTransport } from "./git-types";
 import { scheduleGitTasks } from "./scheduler";
-import { gitOperation, gitOperationBusy } from "./operation-gate";
+import { gitOperationBusy } from "./operation-gate";
+import { createRepositoryCatalog } from "./catalog";
+import { RepositoryPicker } from "./RepositoryPicker";
+import { repositorySession } from "./repository-session";
 
-/** One repository selection shared by Changes and History for the active group. */
+/** The group owns selection; the catalog owns discovery; each working tree owns its read session. */
 export function GitWorkspace(props: {
   workspace: Workspace; git: GitTransport; preview: boolean;
   notify: (level: "info" | "error", title: string, body: string) => void;
 }) {
-  const paths = signal<string[]>([]);
-  const selected = signal("");
-  const loading = signal(true);
-  const scanning = signal(false);
-  const error = signal("");
-  const open = signal(false);
+  const workspace = props.workspace;
+  const catalog = createRepositoryCatalog(workspace, props.git);
   const refreshTick = signal(0);
   const fetchError = signal("");
-  let disposed = false;
-  const git: GitTransport = { ...props.git,
-    fetch: (root) => gitOperation(root, () => props.git.fetch(root)),
-    pull: (root) => gitOperation(root, () => props.git.pull(root)),
-    push: (root) => gitOperation(root, () => props.git.push(root)),
-    checkout: (root, branch) => gitOperation(root, () => props.git.checkout(root, branch)),
-    createBranch: (root, name, start, checkout) => gitOperation(root, () => props.git.createBranch(root, name, start, checkout)),
-    deleteBranch: (root, name) => gitOperation(root, () => props.git.deleteBranch(root, name)),
-    addWorktree: (root, path, branch) => gitOperation(root, () => props.git.addWorktree(root, path, branch)),
-    removeWorktree: (root, path) => gitOperation(root, () => props.git.removeWorktree(root, path)),
-    lockWorktree: (root, path) => gitOperation(root, () => props.git.lockWorktree(root, path)),
-    unlockWorktree: (root, path) => gitOperation(root, () => props.git.unlockWorktree(root, path)),
-    pruneWorktrees: (root) => gitOperation(root, () => props.git.pruneWorktrees(root)),
-  };
-  let generation = 0;
-  let scanId: number | null = null;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let lastGroup = "";
-  let lastDirectory = "";
-  const cwd = () => props.workspace.group(props.workspace.workspaceKey())?.cwd ?? "~";
-  const root = () => selected() || cwd();
-  function cancelScan() {
-    if (timer !== undefined) clearTimeout(timer);
-    timer = undefined;
-    if (scanId !== null) props.git.cancelDiscovery?.(scanId);
-    scanId = null;
-  }
-  async function discover(directory: string) {
-    cancelScan();
-    const current = ++generation;
-    loading.set(!selected());
-    scanning.set(true);
-    error.set("");
-    const apply = (result: { paths: string[]; error?: string | null; done: boolean }) => {
-      paths.set(result.paths);
-      if (!selected() && result.paths.length) selected.set(result.paths[0]);
-      if (result.done && !result.paths.includes(selected())) selected.set(result.paths[0] ?? "");
-      error.set(result.error ?? "");
-      if (result.paths.length || result.done) loading.set(false);
-      if (result.done) scanning.set(false);
-    };
-    try {
-      if (props.git.startDiscovery && props.git.pollDiscovery) {
-        scanId = props.git.startDiscovery(directory);
-        const poll = () => {
-          if (current !== generation || scanId === null) return;
-          try {
-            const result = props.git.pollDiscovery!(scanId);
-            apply(result);
-            if (result.done) scanId = null;
-            else timer = setTimeout(poll, 100);
-          } catch (reason) { fail(reason); }
-        };
-        poll();
-      } else {
-        const result = props.git.discover ? await props.git.discover(directory) : { paths: [directory], error: null };
-        if (current === generation) apply({ ...result, done: true });
-      }
-    } catch (reason) { fail(reason); }
-    function fail(reason: unknown) {
-      if (current !== generation) return;
-      cancelScan();
-      loading.set(false);
-      scanning.set(false);
-      error.set(reason instanceof Error ? reason.message : String(reason));
-    }
-  }
+  const addError = signal("");
+  const pendingRoot = signal<string | null>(null);
+  const groupId = () => workspace.workspaceKey();
+  const preference = () => workspace.repositoryPreference(groupId());
+  const selected = () => preference().selectedRoot;
+  const record = computed(() => catalog.repositories().find(repo => repo.root === selected()));
+  const session = computed(() => record() ? repositorySession(workspace, groupId(), record()!, props.git) : null);
+  effect(() => { groupId(); untracked(() => { pendingRoot.set(null); addError.set(""); fetchError.set(""); }); });
+  function choose(root: string) { workspace.selectRepository(groupId(), root, true); fetchError.set(""); addError.set(""); }
   effect(() => {
-    const directory = cwd();
-    const group = props.workspace.workspaceKey();
-    if (group === lastGroup && directory === lastDirectory) return;
-    lastGroup = group;
-    lastDirectory = directory;
+    const id = groupId();
+    const preference = workspace.repositoryPreference(id);
+    const repositories = catalog.repositories();
+    const preferred = catalog.preferred();
+    const scanning = catalog.scanning();
     untracked(() => {
-      selected.set("");
-      fetchError.set("");
-      paths.set([]);
-      void discover(directory);
+      if (preference.manual) return;
+      const next = preferred && repositories.some(repo => repo.root === preferred) ? preferred
+        : preference.selectedRoot && repositories.some(repo => repo.root === preference.selectedRoot) ? preference.selectedRoot
+        : !scanning && repositories.length === 1 ? repositories[0].root : null;
+      if (next !== preference.selectedRoot && (!scanning || next)) workspace.selectRepository(id, next, false);
+    });
+  });
+  effect(() => {
+    const pending = pendingRoot();
+    const resolved = catalog.contextRoots().find(context => context.path === pending);
+    const scanning = catalog.scanning();
+    untracked(() => {
+      if (!pending) return;
+      if (resolved) { choose(resolved.root); pendingRoot.set(null); }
+      else if (!scanning && !catalog.error()) { addError.set("No Git working tree was found at this path."); pendingRoot.set(null); }
     });
   });
   if (!props.preview) scheduleGitTasks({
-    scan: () => { if (!scanning()) void discover(cwd()); },
     refresh: () => refreshTick.update(value => value + 1),
     fetch: () => {
-      const path = selected();
-      if (!path || gitOperationBusy(path)) return;
-      void git.fetch(path).then(() => {
-        if (!disposed && selected() === path) {
-          fetchError.set("");
-          refreshTick.update(value => value + 1);
-        }
-      }).catch(reason => {
-        if (!disposed && selected() === path) fetchError.set(reason instanceof Error ? reason.message : String(reason));
-      });
+      const current = session();
+      if (!current || gitOperationBusy(current.resourceKey)) return;
+      const id = groupId();
+      void current.git.fetch(current.root).then(() => {
+        if (groupId() === id && selected() === current.root) { fetchError.set(""); refreshTick.update(value => value + 1); }
+      }).catch(reason => { if (groupId() === id && selected() === current.root) fetchError.set(String(reason)); });
     },
   });
-  cleanup(() => { disposed = true; generation++; cancelScan(); });
   return <View class="min-h-0 flex-1">
-    <View class="shrink-0 flex-row items-center gap-2 border-b border-border px-3 py-1">
-      <Type role="label" tone="muted-foreground">Repository</Type>
-      <Popover open={open()} onOpenChange={({ open: value }) => open.set(value)} placement="bottom" align="start"
-        popupClass="rounded-(--radius-overlay) border border-border bg-popover p-2"
-        trigger={<Button testID="git-repository-selector" accessibilityLabel="Select Git repository"
-          disabled={paths().length < 2} class="min-w-0 rounded-(--radius-control) px-2 py-1 hover:bg-control-hover">
-          <Type role="label" lines={1}>{loading() ? "Searching…" : selected() || "No repository found"}</Type>
-        </Button>}>
-        <View class="gap-1">
-          <Each of={paths()}>{(path) => <Button testID={`git-repository-${path()}`} accessibilityLabel={`Select ${path()}`}
-            selected={selected() === path()} onPress={() => { selected.set(path()); fetchError.set(""); open.set(false); }}
-            class="rounded-(--radius-control) px-2 py-1 hover:bg-control-hover">
-            <Type role="label" lines={1}>{path()}</Type>
-          </Button>}</Each>
-        </View>
-      </Popover>
-      <If when={scanning() && !loading()}><Type role="caption" tone="muted-foreground">Searching…</Type></If>
-      <Button testID="git-discover-refresh" accessibilityLabel="Rescan repositories" onPress={() => void discover(cwd())}
-        class="rounded-(--radius-control) px-2 py-1 hover:bg-control-hover"><Type role="label">Rescan</Type></Button>
-    </View>
-    <If when={!!fetchError()}><Type role="caption" tone="muted-foreground" class="px-3">{`Automatic fetch failed: ${fetchError()}`}</Type></If>
-    <If when={!!error()}><Type role="caption" tone="muted-foreground" class="px-3">{error()}</Type></If>
-    <If when={!loading()}>
-      <If when={props.workspace.activeGitView() === "changes"}><GitPanel workspace={props.workspace} preview={props.preview} git={git} root={root} refreshTick={refreshTick} rescan={() => void discover(cwd())} /></If>
-      <If when={props.workspace.activeGitView() === "history"}><HistoryPanel workspace={props.workspace} preview={props.preview} git={git} root={root} refreshTick={refreshTick} rescan={() => void discover(cwd())} notify={props.notify} /></If>
+    <RepositoryPicker workspace={workspace} repositories={catalog.repositories} selected={selected}
+      manual={() => preference().manual} scanning={catalog.scanning} error={() => addError() || catalog.error()}
+      choose={choose} follow={() => workspace.selectRepository(groupId(), null, false)} rescan={catalog.rescan}
+      add={path => { catalog.prepare(); addError.set(""); pendingRoot.set(path); workspace.addRepositoryRoot(groupId(), path); catalog.rescan(); }} />
+    <If when={!!catalog.error()}><Type role="caption" class="px-3 py-1">{catalog.error()}</Type></If>
+    <If when={!!fetchError()}><Type role="caption" class="px-3 py-1">{`Automatic fetch failed: ${fetchError()}`}</Type></If>
+    <Each of={session() ? [session()!] : []} key={entry => `${entry.group}\0${entry.root}`}>
+      {(entry) => <>
+        <If when={workspace.activeGitView() === "changes"}><GitPanel workspace={workspace} preview={props.preview}
+          git={entry().git} session={entry()} root={() => entry().root} refreshTick={refreshTick} rescan={catalog.rescan} /></If>
+        <If when={workspace.activeGitView() === "history"}><HistoryPanel workspace={workspace} preview={props.preview}
+          git={entry().git} session={entry()} root={() => entry().root} refreshTick={refreshTick} rescan={catalog.rescan} notify={props.notify} /></If>
+      </>}
+    </Each>
+    <If when={!session()}>
+      <View class="min-h-0 flex-1 items-center justify-center gap-3 px-6">
+        <Type role="heading">{catalog.scanning() ? "Searching for repositories…" : selected() ? "Selected repository is unavailable." : catalog.repositories().length ? "Select a repository." : "No Git repositories found."}</Type>
+        <Type role="body" class="text-center">{selected() ? "Your selection is kept. Rescan or choose another repository." : "Choose a repository above, follow a terminal directory, or add a folder."}</Type>
+        <Button testID="git-empty-rescan" class="h-7 px-3 hover:bg-control-hover" onPress={catalog.rescan}><Type role="label">Rescan</Type></Button>
+      </View>
     </If>
   </View>;
 }

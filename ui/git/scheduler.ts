@@ -1,6 +1,6 @@
 import { cleanup, lifecycle } from "nsh";
 
-type Tasks = { scan: () => void; refresh: () => void; fetch: () => void };
+type Tasks = { scan?: () => void; refresh: () => void; fetch: () => void };
 
 /** Advances independent deadlines without replaying missed ticks after suspension. */
 export function createGitSchedule(tasks: Tasks, start: number) {
@@ -9,7 +9,7 @@ export function createGitSchedule(tasks: Tasks, start: number) {
   let nextFetch = start + 300_000;
   return (now: number, active: boolean) => {
     if (!active) return;
-    if (now >= nextScan) { nextScan = now + 30_000; tasks.scan(); }
+    if (now >= nextScan) { nextScan = now + 30_000; tasks.scan?.(); }
     if (now >= nextRefresh) { nextRefresh = now + 5_000; tasks.refresh(); }
     if (now >= nextFetch) { nextFetch = now + 300_000; tasks.fetch(); }
   };

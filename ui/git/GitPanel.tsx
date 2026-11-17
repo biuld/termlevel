@@ -1,5 +1,8 @@
+import { buildTree } from "./changes-tree";
+import type { RepositorySession } from "./repository-session";
+import { scopedGit } from "./scoped-git";
 import { batch, cleanup, computed, effect, lifecycle, signal, Text, token, untracked, View } from "nsh";
-import { Button, DiffView, ResizablePanel, ResizablePanelGroup, Tree, type DiffLayout, type TreeEntry, type TreeItem } from "nsh/base";
+import { Button, DiffView, ResizablePanel, ResizablePanelGroup, Tree, type DiffLayout, type TreeEntry } from "nsh/base";
 import { Hint, IconButton } from "../shared/controls";
 import { interfaceFont, monoFont } from "../shared/fonts";
 import { Icon } from "../shared/icons";
@@ -7,62 +10,6 @@ import { Type } from "../shared/type";
 import type { Workspace } from "../workspace/state";
 import type { GitChange, GitDiffMode, GitRepoStatus, GitTransport } from "./git-types";
 
-interface TreeNode {
-  name: string;
-  path: string;
-  children: Map<string, TreeNode>;
-  change?: GitChange;
-}
-
-interface ChangeTree {
-  items: TreeItem[];
-  folders: string[];
-  files: string[];
-  changes: Map<string, GitChange>;
-}
-
-/** Groups changed paths into a directory tree. */
-function buildTree(changes: GitChange[]): ChangeTree {
-  const root = new Map<string, TreeNode>();
-  for (const change of changes) {
-    const parts = change.path.split("/");
-    let level = root;
-    let path = "";
-    for (let index = 0; index < parts.length; index++) {
-      const name = parts[index];
-      path = path ? `${path}/${name}` : name;
-      let node = level.get(name);
-      if (!node) {
-        node = { name, path, children: new Map() };
-        level.set(name, node);
-      }
-      if (index === parts.length - 1) node.change = change;
-      level = node.children;
-    }
-  }
-  const folders: string[] = [];
-  const files: string[] = [];
-  const byId = new Map<string, GitChange>();
-  const toItems = (level: Map<string, TreeNode>): TreeItem[] => [...level.values()]
-    .sort((a, b) => {
-      const aFolder = a.children.size > 0;
-      const bFolder = b.children.size > 0;
-      if (aFolder !== bFolder) return aFolder ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    })
-    .map((node) => {
-      if (node.children.size > 0) {
-        const id = `dir:${node.path}`;
-        folders.push(id);
-        return { id, label: node.name, children: toItems(node.children) };
-      }
-      const id = `file:${node.path}`;
-      files.push(id);
-      if (node.change) byId.set(id, node.change);
-      return { id, label: node.name };
-    });
-  return { items: toItems(root), folders, files, changes: byId };
-}
 
 function statusColor(status: string) {
   switch (status) {
@@ -95,8 +42,12 @@ function errorMessage(error: unknown) {
 }
 
 /** Changed files and the selected patch for one group. */
-export function GitPanel(props: { workspace: Workspace; git: GitTransport; preview: boolean; root?: () => string; refreshTick?: () => number; rescan?: () => void }) {
+export function GitPanel(props: { workspace: Workspace; git: GitTransport; session?: RepositorySession; preview: boolean; root?: () => string; refreshTick?: () => number; rescan?: () => void }) {
   const store = props.workspace;
+  const saved = props.session?.changesPreferences;
+  const git = scopedGit(props.git);
+  let disposed = false;
+  cleanup(() => { disposed = true; statusGeneration++; diffGeneration++; });
   const groupId = () => store.workspaceKey();
 
   const status = signal<GitRepoStatus | null>(null);
@@ -105,10 +56,10 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; previ
   const refreshing = signal(false);
   const epoch = signal(0);
   const diffEpoch = signal(0);
-  const selected = signal<string | null>(null);
-  const expanded = signal<string[]>([]);
-  const scope = signal<GitDiffMode>("unstaged");
-  const diffLayout = signal<DiffLayout>("unified");
+  const selected = signal<string | null>(saved?.selected ?? null);
+  const expanded = signal<string[]>(saved?.expanded ?? []);
+  const scope = signal<GitDiffMode>(saved?.scope ?? "unstaged");
+  const diffLayout = signal<DiffLayout>(saved?.layout ?? "unified");
   const patch = signal("");
   const patchError = signal("");
   const patchLoading = signal(false);
@@ -127,11 +78,14 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; previ
   const conflictCount = () => changes().filter((item) => item.conflicted).length;
   const clean = () => !!status()?.repo && changes().length === 0;
 
-  let lastRoot = "";
+  let lastRoot = props.root?.() ?? store.group(groupId())?.cwd ?? "";
   let statusGeneration = 0;
   let diffGeneration = 0;
-  let foldersInitialized = false;
-  const knownFolders = new Set<string>();
+  let foldersInitialized = !!saved;
+  const knownFolders = new Set<string>(saved?.folders ?? []);
+  cleanup(() => { if (props.session) props.session.changesPreferences = {
+    selected: selected(), expanded: expanded(), folders: [...knownFolders], scope: scope(), layout: diffLayout(),
+  }; });
 
   async function loadStatus() {
     const group = store.group(groupId());
@@ -145,8 +99,8 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; previ
     loading.set(true);
     refreshing.set(true);
     try {
-      const next = await props.git.status(props.root?.() ?? group.cwd);
-      if (generation !== statusGeneration) return;
+      const next = await git.status(props.root?.() ?? group.cwd);
+      if (disposed || generation !== statusGeneration) return;
       status.set(next);
       statusError.set("");
       const nextTree = buildTree(next.changes);
@@ -165,7 +119,7 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; previ
         }
       }
     } catch (error) {
-      if (generation !== statusGeneration) return;
+      if (disposed || generation !== statusGeneration) return;
       status.set(null);
       statusError.set(errorMessage(error));
     } finally {
@@ -183,6 +137,7 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; previ
     untracked(() => {
       if (root !== lastRoot) {
         lastRoot = root;
+        git.cancel?.();
         diffGeneration++;
         selected.set(null);
         status.set(null);
@@ -212,6 +167,9 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; previ
     const requested = scope();
     diffEpoch();
     if (!group || !key) {
+      diffGeneration++;
+      git.cancel?.("diff");
+      patchLoading.set(false);
       patch.set("");
       patchError.set("");
       return;
@@ -225,12 +183,12 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; previ
     }
     const generation = ++diffGeneration;
     patchLoading.set(true);
-    void props.git.diff(props.root?.() ?? group.cwd, item.path, mode).then((value) => {
-      if (generation !== diffGeneration) return;
+    void git.diff(props.root?.() ?? group.cwd, item.path, mode).then((value) => {
+      if (disposed || generation !== diffGeneration) return;
       patch.set(value);
       patchError.set("");
     }).catch((error) => {
-      if (generation !== diffGeneration) return;
+      if (disposed || generation !== diffGeneration) return;
       patch.set("");
       patchError.set(errorMessage(error));
     }).finally(() => {

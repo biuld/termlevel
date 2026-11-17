@@ -1,7 +1,9 @@
 import { Text, token, View, type CanvasRenderingContext2D as CanvasContext } from "nsh";
+import { Hint } from "../../shared/controls";
 import { monoFont } from "../../shared/fonts";
 import type { GraphRow } from "../commit-graph";
 import type { GitCommitFile, GitTransport } from "../git-types";
+import type { RepositorySession } from "../repository-session";
 import type { Workspace } from "../../workspace/state";
 export const LOG_PAGE = 200;
 export const ROW_HEIGHT = 30;
@@ -13,7 +15,6 @@ export interface CommitRow extends GraphRow {
   date: string;
   short: string;
   subject: string;
-  active: boolean;
 }
 
 export interface FileRow extends GitCommitFile {
@@ -121,9 +122,10 @@ export function laneColor(lane: number) {
   return colors[lane % colors.length];
 }
 
-export function drawGraph(cx: CanvasContext, size: { width: number; height: number }, row: GraphRow) {
+export function drawGraph(cx: CanvasContext, size: { width: number; height: number }, row: GraphRow, lanes = 1, connections = true) {
   const mid = size.height / 2;
-  const x = (lane: number) => GRAPH_LEFT + lane * LANE_GAP;
+  const gap = Math.min(LANE_GAP, (size.width - GRAPH_LEFT - 10) / Math.max(1, lanes - 1));
+  const x = (lane: number) => GRAPH_LEFT + (connections ? lane : 0) * gap;
   const line = (lane: number, from: number, to: number, color: string) => {
     cx.beginPath();
     cx.moveTo(x(lane), from);
@@ -134,14 +136,9 @@ export function drawGraph(cx: CanvasContext, size: { width: number; height: numb
   cx.lineWidth = 1.5;
   cx.lineCap = "round";
   cx.lineJoin = "round";
+  if (connections) {
   for (const lane of row.through) line(lane, 0, size.height, laneColor(lane));
-  for (let lane = 0; lane < row.before.length; lane++) {
-    if (lane === row.lane) {
-      line(lane, 0, mid, laneColor(lane));
-    } else if (!row.after.includes(row.before[lane])) {
-      line(lane, 0, mid, laneColor(lane));
-    }
-  }
+  if (row.incoming) line(row.lane, 0, mid, laneColor(row.lane));
   for (const edge of row.edges) {
     if (edge.to === row.lane) {
       line(edge.to, mid, size.height, laneColor(edge.to));
@@ -157,25 +154,32 @@ export function drawGraph(cx: CanvasContext, size: { width: number; height: numb
     cx.strokeStyle = laneColor(edge.to);
     cx.stroke();
   }
+  }
   cx.beginPath();
-  cx.arc(x(row.lane), mid, 3.5, 0, Math.PI * 2);
+  cx.arc(x(row.lane), mid, gap < 7 ? 2 : 3.5, 0, Math.PI * 2);
   cx.fillStyle = laneColor(row.lane);
   cx.fill();
 }
 
-export function RefChip(props: { label: string }) {
+export function RefHint(props: { label: string }) {
+  return <View class="max-w-(--width-git-ref-tooltip)"><Hint>{props.label}</Hint></View>;
+}
+
+export function RefChip(props: { label: string; compact?: boolean }) {
   const color = () => refColor(props.label);
-  return <View class="shrink-0 rounded-(--radius-tab) border px-1" style={{ borderColor: color() }}>
-    <Text style={{
+  return <View class={`min-w-0 shrink rounded-(--radius-tab) border px-1 ${props.compact ? "max-w-(--width-git-ref)" : "max-w-(--width-git-ref-detail)"}`}
+    tooltip={<RefHint label={props.label} />} accessibilityLabel={props.label} style={{ borderColor: color() }}>
+    <Text class="min-w-0" style={{
       fontFamily: monoFont(),
       fontSize: token("text-caption"),
       lineHeight: token("leading-caption"),
       color: color(),
       numberOfLines: 1,
+      textOverflow: "ellipsis-middle",
     }}>{shortRef(props.label)}</Text>
   </View>;
 }
 
 /** Branches, worktrees, commit lanes and the selected commit's patch for one group. */
 
-export type HistoryProps = { root?: () => string; refreshTick?: () => number; rescan?: () => void; workspace: Workspace; git: GitTransport; preview: boolean; notify: (level: "info" | "error", title: string, body: string) => void };
+export type HistoryProps = { session?: RepositorySession; root?: () => string; refreshTick?: () => number; rescan?: () => void; workspace: Workspace; git: GitTransport; preview: boolean; notify: (level: "info" | "error", title: string, body: string) => void };

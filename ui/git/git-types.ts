@@ -1,3 +1,5 @@
+import type { GraphGeometry } from "./commit-graph";
+
 /** One changed path from Git, independent of whether it came from the CLI or the demo. */
 export interface GitChange {
   path: string;
@@ -40,6 +42,8 @@ export interface GitBranch {
 }
 
 export interface GitBranches {
+  revision?: string;
+  unchanged?: boolean;
   branches: GitBranch[];
   error?: string | null;
 }
@@ -75,10 +79,15 @@ export interface GitCommit {
   timestamp: number;
   /** Decorations such as `HEAD -> main`, `origin/main` or `tag: v1`. */
   refs: string[];
+  /** Total decorations when the native query returns a bounded preview. */
+  refCount?: number;
   subject: string;
 }
 
 export interface GitLog {
+  graph?: GraphGeometry[];
+  graphMaxLanes?: number;
+  graphClipped?: boolean;
   commits: GitCommit[];
   hasMore: boolean;
   truncated: boolean;
@@ -101,10 +110,25 @@ export interface GitCommitDetail {
   error?: string | null;
 }
 
+export interface GitRepository {
+  id: number; root: string; gitDir: string; commonDir: string; label: string;
+  kind: string;
+}
+export interface GitDiscoveryPage {
+  paths: string[]; repositories?: GitRepository[]; revision?: number; total?: number;
+  contextRoots?: Array<{ path: string; root: string }>;
+  reset?: boolean; scanning?: boolean; done: boolean; preferredRoot?: string | null; error?: string | null;
+}
+
 /** Git data for group views. The native transport runs the system CLI; the preview transport is deterministic. */
 export interface GitTransport {
-  startDiscovery?(root: string): number;
-  pollDiscovery?(id: number): { paths: string[]; error?: string | null; done: boolean };
+  fork?(): GitTransport;
+  cancel?(channel?: string): void;
+  dispose?(): void;
+  startDiscovery?(root: string, contexts?: string[]): number;
+  pollDiscovery?(id: number, revision?: number, offset?: number): GitDiscoveryPage;
+  updateDiscovery?(id: number, contexts: string[]): void;
+  refreshDiscovery?(id: number): void;
   cancelDiscovery?(id: number): void;
   discover?(root: string): Promise<{ paths: string[]; error?: string | null }>;
   status(root: string): Promise<GitRepoStatus>;
@@ -113,6 +137,8 @@ export interface GitTransport {
   worktrees(root: string): Promise<GitWorktrees>;
   /** `scope` is a full ref, or empty for every ref. */
   log(root: string, scope: string, limit: number, skip: number): Promise<GitLog>;
+  resumeHistory?(root: string, scope: string, count: number): Promise<boolean>;
+  matchRefs?(query: string): Promise<string[]>;
   commit(root: string, oid: string): Promise<GitCommitDetail>;
   fetch(root: string): Promise<string>;
   pull(root: string): Promise<string>;
