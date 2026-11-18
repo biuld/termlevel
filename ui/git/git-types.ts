@@ -27,7 +27,7 @@ export interface GitRepoStatus {
   error?: string | null;
 }
 
-export type GitDiffMode = "staged" | "unstaged" | "untracked";
+export type GitDiffMode = "staged" | "unstaged" | "head" | "untracked";
 
 /** One local branch, remote-tracking branch or tag. */
 export interface GitBranch {

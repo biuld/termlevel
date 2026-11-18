@@ -16,7 +16,7 @@ pub(super) fn diff_sync(root: &str, path: &str, mode: &str) -> Result<String, St
     let repo_root = PathBuf::from(String::from_utf8_lossy(&top.stdout).trim().to_string());
     let path = safe_relative(path)?;
     match mode {
-        "staged" | "unstaged" => {
+        "staged" | "unstaged" | "head" => {
             let mut args = vec![
                 "diff",
                 "--no-ext-diff",
@@ -27,6 +27,11 @@ pub(super) fn diff_sync(root: &str, path: &str, mode: &str) -> Result<String, St
             ];
             if mode == "staged" {
                 args.push("--cached");
+            }
+            // Working tree against HEAD. The added side matches the open file,
+            // including changes that are already staged.
+            if mode == "head" {
+                args.push("HEAD");
             }
             args.push("--");
             args.push(path.as_str());

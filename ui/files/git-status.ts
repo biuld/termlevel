@@ -18,10 +18,18 @@ export interface GitOverlay {
   folders: ReadonlySet<string>;
   /** Deleted file names whose parent directory is still the place to show them. */
   deleted: ReadonlyMap<string, readonly string[]>;
+  /** Path of the group directory inside the repository. Empty at the repo root. */
+  prefix: string | null;
 }
 
 export function emptyGitOverlay(): GitOverlay {
-  return { files: new Map(), folders: new Set(), deleted: new Map() };
+  return { files: new Map(), folders: new Set(), deleted: new Map(), prefix: null };
+}
+
+/** Repository path of a group-relative file. Null when the group is outside the repo. */
+export function repoPath(prefix: string | null, relative: string): string | null {
+  if (prefix === null || !relative) return null;
+  return prefix ? `${prefix}/${relative}` : relative;
 }
 
 /** Same words Changes uses beside the open file. */
@@ -76,7 +84,7 @@ export function gitOverlay(changes: readonly GitChange[], repoRoot: string, grou
   for (const names of deleted.values()) {
     names.sort((left, right) => left.toLowerCase().localeCompare(right.toLowerCase()) || (left < right ? -1 : left > right ? 1 : 0));
   }
-  return { files, folders, deleted };
+  return { files, folders, deleted, prefix };
 }
 
 /** Poll Git status for the file tree. A missing status call leaves the tree unmarked. */

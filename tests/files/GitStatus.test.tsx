@@ -30,6 +30,7 @@ test("git paths inside the group become file marks", () => {
   });
   expect(overlay.files.get("src/gone.ts")?.deleted).toBe(true);
   expect(overlay.files.has("other/skip.ts")).toBe(false);
+  expect(overlay.prefix).toBe("app");
   expect([...overlay.folders]).toEqual(["src"]);
   expect(overlay.deleted.get("src")).toEqual(["gone.ts"]);
 });

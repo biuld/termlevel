@@ -73,7 +73,7 @@ impl Git {
         }
     }
 
-    /// A unified patch for one changed path. `mode` is staged, unstaged or untracked.
+    /// A unified patch for one changed path. `mode` is staged, unstaged, head, or untracked.
     pub async fn diff(
         root: String,
         path: String,

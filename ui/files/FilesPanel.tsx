@@ -1,5 +1,5 @@
 import { cleanup, Clipboard, computed, effect, signal, Text, token, untracked, View, type Signal } from "nsh";
-import { Editor, ResizablePanel, ResizablePanelGroup, Tree, type TreeEntry } from "nsh/base";
+import { Editor, ResizablePanel, ResizablePanelGroup, Tree, type EditorDecoration, type TreeEntry } from "nsh/base";
 import { Application, Menu } from "nsh/desktop";
 import type { FilesLeave } from "../workspace/state/files";
 import { Action, AppDialog, DialogActions, IconButton } from "../shared/controls";
@@ -7,6 +7,7 @@ import { monoFont } from "../shared/fonts";
 import { Icon } from "../shared/icons";
 import { Type } from "../shared/type";
 import type { GitTransport } from "../git/git-types";
+import { watchGitHunks } from "./git-hunks";
 import { emptyGitOverlay, gitScope, startGitStatus, statusColor, type GitOverlay } from "./git-status";
 import { buildFileTree, isMarker, rememberExpanded } from "./tree";
 import type { DirectoryListing, FileEntry, FilesTransport, FileText } from "./types";
@@ -37,6 +38,7 @@ export function FilesPanel(props: {
   const listings = signal<Record<string, DirectoryListing>>({});
   const watchNotes = signal<Record<string, string>>({});
   const gitMarks = signal<GitOverlay>(emptyGitOverlay());
+  const lineMarks = signal<EditorDecoration[]>([]);
   let refreshGit = () => {};
   const rootError = signal("");
   const text = signal("");
@@ -61,6 +63,17 @@ export function FilesPanel(props: {
   const tree = computed(() => buildFileTree(listings(), props.expanded, props.showHidden, watchNotes(), gitMarks()));
   const selectedGit = computed(() => props.selected ? gitMarks().files.get(props.selected) : undefined);
   const dirty = computed(() => text() !== saved());
+  watchGitHunks({
+    diff: props.git ? (root, path, mode) => props.git!.diff(root, path, mode) : undefined,
+    root: () => props.root,
+    path: () => props.selected,
+    mark: () => props.selected ? gitMarks().files.get(props.selected) : undefined,
+    prefix: () => gitMarks().prefix,
+    saved: () => saved(),
+    clean: () => text() === saved(),
+    editable: () => !readOnly() && !fileNote() && !loadingFile(),
+    onMarks: (marks) => lineMarks.set(marks),
+  });
   effect(() => { props.filesUnsaved.set(dirty()); });
   cleanup(() => props.filesUnsaved.set(false));
 
@@ -377,7 +390,7 @@ export function FilesPanel(props: {
             <If when={!loadingFile() && !fileNote() && !!props.selected && !readOnly()}>
               <Editor testID="files-editor" class="min-h-0 flex-1" value={text()} language={props.selected}
                 readOnly={false} autoFocus={false} fontFamily={monoFont()} fontSize={token("text-body")}
-                lineHeight={token("leading-body") + 4}
+                lineHeight={token("leading-body") + 4} decorations={lineMarks()} gutterDecorationsWidth={4}
                 onChange={({ value }) => text.set(value)} />
             </If>
             <If when={!loadingFile() && !fileNote() && !props.selected}>
