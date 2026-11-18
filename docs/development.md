@@ -1,58 +1,74 @@
-# 开发指南
+# Development Guide
 
-## 文档入口
+This guide covers directory ownership, dependency rules, tests, validation commands and generated files. The [documentation map](README.md) is the entry point for the document set; [AGENTS.md](../AGENTS.md) defines maintenance rules; the [product README](../README.md) covers installation, running and user-facing features.
 
-README 负责安装、运行和产品能力；本指南负责目录与开发约定；architecture 负责当前所有权与数据通路；roadmap 负责尚待完成的工作；design 负责视觉规范。terminal-grid、terminal-surface、terminal-tiling 记录终端展示设计；osc-support 统一记录 OSC 能力、终端状态的业务语义与 UI / UX；file-browser 记录分组文件浏览与文本编辑的草案。
+## Source layout
 
-validation 按日期保留验证证据，不作为当前模块路径索引。带 handoff 的文件是历史交接快照，不覆盖当前架构。移动文件时更新当前文档与代码引用；历史命令、日志路径和提交信息保留原样。
+Ownership is defined at the directory level. The code tree is the authoritative record of individual files; do not keep a per-file inventory here.
 
-## 目录与依赖
+| Path | Owns |
+|---|---|
+| `App.tsx` | NSH mount entry. It only mounts the workspace. |
+| `ui/app/` | Startup restore, window, menus, shortcuts, dialogs and application wiring. |
+| `ui/workspace/` | Workspace state, snapshot and persistence, sidebar, groups, tiling and native window UI. |
+| `ui/git/` | Repository selection, Changes, History, branch and worktree views, and commit lanes. |
+| `ui/files/` | Group file tree, text editing, Git status overlays and directory-watch subscriptions. |
+| `ui/settings/` | Settings UI. |
+| `ui/notifications/` | Notification-history subscription, panel and rows. |
+| `ui/terminal/` | Native terminal display and find bar. |
+| `ui/shared/` | Stateless controls, icons, fonts, text roles and theme mapping. |
+| `src/` | Rust application crate: native exports, runtime, session ownership, terminal adaptation and platform integration. |
+| `src/files/` | Single-level listings, bounded text reads and saves, expanded-directory watches and file actions. |
+| `src/git_discovery/` | Shared repository directories, context discovery and directory watches. |
+| `src/git/` | Read-only Git CLI, read leases and per-view read state. |
+| `src/git_ops/` | Explicit Git operations: fetch, pull, push, checkout, branch and worktree management. |
+| `src/sessions/` | Session API, PTY and process ownership, and the bounded input queue. |
+| `src/session_view/` | Display control, input policy, rendering and the platform backend. |
+| `crates/ghostty-vt/` | Independent memory-safe wrapper around libghostty-vt. |
+| `crates/ghostty-vt-sys/` | Official C ABI, headers, bindings and prebuilt-library build. |
+| `tests/` | Headless tests, native acceptance tests and protocol probes. |
+| `scripts/` | Pinned tooling and validation entry points. |
+| `assets/` | Committed product assets. |
 
-```text
-App.tsx                     NSH 默认挂载入口
-ui/app/                     启动恢复、窗口、菜单、快捷键和应用接线
-ui/workspace/               工作区状态、快照、存储、侧栏、分组和平铺
-ui/git/                     Git 变更 / diff、History、分支 / worktree 与提交车道
-ui/files/                   分组文件树与文本编辑
-ui/settings/                设置界面
-ui/notifications/           通知历史订阅与标题栏面板
-ui/terminal/                原生终端展示和查找
-ui/shared/                  通用控件、图标、字体、文字和主题映射
-src/                        Rust 应用 crate
-  git_discovery/          共享仓库目录、上下文发现与目录监听
-  git/                      只读查询、进程执行、读取租约、refs 快照与后台增量车道
-  git_ops/                  显式 Git 操作：fetch、fast-forward pull、push、checkout、建分支、worktree 管理
-  files/                    分组目录的单层列举、有界文本读写、展开目录监听与系统文件动作
-  sessions/                 显式会话 API 与进程生命周期测试
-  terminal/                 Ghostty 应用适配测试
-  session_view/             显示控制、输入策略、场景与平台后端
-crates/ghostty-vt/           独立安全封装
-crates/ghostty-vt-sys/       官方 C ABI、头文件、绑定和预编译库构建
-tests/                     测试代码，详见下文
-scripts/                    固定版本工具与验证入口
-assets/                     提交的产品资源
-artifacts/                  忽略的本地日志、截图与报告
-```
+The stable entry points are `App.tsx`, `ui/app/WorkspaceApp.tsx`, `src/lib.rs`, `src/sessions.rs` and `src/session_view/`. Their contracts and data flow belong in [architecture](architecture/README.md), not here.
 
-TSX 的应用接线位于 app；工作区状态与操作位于 workspace；终端视图位于 terminal；无业务状态的公共表现放 shared。组件用 PascalCase，状态与工具文件用小写及连字符。沿用当前两空格 TSX 缩进，避免目录整理时混入整文件格式重写。
+TSX application wiring lives in `app`; workspace state and operations live in `workspace`; the terminal view lives in `terminal`; stateless presentation lives in `shared`. Components use PascalCase; state and utility modules use lower-case and hyphens. Keep the existing two-space TSX indentation and avoid whole-file formatting rewrites during moves.
 
-app 可以组合 workspace、settings、notifications、terminal 和 shared。workspace 的状态模块不导入 app 或 terminal 展示组件；TilingCanvas 是工作区到终端展示的组合点。terminal 可消费 workspace 状态接口，但不创建应用窗口或接管进程生命周期。shared 不导入上述业务模块。当前 workspace 状态使用 NSH signals 和原生服务，不宣称是纯函数领域层；tiling 的树变换和 snapshot 的解析各自保留独立入口。
+## Dependency rules
 
-Rust 的 lib.rs 只做导出注册。SessionManager 拥有 PTY、进程与工作线程；terminal 负责 Ghostty 到应用的适配；session_view 负责显示与交互；平台对象只放 platform 下。两个 Ghostty crate 不依赖 NSH、PTY 或应用。跨线程传 owned 数据，句柄同步和回调约束见 crates/ghostty-vt/THREADING.md。
+TSX:
 
-新增模块按职责归属；共享机制应有唯一所有者。源代码文件最多 500 行，超过时按职责拆分：Rust 使用目录和 `mod.rs`，TypeScript / TSX 使用目录和 `index.ts`；保持公开入口清晰，不为每个组件增加 crate。
+- `app` may compose `workspace`, `settings`, `notifications`, `terminal` and `shared`.
+- `workspace` state modules do not import `app` or terminal presentation components. `TilingCanvas` is the composition point from workspace to the terminal surface.
+- `terminal` may consume workspace state contracts, but it does not create application windows or take over process lifecycle.
+- `shared` does not import any business module.
+- Workspace state uses NSH signals and native services; it is not a pure functional domain layer. Tiling tree transforms and snapshot parsing keep separate entry points.
 
-## 测试与验证
+Rust:
 
-- `tests/workspace/`：工作区交互、布局、持久化及其 fixtures。
-- `tests/terminal/`：内核绑定、真实会话、查找及其 fixtures。
-- `tests/native/*.acceptance.tsx`：需要前台 AppKit 窗口的验收，不进入默认 headless 发现。
-- `tests/probes/`：验收启动的 Python 协议与负载探针，不属于产品运行依赖。
-- Rust 单元测试跟随模块，独立 crate 的集成测试留在各 crate 的 tests 下。
+- `src/lib.rs` only registers exports and native components.
+- `SessionManager` in `src/sessions.rs` owns the PTY, child process and worker threads. Only explicit session operations create or close processes.
+- `src/terminal.rs` adapts Ghostty state to the application. `src/session_view/` owns display and interaction. Platform objects live only under `session_view/platform/`.
+- `crates/ghostty-vt` and `crates/ghostty-vt-sys` do not depend on NSH, the PTY layer or the application. Pass owned data across threads; handle synchronization and callback rules are in [crates/ghostty-vt/THREADING.md](../crates/ghostty-vt/THREADING.md).
+- Add a module where its responsibility belongs; a shared mechanism has one owner. Do not add a crate per component.
 
-测试文件命名为 `*.test.tsx`，fixture 不使用此后缀。NSH 的 `open()` 相对测试模块解析。原生 acceptance 经 scripts/test-native 临时复制到仓库根目录运行，所以其 open 路径以根目录为基准；Python 命令同样以仓库根目录为工作目录。临时文件退出时删除；fixture 邻近的 .nsh 缓存不得提交。
+## The 500-line rule
 
-常规验证：
+A source code file must not exceed 500 lines. Split an oversized Rust module into a directory with `mod.rs`; split TypeScript or TSX into a directory with `index.ts`. Keep responsibilities and public exports clear.
+
+## Testing layout
+
+- `tests/workspace/`: workspace interaction, layout, persistence, Files entry and Git views, with deterministic fixtures.
+- `tests/terminal/`: engine bindings, real sessions, find, file drop, input backpressure, notifications, OSC, selection, status and tiling.
+- `tests/files/`: directory tree, Git status overlay, diff hunks and row actions, with fixtures.
+- `tests/native/*.acceptance.tsx`: AppKit acceptance that needs a foreground window; these files are excluded from default headless discovery.
+- `tests/screenshots/*.acceptance.tsx`: opt-in captures for the documentation gallery. Run `tests/screenshots/setup.sh` first and follow its README; these files are also excluded from default discovery.
+- `tests/probes/`: Python protocol and payload probes launched by acceptance tests. They are not product runtime dependencies.
+- Rust unit tests live beside their modules. Integration tests for an independent crate stay under that crate's `tests/` directory.
+
+Test files use the `*.test.tsx` suffix; fixtures do not. NSH resolves `open()` relative to the test module. `scripts/test-native` copies an acceptance source to the repository root and runs it there, so acceptance `open()` paths are root-relative; Python probes also run with the repository root as the working directory. Temporary files are removed on exit, and `.nsh` caches next to fixtures must not be committed.
+
+## Standard validation
 
 ```sh
 ./scripts/nsh check
@@ -63,17 +79,19 @@ cargo clippy --workspace --all-targets -- -D warnings
 git diff --check
 ```
 
-主题修改先 build 再 check，以更新生成的 token 类型。仅改文档可检查链接及 diff；目录移动必须验证类型、测试发现和构建。修复应验证用户行为或所有权约束，不写只复述实现的测试。
+A theme change needs `build` before `check` so generated token types update. A documentation-only change needs link and diff checks; a directory move must also verify types, test discovery and the build. Validation should exercise user behavior or an ownership constraint, not restate the implementation.
 
-原生验收按涉及能力选择，串行运行，避免窗口焦点与共享 Cargo target 互相干扰：
+## Native acceptance
+
+Run these with a foreground AppKit window, serially, to avoid window-focus and shared Cargo target interference:
 
 ```sh
-./scripts/test-native-input
-./scripts/test-native-scroll
+./scripts/test-native input
+./scripts/test-native scroll
 ./scripts/test-native selection
-./scripts/test-native-tiling
-./scripts/test-native-protocols
-./scripts/test-native-ghostty
+./scripts/test-native tiling
+./scripts/test-native protocols
+./scripts/test-native ghostty
 ./scripts/test-native glyphs
 ./scripts/test-native status
 ./scripts/test-native notifications
@@ -85,12 +103,16 @@ git diff --check
 ./scripts/test-native settings
 ```
 
-这些入口保持兼容，也可用 `./scripts/test-native <类别>`。完整 headless 发现不得与 scripts/test-native 并行：后者在仓库根目录生成临时 *.test.tsx，会被前者误发现。原生测试需要前台窗口，不能由类型检查或 headless 成功替代。剪贴板 helper 的编码与管道由 Rust 单元测试验证；系统剪贴板 Unicode 和 OSC 52 使用 `./scripts/test-native protocols --filter 'OSC52 preserves Chinese'` 验证，该原生用例保存并恢复剪贴板。系统输入法候选窗、拖动手感、选区和长期负载的人工验收另记。
+The compatibility wrappers `scripts/test-native-input`, `-scroll`, `-protocols`, `-tiling` and `-ghostty` remain valid. `./scripts/test-native <category> [NSH test options]` passes options through, for example a `--filter` for one case. `gitscale` prepares its local repository first; `repositories` prepares its fixture repositories.
 
-验证记录注明 revision 或未提交状态、命令、结果、日志以及未覆盖项。预览、真实 PTY、headless、原生自动化、人工验收分别说明。遇到已有失败先保留具体失败与历史基线，不通过改断言或超时来掩盖。持久化提交曾记录 126/128；本次目录整理复验为 128/128。历史失败仍保留在 validation 对应章节，不推断间歇性问题已根治。
+Do not run full headless discovery in parallel with `scripts/test-native`: the latter creates a temporary `*.test.tsx` file at the repository root that the former would discover. Native success cannot substitute for manual GUI acceptance, and type-check or headless success cannot substitute for native acceptance.
 
-## 工具与生成文件
+Record validation with the revision or uncommitted state, the command, the result, log paths and what was not covered. Keep preview, real PTY, headless, native automation and manual GUI acceptance distinct. Do not hide an existing failure by changing an assertion or timeout. The evidence policy and topic index are in [validation/README.md](validation/README.md); dated entries live in the topic files.
 
-NSH 统一经 scripts/nsh 调用；scripts/bootstrap 安装固定版本并验证校验和。Rust 版本要求见 README。日常 Ghostty 构建使用固定校验和的官方预编译库；离线覆盖和绑定再生成流程分别见两个 crate 的 README。
+## Tooling and generated files
 
-Cargo.lock 随代码提交。theme.json 和 assets 是源文件；.nsh、.tools、target、node_modules、artifacts 是本地生成物。不要手改生成类型或在源码目录保存截图与日志。
+Call NSH through `./scripts/nsh` only. `./scripts/bootstrap` installs the pinned NSH release and verifies its SHA-256 checksum. The CLI, `nsh-core`, `nsh-base` and `nsh-platform-macos` are pinned to 0.6.0 and must stay aligned. Rust, macOS and Git requirements are listed in the [product README](../README.md).
+
+Daily Ghostty builds use the official prebuilt library with a fixed checksum and do not need Zig. Offline overrides and binding regeneration are documented in [crates/ghostty-vt-sys](../crates/ghostty-vt-sys/README.md) and [crates/ghostty-vt](../crates/ghostty-vt/README.md).
+
+`Cargo.lock` is committed. `theme.json` and `assets/` are sources; `.nsh/`, `.tools/`, `target/`, `node_modules/`, `artifacts/` and temporary `.native-*` acceptance runners are local generated or ignored files. Do not edit generated `.nsh/types` by hand, store screenshots or logs in source directories, or commit local artifacts. Theme values belong in `theme.json`.

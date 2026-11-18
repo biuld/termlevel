@@ -1,112 +1,169 @@
 # Termlevel
 
-用垂直标签页和分组组织终端会话。UI 参考新版 Firefox，使用 NSH 的原生桌面后端，以 TSX 编写。
+**A native macOS terminal workspace built around vertical tabs, tab groups and split panes.**
 
-当前默认连接 **真实 PTY 和用户 shell**。Rust 使用官方 `libghostty-vt` 1.0.1 的预编译静态库解析输出、维护网格和滚动历史，Rust 原生网格视图负责显示，NSH 原生 Input 负责文字与输入法组合。会话独立于 UI 生命周期；切换标签、分组、主题及重新挂载不会终止进程。
+Termlevel keeps shells, development servers, test runs and coding-agent sessions in one window. Firefox-inspired vertical tabs make a long session list readable; groups keep related work together; split panes let you watch several terminals at once without losing track of where the keyboard goes.
 
-关闭终端会结束它的前台进程与 shell；关闭主窗口或退出应用会结束全部会话。工作区结构与设置通过 NSH Storage 持久化；应用重启会为保存的标签重新启动 shell，不恢复旧进程或输出。首次启动显示空白引导页，可直接打开 home 终端或新建分组。尚不声称 Neovim/tmux 完整兼容。
-## 运行
+Every session is a real PTY. Rust owns the process and the terminal state, using the official Ghostty 1.0.1 terminal core through a small, memory-safe wrapper. The interface is TSX on NSH's native AppKit backend — no WebView and no browser engine.
 
-需要 Rust 1.97+ 和平台构建工具；macOS 首先支持 macOS 14+，安装 Xcode Command Line Tools。项目固定使用 NSH **0.6.0**。
+![Termlevel with UNGROUPED split panes running vim, less and cmatrix, and an Agents tab group showing Claude, Codex and Pi icons](docs/assets/screenshots/08-tiling-cli.png)
+
+[Browse all screenshots](docs/screenshots.md)
+
+## Highlights
+
+### Organize sessions, not windows
+
+- Vertical tabs inspired by Firefox, with a resizable and collapsible sidebar.
+- Create, close, rename, pin, reorder and find terminals. Pinned terminals stay at the top of their group or in Ungrouped.
+- Tab groups with nine colors, a Firefox-style inline group editor and per-group working directories.
+- Drag tabs to reorder them, move them between groups, or turn one into a new group.
+- Collapse a group without stopping anything in it. The terminal keeps running and keeps its session ID.
+- The whole workspace — groups, tab order, pinned state, split layout, selection, sidebar width, font size, scrollback limit, font and appearance — is restored on restart.
+
+### Watch several terminals at once
+
+- Split a terminal to the right or down, or drop an existing session into the layout.
+- Move focus by direction, swap sessions between panes, resize panes from the keyboard or with the divider, and zoom one pane temporarily.
+- Drag tabs and pane titles to arrange sessions.
+- A pane that is collapsed, hidden or remounted keeps its process and output. Only an explicit close, shell exit or application quit ends it.
+- When the window is too narrow for the full layout, Termlevel temporarily shows the focused pane and restores the layout when space returns.
+
+### A real terminal
+
+- The terminal stream, parser, grid, scrollback and high-frequency rendering all live in Rust. TSX handles workspace UI and low-frequency session metadata.
+- Full PTY sessions with the user's login shell, resize handling, bracketed paste, mouse reporting, focus reporting, alternate screen, truecolor and ANSI palettes.
+- Native AppKit input with IME composition, including Chinese text.
+- Terminal selection, double-click word selection, triple-click line selection, cross-screen drag selection and a history scrollbar.
+- Find in terminal with ⌘F, including Unicode search over scrollback.
+- OSC 8 hyperlinks, Kitty inline images, and text clipboard integration through OSC 52.
+- Synchronized output (mode 2026) without showing partial frames.
+- Bundled JetBrains Mono with programming ligatures and Sarasa Term SC for CJK coverage, so no extra font installation is required.
+
+### Sessions that tell you what they are doing
+
+- Titles and live working directories from OSC 0/2, OSC 7, ConEmu and iTerm2.
+- Desktop-style notifications from OSC 9 and OSC 777, plus BEL alerts, collected in an in-app notification history.
+- Program status from OSC 7501 (working, blocked, done, error) and real progress from OSC 9;4, shown on the tab.
+- Shell prompt state from OSC 133.
+- Agent icons for idle Codex, Claude Code, Grok, Pi and OpenCode sessions.
+- A configurable working indicator, with a static version when Reduce Motion is enabled.
+
+### Git inside the workspace
+
+- Per-group **Changes** and **History** views. Changes shows the working tree and per-file diffs; History shows commit lanes, commit details, branches, remotes, tags and worktrees.
+- Fetch, fast-forward pull, push, checkout, create or delete branches, and create, open, lock or remove worktrees.
+- Multi-repository discovery from the group directory and the terminal's live working directory, with an explicit repository picker and per-group persistence.
+- Git views use the system `git` CLI (2.20 or newer). Merge, rebase, cherry-pick, stash and conflict resolution are not implemented.
+
+### Browse and edit files
+
+- A per-group **Files** view with a lazily loaded directory tree rooted at the group directory.
+- Open and edit UTF-8 text files up to 512 KiB with syntax highlighting, explicit save, and an unsaved-changes prompt before leaving.
+- Git status letters on file rows and relative-to-HEAD change markers in the editor gutter.
+- Reveal in Finder, open with the default app, copy path, open a terminal at a location, and move to Trash after confirmation.
+- Non-recursive directory watching on macOS for expanded folders, with manual refresh as a fallback.
+
+### Native look and feel
+
+- A unified window bar with the sidebar and terminal as separate rounded panes.
+- Fleet-inspired light, dark and system themes, with semantic theme tokens and nine group colors.
+- Settings for appearance, terminal font and size, scrollback limit, working indicator and shortcuts.
+- Solid surfaces, custom dialogs and a native menu bar. Switching appearance or moving tabs never recreates a terminal.
+
+## Requirements
+
+- macOS 14 or newer.
+- Xcode Command Line Tools.
+- Rust 1.97 or newer.
+- [NSH](https://github.com/longbridge/nsh) **0.6.0**. The bootstrap script installs the pinned version into the project and verifies its SHA-256 checksum.
+- Git 2.20 or newer for the Git views. The terminal itself does not need Git.
+- Network access for the first build: Cargo dependencies and the checksum-verified prebuilt libghostty-vt archive are downloaded then.
+
+The project targets macOS arm64 and x86_64. Automated acceptance so far is on macOS arm64; Intel, Windows and Linux have not been platform-accepted.
+
+## Run from source
 
 ```sh
-./scripts/bootstrap                         # 安装到本项目 .tools/，并验证 SHA-256
-./scripts/nsh run --window-size 1200x780     # 默认 macOS AppKit，TSX 热更新
+git clone https://github.com/biuld/termlevel.git
+cd termlevel
+./scripts/bootstrap
+./scripts/nsh run --window-size 1200x780
 ```
 
-如果 `.tools/nsh` 已存在且完整，可以直接运行第二条命令。也可自行安装全局 nsh 0.6.0，脚本会在没有项目内版本时使用它。第一次运行 mixed 项目需要下载并编译 Rust 依赖；开发时不需要手动安装 Node 或 npm UI 框架。
+`./scripts/bootstrap` installs NSH 0.6.0 under `.tools/`. If that installation already exists and is intact, `./scripts/nsh run` can be used directly. A global NSH 0.6.0 installation is also accepted.
 
-## 工作区功能
+The first mixed-project build downloads Rust dependencies and the prebuilt Ghostty archive, so it takes longer than later runs. No manual Node or npm installation is required.
 
-- 独立 pane 布局：统一窗口栏，可调整宽度、可收起的单行垂直标签，终端使用带间距与圆角的面板。
-- 创建、关闭、重命名终端；固定终端在所属分组或 Ungrouped 内置顶，右键菜单支持排序及跨组移动。
-- 分组创建、折叠、重命名、颜色、取消分组与关闭组确认。
-- 侧栏的 Ungrouped 入口切换到未分组工作区；标题栏 `+` 在当前工作区创建 terminal，提示文字显示创建目标。标题栏 Git 菜单按当前分组打开 Changes 或 History tab；每组每种视图最多一个，关闭不会结束终端。打开状态与选中视图随工作区恢复。组头右键提供组设置和操作。Git 数据由系统 `git` CLI 提供，需要 Git 2.20+。
-- Changes 展示变更文件树和单文件 diff。History 按分支 scope 显示提交车道、提交详情；变更文件列表可点击，右侧只显示选中文件的 patch，默认第一个文件。工具栏可 Fetch 或 fast-forward Pull 当前分支；左栏管理 Local / Remote / Tags 与 worktree，可 checkout、新建 / 删除分支、新建 worktree、把 worktree 打开为新分组、删除或锁定 worktree。合并、rebase 与冲突解决尚未接入。
-- Firefox 风格分组编辑浮层：右键组头或点更多，直接改名称、选择九种颜色；新建组直接进入编辑。
-- 查找终端、字体大小调整、系统菜单与快捷键。
-- 内置 JetBrains Mono（支持编程连字）和更纱终端黑体 SC，中文与常用符号使用明确的回退链；无需额外安装字体，已有字体选择会保留。
-- 多终端定向分屏、方向焦点与位置交换；拖动侧栏标签或 pane 标题安排已有会话。
-- pane 缩放、键盘调整、均分与临时放大；收起 pane 保留进程，关闭 terminal 才结束会话。
-- 窗口过窄时临时展示焦点 terminal，空间恢复后还原布局。
-- 中性灰主题；设置中可切换浅色、深色和跟随系统。
-- 每个终端保留独立 Rust 会话与输出，切换或折叠组保留 session ID；原生视图重新挂载可重新绑定。
-- 标签组、标签顺序、固定状态、分屏布局、选中标签、侧栏宽度、字号、滚动历史、字体和外观持久化；首次启动不自动创建 shell。
-- 本地图片和文件可从 Finder 拖入终端 pane：插入转义后的路径，支持多个文件，不自动回车；远程图片或无文件 URL 的图片数据暂不支持。
-- 真实 shell、中文文本输入与粘贴、resize、Ctrl+C、标题与响铃。Ctrl+D 或退出码 0 会关掉终端；非 0 退出和启动失败留在 pane 里。
-
-| 操作 | macOS 快捷键 |
-|---|---|
-| 新建终端 | ⌘T |
-| 关闭当前终端 | ⌘W |
-| 向右 / 向下分屏 | ⌘D / ⌘⇧D |
-| 聚焦相邻 pane | ⌘⌥方向键 |
-| 与相邻 pane 交换会话 | ⌘⌥⇧方向键 |
-| 放大 / 还原 pane | ⌘⇧Enter |
-| 新建分组 | ⌘⇧G |
-| 查找终端 | ⌘K |
-| 在终端内容中查找 | ⌘F |
-| 收起 / 展开侧栏 | ⌘B |
-| 切换下一个 / 上一个终端 | Ctrl+Tab / Ctrl+Shift+Tab |
-| 切换前九个终端 | ⌘1 … ⌘9 |
-| 设置 | ⌘, |
-
-Windows / Linux 的应用快捷键使用 Ctrl，平台验收属于后续工作。AppKit 组合输入期间按键优先交给输入法。平铺的实现和验收边界见 [多终端平铺](docs/terminal-tiling.md)。
-
-## 打包
-
-macOS 应用包使用 `nsh.json` 中配置的 [图标 PNG](assets/brand/termlevel-icon-v1.png)，由 NSH 自动生成原生图标资源：
-
-```sh
-./scripts/nsh package --target macos
-```
-
-默认输出到 `.nsh/out`；也可用 `--out` 指定输出目录。macOS 包默认使用 ad hoc 签名，分发签名与公证另行配置。
-
-## 检查
-
-```sh
-./scripts/nsh check     # Rust + TypeScript 类型检查
-./scripts/nsh test      # 原生 crate 检查 + headless 交互测试
-./scripts/nsh build     # 生成 QuickJS bundle
-```
-
-`nsh check` 默认下载 TypeScript 原生编译器；已有 TypeScript 时可用 `--tsc /path/to/tsc`。网络受限且依赖已缓存时可设置 `CARGO_NET_OFFLINE=true`。验证记录见 [docs/validation.md](docs/validation.md)。headless 测试不能替代实机输入法、选区、拖动和视觉验收。
-
-开发约定与目录归属见 [开发指南](docs/development.md)。
-
-## 结构与后续
-
-默认后端使用独立的 [libghostty-vt Rust 封装](crates/ghostty-vt/README.md)：sys 层固定官方 1.0.1 C ABI 和经过 SHA256 校验的 macOS 预编译静态库，安全层负责终端状态、渲染快照和输入编码；日常构建不需要 Zig。第一次构建会下载预编译库，离线时可通过 `GHOSTTY_VT_ARCHIVE` 指定官方 zip。独立验证命令：`cargo test -p termlevel-ghostty-vt-sys -p termlevel-ghostty-vt`。
-
-```text
-App.tsx                                      薄的 TSX 挂载入口
-ui/app/WorkspaceApp.tsx                      窗口、菜单、快捷键、对话框及应用接线
-ui/                                          按 app、workspace、settings、terminal、shared 分工
-ui/terminal/TerminalSurface.tsx              真实原生终端的展示与低频状态
-ui/git/                                      Git 变更、历史和操作界面
-tests/terminal/*.test.tsx                    内核、真实 PTY 和工作区重新绑定测试
-src/lib.rs                                   Rust 原生导出注册
-src/sessions.rs                              独立会话管理、PTY 与进程生命周期
-src/session_view.rs                          Rust 网格视图、光标锚定原生 Input 与组合输入
-src/terminal.rs                              Ghostty RenderState 到 NSH 的网格适配
-scripts/                                     固定版本工具安装及启动
-```
-
-UI 始终以 TSX 编写；真实终端的逐字节输出、解析、输入和高频刷新在 Rust 内完成。TSX 只处理显式会话操作与低频元数据。详见 [架构](docs/architecture.md) 与 [Roadmap](docs/roadmap.md)。
-
-NSH 当前视图的鼠标报告、完整功能键/修饰键、现代键盘协议、光标形状等能力仍需补齐；组合输入已有 AppKit 自动化验证；实际系统候选列表、复杂 Unicode、选区和 GUI 性能仍需人工验收。物理像素尺寸未知，像素尺寸查询返回 0。
-
-## 确定性 UI 预览
+For a deterministic UI preview that never starts a shell or touches real workspace storage:
 
 ```sh
 TERMLEVEL_PREVIEW=1 ./scripts/nsh run --window-size 1200x780
 ```
 
-此模式显示确定性的工作区界面，但 Git 和终端会话不可用；**不启动 shell、不执行系统命令、不访问真实工作区存储**。测试夹具可注入模拟数据，预览测试不能作为真实 PTY 证据。
+## Package
 
-修改视觉从 [theme.json](theme.json) 开始，token 分工及使用规则见 [UI 与主题](docs/design.md)。组件不直接保存配色，分组颜色也由当前主题解析。
+```sh
+./scripts/nsh package --target macos
+```
 
-## 许可证
+The application bundle is written to `.nsh/out` by default; pass `--out` to choose another directory. The bundle uses the icon at `assets/brand/termlevel-icon-v1.png` and is ad-hoc signed by default. Distribution signing, notarization and updates are not configured yet.
 
-Termlevel 应用使用 [Apache License 2.0](LICENSE)。独立的 `termlevel-ghostty-vt` 和 `termlevel-ghostty-vt-sys` 封装保留各自声明的 MIT 许可证。内置的第三方代码、字体和品牌资源的来源与许可见各自目录中的说明。
+## Keyboard shortcuts
+
+| Action | macOS shortcut |
+|---|---|
+| New terminal | ⌘T |
+| Close current terminal | ⌘W |
+| Split right / down | ⌘D / ⌘⇧D |
+| Focus adjacent pane | ⌘⌥ + arrow key |
+| Swap sessions with adjacent pane | ⌘⌥⇧ + arrow key |
+| Zoom / restore pane | ⌘⇧Enter |
+| New group | ⌘⇧G |
+| Find terminal | ⌘K |
+| Find in terminal contents | ⌘F |
+| Collapse / expand sidebar | ⌘B |
+| Next / previous terminal | Ctrl+Tab / Ctrl+Shift+Tab |
+| Switch to terminal 1–9 | ⌘1 … ⌘9 |
+| Settings | ⌘, |
+
+While an input method is composing text, key events go to the input method first. Windows and Linux shortcut handling is future work.
+
+## Current limits
+
+Termlevel is early software (version 0.1.0) and does not claim complete Neovim or tmux compatibility.
+
+- Session processes do not survive an application restart. Restart restores the workspace structure and opens new shells in the saved directories; it does not restore old processes or output.
+- The IME candidate window, complex composition sequences, cross-line selection, complex emoji, and long-running multi-session performance still need manual acceptance on real hardware.
+- Mouse reporting, some modifier and function-key combinations, modern keyboard protocols and cursor-shape support are still being completed.
+- Terminal pixel-size queries return 0 because the platform exposes point measurements only.
+- Git views are read-only for history and diffs, with the explicit operations listed above. Merge, rebase, cherry-pick, stash and conflict resolution are out of scope for now.
+- Only macOS has a working native renderer and input backend.
+- Preview mode shows deterministic fixture data. It is not evidence of a real shell, Git repository or file system.
+
+## Design references
+
+Termlevel is an independent project. These products informed interaction and visual decisions; no code or interface assets were copied from them.
+
+- [Firefox](https://www.mozilla.org/firefox/) — vertical tabs, tab groups and the inline group editor.
+- [Zed](https://zed.dev/) — the separation of repository discovery, activation and selection in the Git views.
+- [Muxy](https://muxy.app/) — project-scoped terminal workspaces, split panes and session-oriented navigation.
+- [JetBrains IntelliJ IDEA](https://www.jetbrains.com/idea/) — the Changes / History tool-window model and branch / worktree workflows.
+- [JetBrains Fleet](https://blog.jetbrains.com/fleet/2024/12/introducing-fleets-new-islands-ui/) — the Islands UI layout and the light / dark palette direction used by the theme.
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [Development guide](docs/development.md) | Setup, directory ownership, tests and validation commands |
+| [Architecture](docs/architecture/README.md) | Current ownership, data paths and lifecycle |
+| [UI design](docs/design/ui.md) | Layout, typography, color and theme rules |
+| [Terminal design](docs/design/terminal.md) | Terminal renderer, input and SurfaceController |
+| [OSC and terminal status](docs/design/osc-status.md) | Supported OSC protocols and status semantics |
+| [Roadmap](docs/roadmap.md) | Outstanding work |
+| [Screenshots](docs/screenshots.md) | Captured workspace, Git, Files, settings and terminal views |
+| [Validation](docs/validation/README.md) | Dated evidence from headless, native and manual checks |
+
+## License
+
+Termlevel is licensed under the [Apache License 2.0](LICENSE). The standalone `termlevel-ghostty-vt` and `termlevel-ghostty-vt-sys` wrappers retain their own MIT licenses. Third-party code, fonts and brand assets are documented in their respective directories.

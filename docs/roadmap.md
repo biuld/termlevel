@@ -1,108 +1,87 @@
-# Termlevel Roadmap
+# Roadmap
 
-目标：一个使用 Firefox 风格 vertical tabs 和 tab groups 组织会话的原生终端应用。先把工作区交互做清楚，以 Ghostty 内核与 NSH 原生视图接真实 shell，再验证并补齐终端兼容性。
+Termlevel aims to be a native terminal workspace organized with Firefox-style vertical tabs and tab groups. The order is macOS AppKit first, then Windows and Linux after the core behavior and platform acceptance are complete. NSH's cross-platform claims do not replace Termlevel's own platform tests.
 
-平台顺序：macOS AppKit 优先；Windows / Linux 在核心行为通过后分别验收。NSH 的跨平台声明不代替 Termlevel 的平台测试。
+This document records unfinished work; it is not a changelog. Current behavior belongs in the [architecture overview](architecture/README.md), [Files architecture](architecture/files.md) and the [design documents](design/ui.md). Completed work is summarized below, and acceptance evidence lives under [validation](validation/README.md).
 
-## M0 · 项目基础
+## Current state
 
-- [x] NSH 0.5.0 mixed 项目，TSX 编写 UI，Rust 导出原生接口。
-- [x] CLI 与 `nsh-core` 固定到同一版本，项目内工具安装及校验脚本。
-- [x] 独立的工作区状态、终端显示组件、演示 transport。
-- [x] 启动说明与架构边界。
+- **Workspace:** vertical tabs with groups, colors, pinning, drag reordering, cross-group moves, per-group working directories, collapse, search, persisted sidebar width, fonts and appearance.
+- **Tiling:** split right or down, place an existing session, directional focus, session swap, divider and keyboard resize, equalize, panes hidden or closed explicitly, zoom, and a focused-pane projection for narrow windows.
+- **Terminal:** real PTY sessions with the login shell; the official Ghostty 1.0.1 core behind an independent Rust wrapper; Rust-owned parsing, grid, scrollback, search and session state; native AppKit fixed-cell rendering and IME composition.
+- **Status and notifications:** OSC 7501 program status, OSC 9;4 progress, OSC 7 live working directory, OSC 22 pointer shape, OSC 133 prompt state, OSC 9 / OSC 777 notifications, BEL alerts and an in-app notification history.
+- **Git:** per-group Changes and History, multi-repository discovery and selection, status and diffs, commit lanes, branches, remotes, tags and worktrees; fetch, fast-forward pull, push, checkout, branch creation and deletion, and worktree management.
+- **Files:** per-group directory tree rooted at the group directory, bounded UTF-8 text editing, Git status letters and relative-to-HEAD editor marks, file actions, and non-recursive macOS directory watching for expanded folders.
+- **Persistence:** workspace structure, layout, group and tab state, tool views, settings, fonts, scrollback limit and terminal identity survive restart. Restart opens new shells in saved directories; it does not restore old processes.
+- **Automation:** headless suites and macOS AppKit acceptance cover the implemented behavior. Manual GUI acceptance, cross-platform acceptance, packaging and several real-world compatibility scenarios remain open.
 
-## M1 · 工作区 UI（已实现基础交互）
+## Manual GUI acceptance on macOS
 
-工作区交互仍以显式确定性预览回归；默认应用已在 M2 接入真实 PTY。产品预览不创建 OS 进程；交互回归使用测试替身。
+Native automation does not replace sustained human use. Record each item in the matching validation topic.
 
-- [x] Firefox 风格暗色窗口、可调整宽度及可收起的侧栏。
-- [x] 垂直标签创建、切换、关闭、重命名、固定。
-- [x] 分组创建、折叠、重命名、颜色、取消分组、关闭组确认。
-- [x] 菜单移动标签到组、菜单排序。
-- [x] 查找会话、常用快捷键、基础字体大小设置。
-- [x] 按稳定 ID 保留终端组件；标签切换和分组变更不重建终端。
-- [x] 明确的预览状态；演示输入由测试夹具提供。
-- [x] 语义主题 token、中性灰 UI、浅色 / 深色 / 跟随系统切换。
-- [x] 采用「统一窗口栏 + 独立 pane」布局：带间距和圆角的侧栏与终端、单行标签、pane 内会话工具栏。
-- [x] Firefox 风格分组编辑浮层：九色选择、直接改名、组内新建、取消分组与删除确认。
-- [x] 收起侧栏的鼠标悬停浮层展开，保持终端尺寸与实例，编辑分组时保持展开。
-- [ ] 原生窗口人工验收：标题栏拖动、右键菜单、侧栏缩放、焦点、复制选择、高 DPI。
+- [ ] Workspace window: title-bar drag, context menus, sidebar resize, focus restore, copying a selection, and high-DPI behavior.
+- [ ] Tiling interaction: tab and pane drag/drop, insertion feedback, divider feel, keyboard resize, hide/close/zoom, and layout restoration after the window grows again.
+- [ ] Input and IME: the real system candidate window, complex composition and cancellation, switching keyboard layouts, and emoji entry.
+- [ ] Selection: cross-screen drag, edge auto-scroll, release, copy, double-click word, triple-click line, Alt rectangle selection, and coordination with the history scrollbar.
+- [ ] Performance under sustained load: many sessions, continuous output, large scrollback, memory growth and frame timing. Record measurements instead of impressions.
+- [ ] Accessibility: VoiceOver reading order and labels, Reduce Motion with static working indicators, long titles, multiple font sizes, and pinned / grouped combinations.
+- [ ] State and history: long notification histories, high-frequency agent status reports, unread/read transitions, closed-source navigation, and status behavior at prompt boundaries.
 
-完成标准：类型检查和 headless 交互测试通过；原生窗口人工验证单独记录。测试至少覆盖标签切换保留输出、组折叠不销毁会话、关闭活动标签后的选择、空工作区恢复。
+See the [terminal design](design/terminal.md), [tiling design](design/tiling.md), [OSC and status design](design/osc-status.md) and [UI design](design/ui.md) for the intended behavior.
 
-演示会话的 `pwd` 为示例目录。工作区结构与设置已持久化；会话进程不跨重启恢复。标签拖拽已在 M1.1 实现，不以菜单操作冒充拖拽完成。
+## Real-world terminal compatibility
 
-## M1.1 · 工作区交互与持久化
+Protocol support is not the same as daily compatibility. Verify each application in a real session and keep per-application evidence.
 
-- [x] 拖动标签排序、跨组移动，明确插入位置和折叠组目标。
-- [x] 标签组状态、固定标签、侧栏尺寸、字体设置保存，带 schema 版本。
-- 完善窄窗口、键盘遍历、焦点恢复、空分组、无障碍标签。
-- [x] 主题选择持久化；检查平台快捷键显示。
-- [x] 首次启动显示空白引导页：在 home 打开终端或新建分组；不自动创建 shell。
+- [ ] Neovim, tmux, less, top and common coding-agent CLIs, including alternate screen, mouse reporting, bracketed paste, focus reporting and reflow.
+- [ ] Keyboard layouts, modifier combinations, physical key / layout text / repeat / release handling, and IME interaction in full-screen applications.
+- [ ] Chinese, combining characters, emoji sequences, wide cells, fallback fonts and cross-style shaping.
+- [ ] Kitty image animation, multiple image layers, large transfers and sustained image output.
+- [ ] Long-running output, synchronized output boundaries, history limits, search over large scrollback, and multi-session responsiveness.
 
-完成标准：重启恢复工作区结构并为保存的标签重新启动 shell；拖拽、取消拖拽、跨组移动不改变会话 ID；持久化不把进程 PID 当作可恢复会话。
+## Windows and Linux
 
-## M2 · 终端内核 + NSH 原生 Terminal + 真实 PTY
+The current non-macOS platform entry is an explicit placeholder, not a working renderer. Cross-platform support requires all of the following per target:
 
-- [x] 最初以 Alacritty 接入内核，现已切换官方 Ghostty 1.0.1；通过 Rust `TerminalEmulatorFactory` 替换默认模拟器；保留确定性预览，单独验证内核与原生绑定。
-- [x] Rust `SessionManager` 创建和持有 PTY、子进程、reader / writer / reaper、退出状态。
-- [x] 使用 `portable-pty` 0.9.0，连接用户默认 shell；配置 cwd、TERM/COLORTERM/TERM_PROGRAM。
-- [x] 默认入口使用真实会话；reader 的原始字节在 Rust 内送入持久 Ghostty parser，保留跨 chunk 的 UTF-8 与转义状态，以及同步输出的结束/超时/EOF；模拟 transport 仅供测试夹具使用。
-- [x] 尺寸变化与网格同步到 PTY，处理基础输入、粘贴、标题、响铃、EOF、退出码和启动失败；默认色/调色板查询直接在 Rust 回复。
-- [x] 显式关闭标签/组结束会话；关闭主窗口或退出应用结束全部会话，含前台任务、shell HUP 清理与回收。
-- [x] 视图卸载不结束 Rust 会话；UI 工作区重建从 `Sessions.list` 按同一 ID 绑定，已退出会话保留输出与退出状态。
+- [ ] Native terminal renderer and surface backend.
+- [ ] Native input adaptation, IME, clipboard and system services.
+- [ ] Ghostty build artifacts for the target, with checksum verification and a documented build path.
+- [ ] PTY and session behavior, process cleanup and shell integration.
+- [ ] Build, packaging, installation and a platform acceptance matrix.
+- [ ] Manual daily-use acceptance on each platform. Compilation alone does not close this milestone.
 
-接入验收：真实 sh/zsh、原生 fish、中文文本与粘贴、resize、Ctrl+C、退出、回收、会话隔离及重新绑定有独立证据，见 [validation.md](validation.md)。用户 IME 候选窗、选区与长时间日用仍需人工验收；NSH 输入/绘制协议缺口列入 M3，不以内核接入声称 Neovim/tmux 全兼容。
+## Session lifecycle and recovery
 
-## M3 · 终端视图与兼容性
+- [ ] Complete the session model: distinguish restoring workspace structure, reopening a shell, and restoring a living session. Decide explicitly whether a background process model is required.
+- [ ] Crash recovery and its user-visible behavior.
+- [ ] Close prompts while foreground or background work is running, including group close and application quit.
+- [ ] Configuration errors and shell start failures, with a retry path that does not silently create a replacement session.
 
-- [x] 真实会话使用 Rust 固定单元格网格，原生 Input 随展示窗口的光标定位；组合文字显示、确认/取消与会话切换归属有 AppKit 自动化证据。
-- [x] 每会话 `SurfaceController`：唯一 16 ms 帧调度与单一采样入口，报告滚轮不再丢弃整数位移，悬停 / 宿主拖选在轮内合并，中键 / 侧键与普通鼠标走同一条输入路径。设计和计数见 [终端 Surface 控制器](terminal-surface.md)。
-- [x] 按终端网格列号锚定宽字符与组合字符；共享显示与查询调色板。
-- [x] 终端平台边界：通用场景发布与 controller 独立于 `platform/macos` 的 NSView、CoreText renderer、键盘监听和探针；为后续平台保留挂载、输入与宿主注册入口。
-- [ ] 接入其他平台的原生 renderer、输入适配、Ghostty 构建产物与系统服务；当前入口占位不代表跨平台已可运行。
-- [x] 连续同步输出事务的贴底展示复用 owned 边界帧，不依赖轮询命中事务间隙；实际 Codex / Claude 修复后手感仍需复验。
-- [ ] 实际系统输入法候选列表、复杂组合序列、emoji、跨行选区和复制人工验收。
-- 在 Ghostty 内核之上继续验证样式、输入模式、选区和 renderer 的表达范围。固定格网已替换生产虚拟列表，见 [终端格网设计](terminal-grid.md)：自有 AppKit NSView renderer、字体/CTLine 缓存、稳定历史锚点、完整 hold 窗口与分步查找；受控鼠标报告 TUI 有性能对照，真实 Codex 手感仍待验收。
-- 补齐鼠标报告、焦点报告、按键编码、IME、光标样式及重排能力，逐项记录原生证据。
-- 真实会话已采用扩展的 Rust 原生终端组件；TSX 只挂载视图、传入 session ID / 配置并接收状态事件。
-- 不将完整 cell grid 或逐字节终端输出绕到 JS 再回 Rust 绘制。
-- 输入编码、鼠标报告、选择、IME、重排和绘制分别验证。
-- [x] 基于官方 libghostty-vt 1.0.1 C ABI 封装独立 Rust sys / safe crate，固定预编译库校验和，macOS 构建无需 Zig。
-- [x] 真实会话和预览接入 Ghostty，移除 Alacritty 依赖；保留 session / PTY 所有权、搜索、精确逻辑滚动上限、颜色回复和同步输出，按键及文字经 Ghostty 编码。
-- [x] 接入鼠标报告、终端选区 / OSC8 链接 / Kitty 内联图片、光标颜色与闪烁、OSC52；macOS AppKit 补充 Kitty 键盘协议所需的物理键 / 布局文字 / repeat / release。
-- [ ] 扩展真实 TUI、实际键盘布局 / 输入法、图片动画 / 多图层压力与持续输出人工验收；协议接入不等于完整日用兼容性通过。
+Only explicit session operations may create or close processes; a view remount, group collapse or selection change must not do so.
 
-完成标准：Neovim、tmux、less、top 以及常用 agent CLI 的真实使用验证；中文 / 组合字符 / emoji、ANSI / truecolor、备用屏幕、鼠标、滚动历史与重排有对应证据。测量大量输出和多会话时的响应、内存、帧耗时。图片协议按独立能力评估。
+## Session configuration, search history, shell integration and links
 
-- [x] 设置中提供 Termlevel 默认身份与 Ghostty 兼容身份，持久化并仅应用于新会话；真实 Codex Pets 的显示、持续动画与生命周期仍待独立验收。
+- [ ] Session configuration for starting new shells and terminals.
+- [ ] Search history, distinct from the existing find-in-scrollback behavior.
+- [ ] Shell integration beyond the current OSC 133 prompt state.
+- [ ] Link handling beyond the current OSC 8 HTTP(S) / mailto targets.
 
-- [x] 标题栏应用内通知面板：终端 OSC 9 / OSC 777 与 BEL、应用错误 / 警告、未读标记、运行期历史与来源导航；系统桌面推送与 OSC 99 尚未实现。
+## Git acceptance and boundaries
 
-- [x] 侧栏终端状态与进度：OSC 7501 替换默认终端图标，OSC 9;4 显示标题列下方的进度线，blocked / error 进入通知历史；设计见 [OSC 集成与终端状态设计](osc-support.md)。
+- [ ] Manual History acceptance: real branch switching, refusal with a dirty working tree, worktree creation and removal with the group and shell lifecycle, long-history scrolling, and narrow-window layouts.
+- [ ] Manual multi-repository acceptance: real network remotes and credential helpers, rescan after exceeding the 1,024-directory quota, network filesystems, and sustained directory churn.
+- [ ] Verify every explicit operation against a real repository, not only a fixture transport.
 
-- [x] 终端状态 UI / UX 重设计：查看只确认已读、不删除 blocked；通知改为记录级跃迁；移除伪满格线，统一真实进度、tooltip 与无障碍；版本确认和 prompt 清理边界。实现与验收见 [OSC 集成与终端状态设计](osc-support.md)。
+Explicitly out of scope: merge, rebase, cherry-pick, stash and conflict resolution. Termlevel also does not stage, unstage, commit, create merge commits, reset, force-push, or push tags and other branches. These boundaries are product decisions, not missing UI.
 
-- [ ] 状态日用人工验收：系统减少动态效果、VoiceOver 实听、长标题 / 多字号、分组 / 固定标签组合及真实 agent 高频报告；原生截图检查不替代长期交互验收。
+## Packaging and distribution
 
-- [x] OSC 支持盘点与剩余映射：OSC 7 / ConEmu / iTerm2 实时 cwd 更新工具栏、搜索、新终端与保存；OSC 22 鼠标形状；OSC 133 prompt 生命周期与 `atPrompt`。不支持项见 [OSC 集成与终端状态设计](osc-support.md)。
+- [ ] macOS application bundle, icon, signing, notarization, update channel and release verification.
+- [ ] Installable artifacts for Windows and Linux after their platform acceptance.
+- [ ] Reproducible release evidence: checksums, bundled fonts and licenses, Ghostty wrapper license, and archive validation.
 
-- [x] 真实终端覆盖式历史滚动条与跨屏拖选：悬停 / 滚动显示、空闲淡出且不占列宽，上下边缘自动滚动、释放停止、滑块跟随同一视口，滚动导航保留 Ghostty tracked 选区。
+Ad-hoc local packaging is available today; distribution signing, notarization and updates are not configured.
 
-## M4 · 日常使用与发布
+## How work closes
 
-- 会话配置、搜索回滚历史、链接、shell integration。
-- [x] 多终端定向平铺：稳定 session surface、右 / 下分屏、已有会话放入、方向焦点与交换、收起 / 关闭、放大还原、尺寸约束与窄窗口恢复。
-- [x] pane 间隙缩放、键盘缩放、均分；侧栏 / pane 标题拖放与取消。设计和实现边界见 [多终端平铺设计](terminal-tiling.md)。
-- [ ] 多终端日用人工验收：实际系统输入法候选列表、选区复制、持续输出负载和拖动跟手；headless 与原生自动化证据分别记录。
-- [x] Git Changes tab 与只读状态 / diff：系统 `git` CLI、Git 2.20+、分组编辑浮层；产品预览不访问 Git 仓库。
-- [x] Git History tab：提交车道、提交详情与 patch、分支 scope；Branches / Worktrees 列表与切换、fetch、fast-forward pull、push、checkout、新建 / 删除分支、worktree 新建 / 打开为分组 / 删除 / 锁定。合并、rebase、cherry-pick、stash 与冲突解决不在本项。
-- [x] 分组 Files：目录树、有界文本编辑、显式保存、macOS 上展开目录的非递归监听，与 Changes 相同的 Git 状态字母，以及编辑器行号槽里相对 HEAD 的变更色条。监听失败时保留手动刷新。见 [文件视图设计](file-browser.md)。
-- [x] 多仓库共享目录、终端上下文 / 显式路径发现、目录监听、按组持久选择、虚拟选择器与有界 History 会话缓存。
-- [x] 大仓库 Git 读取隔离、视图租约取消、并发准入、refs 分批传输 / 版本刷新、提交虚拟列表及 Rust 增量车道；证据见 validation。
-- [ ] History 人工验收：真实分支切换、dirty 工作树拒绝、worktree 新建 / 删除后的分组与 shell 生命周期、长历史滚动和窄窗口。
-- 配置错误、shell 启动失败、崩溃恢复、运行中关闭提示。
-- 区分恢复工作区结构、重开 shell 与恢复活着的会话；若需要后者，再决定后台进程模型。
-- macOS 打包、图标、签名、公证和更新；随后逐平台验证 Windows / Linux。
-
-完成标准：持续日用验证、可重现的性能记录、平台验收表与可安装产物。编译成功、headless 测试、真实 PTY、原生窗口人工验收分别记录。
+A checkbox closes only when the behavior is implemented or accepted and the evidence is recorded in the corresponding validation topic. Headless tests, preview fixtures, native automation and manual GUI acceptance are separate evidence types, and one does not substitute for another. Existing failures stay visible instead of being hidden by changed assertions or timeouts.
