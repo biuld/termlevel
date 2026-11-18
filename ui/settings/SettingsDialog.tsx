@@ -110,7 +110,7 @@ export function SettingsDialog(props: {
             <View class="gap-3">
               <View class="gap-1">
                 <Type role="body">Working indicator</Type>
-                <Type role="caption">Shown while a program reports working without progress. The preview uses the default color; in the sidebar it follows the tab's group color. Reduce Motion shows a still version.</Type>
+                <Type role="caption">Shown whenever a program reports working, including while a progress line is visible. The preview uses the default color; in the sidebar it follows the tab's group color. Reduce Motion shows a still version.</Type>
                 <View class="gap-0.5">
                   <Each of={workingIndicators}>{(item) =>
                     <Button testID={`working-indicator-${item().id}`}

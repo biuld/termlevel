@@ -21,7 +21,7 @@ test("idle agent reports select the matching icon and respect status lifecycle",
     await app.waitFor("label:status-icon:codex");
     await emit(app, "printf '\\033]7501;state=working:app=codex\\007'");
     await app.waitFor("label:Terminal 1, Working, codex");
-    await app.waitFor("label:status-icon:busy");
+    await app.waitFor("label:status-icon:working");
     await emit(app, "printf '\\033]7501;state=idle:app=claude-code\\007'");
     await app.waitFor("label:Terminal 1, Idle, Claude Code");
     await app.waitFor("label:status-icon:claude-code");
@@ -48,11 +48,14 @@ test("OSC 9;4 draws the title-column progress line and remove clears it", async 
     await emit(app, "printf '\\033]9;4;1;42\\007'");
     await app.waitFor("label:Terminal 1, Terminal progress 42%");
     await emit(app, "printf '\\033]9;4;3\\007'");
-    await app.waitFor("label:Terminal 1, Terminal progress unknown");
+    await app.waitUntil(() => !app.shows("label:Terminal 1, Terminal progress 42%"));
+    expect(app.shows("label:Terminal progress unknown")).toBe(false);
+    await emit(app, "printf '\\033]7501;state=working:app=grok\\007\\033]9;4;1;-1\\007'");
+    await app.waitFor("label:Terminal 1, Working, grok");
+    expect(app.shows("label:Terminal progress unknown")).toBe(false);
+    expect(app.shows("label:Terminal progress 50%")).toBe(false);
     await emit(app, "printf '\\033]9;4;0\\007'");
-    await app.waitUntil(() =>
-      !app.shows("label:Terminal 1, Terminal progress unknown")
-      && !app.shows("label:Terminal 1, Terminal progress 42%"));
+    await app.waitUntil(() => !app.shows("label:Terminal 1, Terminal progress 42%"));
   } finally { await close(app); }
 });
 
@@ -62,6 +65,7 @@ test("OSC 7501 uses resolved progress and keeps blocked after viewing", async ()
     await emit(app, "printf '\\033]9;4;1;42\\007'");
     await emit(app, "printf '\\033]7501;state=working:app=cargo:progress=40\\007'");
     await app.waitFor("label:Terminal 1, Working, Terminal progress 42%, cargo");
+    await app.waitFor("label:status-icon:working");
     // The line and tab label use the same resolved 9;4 percentage.
     await app.waitFor("label:Terminal progress 42%");
     expect(app.shows("label:Terminal progress 40%")).toBe(false);
@@ -109,10 +113,11 @@ test("unknown pause and error never report a fictional percentage", async () => 
   const app = await open("./fixtures/StatusFixture.tsx", options);
   try {
     await emit(app, "printf '\\033]9;4;4\\007'");
-    await app.waitFor("label:Terminal 1, Terminal progress paused · unknown");
+    await app.waitFor("label:Terminal 1");
+    expect(app.shows("label:Terminal progress paused · unknown")).toBe(false);
     expect(app.shows("label:Terminal progress 100%")).toBe(false);
     await emit(app, "printf '\\033]9;4;2\\007'");
-    await app.waitFor("label:Terminal 1, Terminal progress error · unknown");
+    expect(app.shows("label:Terminal progress error · unknown")).toBe(false);
     await emit(app, "printf '\\033]9;4;1;100\\007\\033]7501;state=working:app=cargo\\007'");
     await app.waitFor("label:Terminal 1, Working, Terminal progress 100%, cargo");
     await emit(app, "printf '\\033]133;A\\007'");

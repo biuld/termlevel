@@ -217,14 +217,13 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
     const progress = () => status()?.progress;
     const lineIndeterminate = () => progress()?.indeterminate ?? false;
     const animateLine = () => !!progress()?.animate && !reduceMotion();
-    const working = () => status()?.state === "working" && !progress();
+    const working = () => status()?.state === "working";
     const agent = () => {
       if (tab()?.activity?.state !== "idle" || status()?.state !== "idle") return null;
       return agentForApp(tab()?.activity?.app);
     };
     const statusIcon = (): IconName => {
       switch (status()?.state) {
-        case "working": return "busy";
         case "done": return "check";
         case "blocked": return "alert";
         case "error": case "hostError": case "exited": return "xCircle";
@@ -235,7 +234,7 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
       switch (status()?.state) {
         case "working": return workingAccent();
         case "blocked": return token("notification-warning");
-        case "done": return token("subtle-foreground");
+        case "done": return token("notification-success");
         case "error": case "hostError": case "exited": return token("destructive");
         default: return accent() ?? token(active() ? "icon-active" : "icon");
       }
@@ -299,7 +298,7 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
         class="h-full min-w-0 flex-1 flex-row items-center gap-2 rounded-(--radius-tab) focus-visible:ring-2 ring-sidebar-ring"
         style={{ justifyContent: props.expanded() ? "flex-start" : "center", paddingHorizontal: props.expanded() ? 7 : 0 }}>
         <View class="flex-col items-center">
-          <View testID={`tab-status-${id}`} accessibilityLabel={`status-icon:${agent() ? tab()?.activity?.app : statusIcon()}`}>
+          <View testID={`tab-status-${id}`} accessibilityLabel={`status-icon:${working() ? "working" : agent() ? tab()?.activity?.app : statusIcon()}`}>
             <If when={working()}><WorkingIndicator kind={props.indicator()} color={statusColor()} /></If>
             <If when={!working() && !!agent()}><AgentIcon app={tab()?.activity?.app ?? ""} /></If>
             <If when={!working() && !agent()}><Icon name={statusIcon()} size={13} color={statusColor()} /></If>

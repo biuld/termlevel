@@ -170,7 +170,7 @@ libghostty 的独立 OSC parser 只暴露两类数据：标题字符串和未知
 | 无报告 / idle | terminal，固定标签用 pin；沿用分组色 | 中性默认态；不声称 shell 正在等待输入 |
 | working | 三点 busy，primary | 正在处理；有进度线时图标静态，无进度线时可低强度 pulse |
 | blocked | 圆圈感叹号，primary | 需要我操作；已查看后仍保留，静态 |
-| 未读 done | check，subtle-foreground | 有完成结果待查看；确认后回默认或其他活动状态 |
+| 未读 done | check，notification-success | 有完成结果待查看；确认后回默认或其他活动状态 |
 | 未读程序 error | xCircle，destructive | 有失败结果待查看；确认后不遮挡后续 working |
 | 宿主故障 / 保留的非零退出 | xCircle，destructive | 会话本身异常 / 已退出；tooltip 明确来源与退出码 |
 
@@ -198,23 +198,23 @@ libghostty 的独立 OSC parser 只暴露两类数据：标题字符串和未知
 先在展示摘要中解析来源，再统一供线、tooltip、无障碍消费：
 
 1. 会话已退出 / 宿主故障：不展示运行进度。
-2. 存在非 remove 的 OSC 9;4：使用它的 state 和 percent。
+2. OSC 9;4 的 set、pause、error 带有 0–100：使用该状态和百分比。
 3. 否则代表 7501 记录为 working 且显式有 percent：使用该数值。
-4. 否则不画线。blocked/error/done 自身不生成进度。
+4. 否则不画线。缺失百分比、`-1` 和 indeterminate 都不是测量值。blocked、error、done 自身不生成进度。
 
 | resolvedProgress | 表现 |
 |---|---|
 | set + percent / 7501 percent | 按 0–100 填充；100% 仍等程序报告 done |
-| set 无 percent / indeterminate | 不确定光带；明确 indeterminate 时忽略百分比 |
+| set 无 percent、`-1`、indeterminate | 不画线；working 继续用 Working indicator |
 | pause + percent | 已有比例静止、次级色 |
-| pause 无 percent | 仅静态轨道，说明“已暂停 · 进度未知”，不填满、不动画 |
+| pause 无 percent | 不画线 |
 | error + percent | 真实比例、危险色，说明“进度报告错误” |
-| error 无 percent | 静态危险色轨道，无填充、不动画 |
+| error 无 percent | 不画线 |
 | remove | 清除 9;4 来源；如仍有 7501 working 百分比，则按规则回退 |
 
-blocked/error 与 9;4 可同时存在：图标表达活动，线继续表达原始进度，不覆盖成满格。如果 9;4 仍报告 indeterminate，blocked/error 下将光带静止，避免“等待我操作”仍显得正在推进；tooltip 保留“进度未知”。7501 不把 9;4 改写为 pause，也不清除它。两个协议无法证明属于同一个子任务，因此说明中称“终端进度”，不把它说成代表任务的进度。
+blocked / error 与带百分比的 9;4 可同时存在：图标表达活动，线继续表达原始百分比。没有百分比时不留空轨道，也不把未知进度画成一段填充。7501 不把 9;4 改写为 pause，也不清除它。两个协议无法证明属于同一个子任务，因此说明中称“终端进度”，不把它说成代表任务的进度。
 
-全行最多一个动画区域：有动态进度时 busy 图标静态；无进度时才 pulse busy。减少动态效果时全部静态；不确定进度以固定短段表达，不用假百分比。无 JS 动画定时器。正常进度与 working 图标跟随分组颜色，未分组使用 primary；blocked 图标使用 warning，error 使用 destructive，done 和暂停进度使用 subtle-foreground。主题 token 来自 theme.json，不硬编码语义颜色。
+进度线只在有百分比时出现，并且静止。没有进度线时，working 的 Working indicator 是唯一的活动提示；减少动态效果时指示器也静止。正常进度与 working 图标跟随分组颜色，未分组使用 primary；blocked 图标使用 warning，error 使用 destructive，done 使用 notification-success，暂停进度使用 subtle-foreground。主题 token 来自 theme.json，不硬编码语义颜色。
 
 ### 详情与可访问性
 

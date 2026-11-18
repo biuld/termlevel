@@ -73,7 +73,8 @@ test("native sidebar status icon, progress line and collapsed rail", async () =>
     await app.waitFor("label:Terminal 1");
     await app.type("id:session-panel", "printf '\\033]9;4;4\\007'");
     await app.keyboard.press("enter");
-    await app.waitFor("label:Terminal 1, Terminal progress paused · unknown");
+    await app.waitFor("label:Terminal 1");
+    expect(app.shows("label:Terminal progress paused · unknown")).toBe(false);
     await app.screenshot("artifacts/native-status-paused.png");
   } finally { app.dispose(); }
 });

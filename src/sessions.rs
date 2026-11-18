@@ -338,6 +338,20 @@ fn aggregate(records: &BTreeMap<String, StatusRecord>) -> Option<ActivityInfo> {
     Some(activity)
 }
 
+/// A progress line exists only for a reported 0–100. Omitted, -1, and
+/// indeterminate reports carry no measurement, so the working indicator stands alone.
+fn measured_progress(progress: &ProgressInfo) -> Option<ProgressInfo> {
+    match progress.state.as_str() {
+        "set" | "pause" | "error" => progress.percent.filter(|percent| *percent <= 100).map(
+            |percent| ProgressInfo {
+                state: progress.state.clone(),
+                percent: Some(percent),
+            },
+        ),
+        _ => None,
+    }
+}
+
 fn blocked_label(kind: Option<&str>) -> &'static str {
     match kind {
         Some("permission") => "Needs approval",
@@ -377,10 +391,11 @@ fn resolve_status(info: &SessionInfo) -> TerminalStatusInfo {
             status.app = activity.app.clone();
             status.pending_count = activity.pending_count;
         }
-        let progress = info.progress.clone().map(|p| ("osc9", p)).or_else(|| {
+        let measured = info.progress.as_ref().and_then(measured_progress);
+        let progress = measured.map(|progress| ("osc9", progress)).or_else(|| {
             activity
-                .filter(|a| a.state == "working")
-                .and_then(|a| a.percent)
+                .filter(|activity| activity.state == "working")
+                .and_then(|activity| activity.percent)
                 .map(|percent| {
                     (
                         "osc7501",
@@ -391,31 +406,21 @@ fn resolve_status(info: &SessionInfo) -> TerminalStatusInfo {
                     )
                 })
         });
-        status.progress = progress.map(|(source, progress)| {
-            let indeterminate = progress.state == "indeterminate"
-                || (progress.state == "set" && progress.percent.is_none());
-            let percent = if indeterminate {
-                None
-            } else {
-                progress.percent
-            };
-            let value = percent
-                .map(|v| format!("{v}%"))
-                .unwrap_or_else(|| "unknown".into());
+        status.progress = progress.and_then(|(source, progress)| {
+            let percent = progress.percent?;
             let label = match progress.state.as_str() {
-                "pause" => format!("Terminal progress paused · {value}"),
-                "error" => format!("Terminal progress error · {value}"),
-                _ if indeterminate => "Terminal progress unknown".into(),
-                _ => format!("Terminal progress {value}"),
+                "pause" => format!("Terminal progress paused · {percent}%"),
+                "error" => format!("Terminal progress error · {percent}%"),
+                _ => format!("Terminal progress {percent}%"),
             };
-            ResolvedProgress {
+            Some(ResolvedProgress {
                 source: source.into(),
                 state: progress.state,
-                percent,
-                indeterminate,
-                animate: indeterminate && !matches!(status.state.as_str(), "blocked" | "error"),
+                percent: Some(percent),
+                indeterminate: false,
+                animate: false,
                 label,
-            }
+            })
         });
     }
     status

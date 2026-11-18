@@ -742,23 +742,25 @@ fn resolved_progress_and_lifecycle_do_not_invent_completion() {
         session.info().status.progress.is_none(),
         "blocked never invents a line"
     );
-    for state in [ProgressState::Pause, ProgressState::Error] {
+    for state in [ProgressState::Pause, ProgressState::Error, ProgressState::Indeterminate] {
         session.apply_progress(ProgressReport {
             state,
             percent: None,
         });
-        let resolved = session.info().status.progress.unwrap();
-        assert!(resolved.percent.is_none());
-        assert!(!resolved.animate && !resolved.indeterminate);
+        assert!(session.info().status.progress.is_none());
     }
     session.apply_progress(ProgressReport {
         state: ProgressState::Indeterminate,
         percent: Some(91),
     });
-    let resolved = session.info().status.progress.unwrap();
-    assert!(resolved.indeterminate && !resolved.animate && resolved.percent.is_none());
-    session.apply_program_status(report("", ProgramStatusState::Working));
-    assert!(session.info().status.progress.unwrap().animate);
+    session.apply_program_status(ProgramStatusReport {
+        percent: Some(40),
+        ..report("", ProgramStatusState::Working)
+    });
+    let fallback = session.info().status.progress.unwrap();
+    assert_eq!(fallback.source, "osc7501");
+    assert_eq!(fallback.percent, Some(40));
+    assert!(!fallback.indeterminate && !fallback.animate);
     session.apply_progress(ProgressReport {
         state: ProgressState::Set,
         percent: Some(100),
