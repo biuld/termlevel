@@ -15,6 +15,8 @@ function excerpt(text: string, limit: number) {
 export function NotificationRow(props: {
   entry: Notice;
   sourceTitle?: string;
+  /** False after the source session has been closed. The remembered title still shows. */
+  sourceOpen?: boolean;
   dismiss: () => void;
   select: () => void;
 }) {
@@ -64,26 +66,26 @@ export function NotificationRow(props: {
       style={{ width: token("size-notification-icon"), height: token("size-notification-icon") }}>
       <Icon name={icon()} size={18} color={token(tone())} />
     </View>
-    <View class="min-w-0 flex-1 gap-1">
-      <View class="flex-row items-center gap-2">
+    <View class="min-w-0 flex-1 gap-1 overflow-hidden">
+      <View class="min-w-0 flex-row items-center gap-2">
         <Type role="caption" class="min-w-0 flex-1" lines={1}>{origin()} · {category()}</Type>
         <If when={props.entry.count > 1}>
           <View class="rounded-full bg-muted px-1.5"><Type role="caption">×{props.entry.count}</Type></View>
         </If>
         <Type role="caption" tone="subtle-foreground">{new Date(props.entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</Type>
       </View>
-      <Type testID={`notification-content-${props.entry.id}`} role="body" class={expanded() && excerpt(headline(), 100) !== headline() ? "" : "font-semibold"} tone="popover-foreground">
+      <Type testID={`notification-content-${props.entry.id}`} role="body" class={`min-w-0 ${expanded() && excerpt(headline(), 100) !== headline() ? "" : "font-semibold"}`} tone="popover-foreground">
         {expanded() ? headline() : excerpt(headline(), 100)}
       </Type>
-      <If when={!!body()}><Type role="body" tone="popover-foreground">{expanded() ? body() : excerpt(body(), 160)}</Type></If>
-      <View class="mt-1 flex-row items-center gap-1">
+      <If when={!!body()}><Type role="body" class="min-w-0" tone="popover-foreground">{expanded() ? body() : excerpt(body(), 160)}</Type></If>
+      <View class="mt-1 min-w-0 flex-row items-center gap-1">
         <If when={props.entry.sessionId != null}>
           <Button testID={`source-${props.entry.id}`} accessibilityLabel={`Open source of ${props.entry.title}`}
-            disabled={!props.sourceTitle} onPress={props.select}
-            class="min-w-0 flex-row items-center gap-1 rounded-(--radius-control) px-1.5 py-1 hover:bg-control-hover focus-visible:ring-2 ring-ring">
+            disabled={!props.sourceOpen} onPress={() => { if (props.sourceOpen) props.select(); }}
+            class="min-w-0 flex-1 flex-row items-center gap-1 overflow-hidden rounded-(--radius-control) px-1.5 py-1 hover:bg-control-hover focus-visible:ring-2 ring-ring">
             <Icon name="terminal" size={12} />
-            <Type role="caption" lines={1}>{props.sourceTitle ?? "Terminal closed"}</Type>
-            <If when={!!props.sourceTitle}><Icon name="arrow" size={12} /></If>
+            <Type role="caption" class="min-w-0 flex-1" lines={1} overflow="ellipsis">{props.sourceOpen ? props.sourceTitle ?? "Terminal" : props.sourceTitle ? `${props.sourceTitle} · Closed` : "Terminal closed"}</Type>
+            <If when={!!props.sourceOpen}><Icon name="arrow" size={12} /></If>
           </Button>
         </If>
         <If when={canExpand()}>
@@ -92,7 +94,7 @@ export function NotificationRow(props: {
             <Type role="caption">{expanded() ? "Show less" : "Show more"}</Type>
           </Button>
         </If>
-        <View class="flex-1" />
+        <If when={props.entry.sessionId == null}><View class="flex-1" /></If>
         <IconButton icon="close" label={`Dismiss ${props.entry.title} notification`} testID={`dismiss-${props.entry.id}`} onPress={props.dismiss} />
       </View>
     </View>

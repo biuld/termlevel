@@ -20,6 +20,8 @@ pub struct Notice {
     pub unread: bool,
     pub count: u32,
     pub program: Option<ProgramNotice>,
+    /// Terminal title when this notice was recorded. Later OSC titles must not rewrite it.
+    pub source_title: String,
 }
 
 #[derive(Clone, Debug, PartialEq, JsObject)]
@@ -54,9 +56,17 @@ impl History {
         session_id: Option<&str>,
         title: &str,
         body: &str,
+        source_title: &str,
         now: u64,
     ) {
-        self.push_with_program((source, level, session_id), title, body, now, None);
+        self.push_with_program(
+            (source, level, session_id),
+            title,
+            body,
+            now,
+            None,
+            source_title,
+        );
     }
 
     fn push_with_program(
@@ -66,10 +76,12 @@ impl History {
         body: &str,
         now: u64,
         program: Option<ProgramNotice>,
+        source_title: &str,
     ) {
         let (source, level, session_id) = origin;
         let title = bounded(title, 160);
         let body = bounded(body, 4096);
+        let source_title = bounded(source_title, 160);
         if title.is_empty() && body.is_empty() {
             return;
         }
@@ -86,6 +98,9 @@ impl History {
             last.count = last.count.saturating_add(1);
             last.created_at = now;
             last.unread = true;
+            if !source_title.is_empty() {
+                last.source_title = source_title;
+            }
             return;
         }
         self.sequence += 1;
@@ -100,6 +115,7 @@ impl History {
             unread: true,
             count: 1,
             program,
+            source_title,
         });
         self.entries.truncate(HISTORY_LIMIT);
     }
@@ -118,7 +134,14 @@ fn history() -> &'static Mutex<History> {
     HISTORY.get_or_init(Default::default)
 }
 
-pub(crate) fn record(source: &str, level: &str, session_id: Option<&str>, title: &str, body: &str) {
+pub(crate) fn record(
+    source: &str,
+    level: &str,
+    session_id: Option<&str>,
+    title: &str,
+    body: &str,
+    source_title: &str,
+) {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -126,7 +149,7 @@ pub(crate) fn record(source: &str, level: &str, session_id: Option<&str>, title:
     history()
         .lock()
         .unwrap()
-        .push(source, level, session_id, title, body, now);
+        .push(source, level, session_id, title, body, source_title, now);
 }
 
 /// A status transition is keyed by record and generation, not aggregate icon.
@@ -136,6 +159,7 @@ pub(crate) fn record_program(
     level: &str,
     title: &str,
     body: &str,
+    source_title: &str,
 ) {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -147,6 +171,7 @@ pub(crate) fn record_program(
         body,
         now,
         Some(program),
+        source_title,
     );
 }
 
@@ -187,11 +212,11 @@ impl Notifications {
     }
     /// App UI errors share the same history as Rust session diagnostics.
     pub fn report(title: String, body: String) {
-        record("app", "error", None, &title, &body);
+        record("app", "error", None, &title, &body, "");
     }
     /// App operations can also publish successful informational notices.
     pub fn report_info(title: String, body: String) {
-        record("app", "info", None, &title, &body);
+        record("app", "info", None, &title, &body, "");
     }
 }
 
@@ -208,6 +233,7 @@ mod tests {
                 Some("s1"),
                 "Build",
                 &i.to_string(),
+                "",
                 i * 3000,
             );
         }
@@ -216,7 +242,7 @@ mod tests {
         assert_eq!(history.entries.back().unwrap().body, "5");
         history.read_all();
         assert!(history.entries.iter().all(|entry| !entry.unread));
-        history.push("app", "error", Some("s1"), "Build", "104", 312001);
+        history.push("app", "error", Some("s1"), "Build", "104", "", 312001);
         assert!(history.entries.front().unwrap().unread);
         assert_eq!(history.entries.front().unwrap().source, "app");
         assert_eq!(
@@ -224,21 +250,24 @@ mod tests {
             Some("s1")
         );
         history.entries.clear();
-        history.push("app", "warning", None, "Later", "", 400000);
+        history.push("app", "warning", None, "Later", "", "", 400000);
         assert_eq!(history.entries.front().unwrap().id, "notice-107");
     }
     #[test]
     fn repeated_notices_coalesce_but_new_arrivals_become_unread() {
         let mut history = History::default();
-        history.push("terminal", "info", Some("s1"), "Done", "中文", 1);
+        history.push("terminal", "info", Some("s1"), "Done", "中文", "ALPHA", 1);
         history.read_all();
-        history.push("terminal", "info", Some("s1"), "Done", "中文", 2);
+        history.push("terminal", "info", Some("s1"), "Done", "中文", "ALPHA", 2);
         assert_eq!(history.entries.len(), 1);
         assert_eq!(history.entries[0].count, 2);
         assert!(history.entries[0].unread);
-        history.push("terminal", "info", Some("s2"), "Done", "中文", 3);
+        assert_eq!(history.entries[0].source_title, "ALPHA");
+        history.push("terminal", "info", Some("s2"), "Done", "中文", "BETA", 3);
         assert_eq!(history.entries.len(), 2);
-        history.push("terminal", "info", Some("s2"), "Done", "中文", 3000);
+        assert_eq!(history.entries[0].source_title, "BETA");
+        assert_eq!(history.entries[1].source_title, "ALPHA");
+        history.push("terminal", "info", Some("s2"), "Done", "中文", "BETA", 3000);
         assert_eq!(history.entries.len(), 3);
     }
 }

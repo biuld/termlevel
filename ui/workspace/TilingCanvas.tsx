@@ -185,8 +185,8 @@ export function TilingCanvas(props: {
     ref={ref => { canvas = ref; measureOrigin(); }}
     onLayout={({ bounds }) => { store.setCanvasSize(bounds.size); measureOrigin(); }}>
     <TerminalMetrics fontFamily={monoFont()} fontSize={store.fontSize()} onChange={({ width }) => { if (store.cellWidth() !== width) store.cellWidth.set(width); }} />
-    {/* A single keyed native surface per session survives every tree operation. */}
-    <Each of={store.tabs().map(tab => tab.id)}>{id => <SessionPane id={id()} />}</Each>
+    {/* Keyed by session id so a reorder cannot rebind a surface to another terminal. */}
+    <Each of={store.tabs().map(tab => tab.id)} key={id => id}>{id => <SessionPane id={id()} />}</Each>
     <If when={!store.tiling().zoomed && !store.constrained() && !store.canvasBlocked()}>
       <Each of={store.fullGeometry().dividers.map(d => d.id)}>{id => <ResizeHandle id={id()} />}</Each>
     </If>

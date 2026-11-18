@@ -15,8 +15,25 @@ export function NotificationPanel(props: {
   clear: () => void;
   dismiss: (id: string) => void;
   sessionTitle: (id: string) => string | undefined;
+  /** Short directory or group label, used only when two open terminals share a title. */
+  sessionDetail: (id: string) => string;
   select: (id: string) => void;
 }) {
+  const sourceLabel = (entry: Notice) => {
+    const id = entry.sessionId;
+    if (!id) return undefined;
+    const open = props.sessionTitle(id) != null;
+    const base = entry.sourceTitle || (open ? props.sessionTitle(id) || "Terminal" : "");
+    // A closed session keeps the title from when the notice arrived. Navigation stays off.
+    if (!open) return base || undefined;
+    const shared = props.entries.some((other) => {
+      const otherId = other.sessionId;
+      return !!otherId && otherId !== id && (other.sourceTitle || props.sessionTitle(otherId)) === base;
+    });
+    const detail = shared ? props.sessionDetail(id) : "";
+    return detail && !base.endsWith(detail) ? `${base} · ${detail}` : base;
+  };
+  const sourceOpen = (entry: Notice) => !!entry.sessionId && props.sessionTitle(entry.sessionId) != null;
   const heights = signal<Record<string, number>>({});
   const contentHeight = () => props.entries.slice(0, 3).reduce((sum, entry) => sum + (heights()[entry.id] ?? token("height-notification-estimate")), 0);
   return <Overlay testID="notification-panel" role="dialog" accessibilityLabel="Notifications"
@@ -51,8 +68,8 @@ export function NotificationPanel(props: {
                   heights.set({ ...Object.fromEntries(Object.entries(heights()).filter(([id]) => current.has(id))), [entry().id]: height });
                 }
               }}>
-              <NotificationRow entry={entry()} sourceTitle={entry().sessionId ? props.sessionTitle(entry().sessionId!) : undefined}
-                dismiss={() => props.dismiss(entry().id)} select={() => { if (entry().sessionId) props.select(entry().sessionId!); }} />
+              <NotificationRow entry={entry()} sourceTitle={sourceLabel(entry())} sourceOpen={sourceOpen(entry())}
+                dismiss={() => props.dismiss(entry().id)} select={() => { if (entry().sessionId && sourceOpen(entry())) props.select(entry().sessionId!); }} />
             </View>
           }</Each>
         </View>

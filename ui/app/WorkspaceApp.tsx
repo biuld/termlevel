@@ -384,6 +384,14 @@ export function WorkspaceApp(props: {
       <NotificationPanel anchor={anchor()} windowHeight={windowHeight()} windowWidth={windowWidth()} entries={notifications.entries()} close={() => notifying.set(false)}
         clear={notifications.clear} dismiss={notifications.dismiss}
         sessionTitle={id => store.tab(id)?.title}
+        sessionDetail={id => {
+          const tab = store.tab(id);
+          if (!tab) return "";
+          const path = tab.liveCwd ?? tab.cwd;
+          const name = path.split(/[\\/]/).filter(Boolean).at(-1) || path;
+          const group = tab.groupId ? store.groupTitle(tab.groupId) : "";
+          return group ? `${name} · ${group}` : name;
+        }}
         select={id => { if (store.tab(id)) store.select(id); notifying.set(false); }} />
     }</If>
     <SettingsDialog open={settings()} dismiss={() => settings.set(false)} appearance={appearance}

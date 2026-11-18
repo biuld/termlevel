@@ -112,6 +112,64 @@ test("program notifications lead with the request and expose semantic icons", as
   } finally { await close(app); }
 });
 
+test("each notification keeps the terminal title from the moment it arrived", async () => {
+  const app = await open("./fixtures/NotificationFixture.tsx", options);
+  try {
+    await app.type("id:session-panel", "printf '\\033]0;SOURCE_ALPHA\\007\\033]777;notify;Alpha done;From alpha\\007'");
+    await app.keyboard.press("enter");
+    await app.waitFor("id:notifications-unread");
+    await app.keyboard.press("mod+t");
+    await app.waitFor("text:Terminal 2");
+    await app.type("label:Terminal Terminal 2", "printf '\\033]0;SOURCE_BETA\\007\\033]777;notify;Beta done;From beta\\007'");
+    await app.keyboard.press("enter");
+    await app.waitFor("text:SOURCE_BETA");
+    await app.press("id:notifications");
+    await app.waitFor("text:SOURCE_ALPHA");
+    await app.press("label:Open source of Alpha done");
+    expect(app.shows("id:notification-panel")).toBe(false);
+    await app.type("id:session-panel", "printf '\\033]0;SOURCE_LATER\\007'");
+    await app.keyboard.press("enter");
+    await app.waitFor("text:SOURCE_LATER");
+    await app.press("id:notifications");
+    await app.waitFor("text:SOURCE_ALPHA");
+    expect(app.texts()).toContain("SOURCE_BETA");
+    expect(app.texts().filter(text => text.includes("SOURCE_LATER")).length).toBeGreaterThan(0);
+    expect(app.texts().some(text => text.includes("SOURCE_ALPHA") && text.includes("SOURCE_LATER"))).toBe(false);
+  } finally { await close(app); }
+});
+
+test("closing a terminal keeps its remembered title and disables the source link", async () => {
+  const app = await open("./fixtures/NotificationFixture.tsx", options);
+  try {
+    await app.type("id:session-panel", "printf '\\033]0;SOURCE_GONE\\007\\033]777;notify;Gone done;From gone\\007'");
+    await app.keyboard.press("enter");
+    await app.waitFor("id:notifications-unread");
+    await app.keyboard.press("mod+t");
+    await app.waitFor("text:Terminal 2");
+    await app.press("id:notifications");
+    await app.press("label:Open source of Gone done");
+    await app.keyboard.press("mod+w");
+    await app.press("id:notifications");
+    await app.waitFor("text:SOURCE_GONE · Closed");
+    expect(app.texts()).not.toContain("Terminal closed");
+    expect(app.shows("id:notification-panel")).toBe(true);
+  } finally { await close(app); }
+});
+
+test("a long terminal title stays inside the row and the dismiss control remains usable", async () => {
+  const app = await open("./fixtures/NotificationFixture.tsx", options);
+  const title = "Thinking ".repeat(24) + "GROK_END";
+  try {
+    await app.type("id:session-panel", `printf '\\033]0;%s\\007\\033]777;notify;Grok;Turn complete\\007' '${title}'`);
+    await app.keyboard.press("enter");
+    await app.waitFor("id:notifications-unread");
+    await app.press("id:notifications");
+    await app.waitFor("text:Turn complete");
+    await app.press("label:Dismiss Grok notification");
+    await app.waitUntil(() => !app.texts().some(text => text === "Turn complete"));
+  } finally { await close(app); }
+});
+
 test("long notification content expands in place and remains available after collapse", async () => {
   const app = await open("./fixtures/NotificationFixture.tsx", options);
   const message = "Diagnostic detail. ".repeat(80) + "DETAILS_END";

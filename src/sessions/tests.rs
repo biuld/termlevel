@@ -579,6 +579,40 @@ fn rejected_paste_is_a_warning_and_a_later_delivered_input_clears_it() {
 }
 
 #[test]
+fn notification_source_titles_stay_with_the_terminal_that_sent_them() {
+    let mut manager = SessionManager::default();
+    let first = shell(&mut manager);
+    let first_id = first.info().id.clone();
+    first.input(b"printf '\\033]0;TITLE_ALPHA\\007\\033]777;notify;Alpha;From alpha\\007'\n");
+    let second = shell(&mut manager);
+    let second_id = second.info().id.clone();
+    second.input(b"printf '\\033]0;TITLE_BETA\\007\\033]777;notify;Beta;From beta\\007'\n");
+    wait_for(|| {
+        let notes = crate::notifications::Notifications::list();
+        notes.iter().any(|entry| {
+            entry.session_id.as_deref() == Some(&first_id) && entry.source_title == "TITLE_ALPHA"
+        }) && notes.iter().any(|entry| {
+            entry.session_id.as_deref() == Some(&second_id) && entry.source_title == "TITLE_BETA"
+        })
+    });
+    first.input(b"printf '\\033]0;TITLE_LATER\\007'\n");
+    wait_for(|| first.info().title == "TITLE_LATER");
+    let notes = crate::notifications::Notifications::list();
+    assert!(notes.iter().any(|entry| {
+        entry.session_id.as_deref() == Some(&first_id)
+            && entry.title == "Alpha"
+            && entry.source_title == "TITLE_ALPHA"
+    }));
+    assert!(notes.iter().any(|entry| {
+        entry.session_id.as_deref() == Some(&second_id)
+            && entry.title == "Beta"
+            && entry.source_title == "TITLE_BETA"
+    }));
+    manager.shutdown();
+    wait_for(|| finished(&first) && finished(&second));
+}
+
+#[test]
 fn notifications_survive_session_close_without_a_mounted_view() {
     let mut manager = SessionManager::default();
     let session = shell(&mut manager);

@@ -641,6 +641,7 @@ impl Session {
                                     Some(&info.id),
                                     "Terminal exited",
                                     &format!("Process exited with code {}.", status.exit_code()),
+                                    &info.title,
                                 );
                             }
                         }
@@ -741,27 +742,30 @@ impl Session {
                 }
                 BackendEvent::Bell => {
                     self.bells.fetch_add(1, Ordering::Release);
-                    let id = self.info.lock().unwrap().id.clone();
+                    let info = self.info.lock().unwrap();
                     crate::notifications::record(
                         "terminal",
                         "info",
-                        Some(&id),
+                        Some(&info.id),
                         "Terminal bell",
                         "This terminal rang the bell.",
+                        &info.title,
                     );
                 }
                 BackendEvent::Notification { title, body } => {
-                    let id = self.info.lock().unwrap().id.clone();
+                    let info = self.info.lock().unwrap();
+                    let notice_title = if title.is_empty() {
+                        "Terminal notification".to_string()
+                    } else {
+                        title
+                    };
                     crate::notifications::record(
                         "terminal",
                         "info",
-                        Some(&id),
-                        if title.is_empty() {
-                            "Terminal notification"
-                        } else {
-                            &title
-                        },
+                        Some(&info.id),
+                        &notice_title,
                         &body,
+                        &info.title,
                     );
                 }
                 BackendEvent::Error(error) => self.fail(format!("Ghostty: {error}")),
@@ -879,6 +883,7 @@ impl Session {
                 },
                 &format!("{headline} · {terminal}"),
                 &body,
+                terminal,
             );
         }
     }
@@ -976,6 +981,7 @@ impl Session {
                     Some(&info.id),
                     "Input not sent",
                     &warning,
+                    &info.title,
                 );
             }
             self.revision.fetch_add(1, Ordering::Release);
@@ -1135,6 +1141,7 @@ impl Session {
         status.records.clear();
         let mut info = self.info.lock().unwrap();
         let id = info.id.clone();
+        let source_title = info.title.clone();
         let changed = info.error.as_ref() != Some(&error);
         info.state = "error".into();
         info.error = Some(error.clone());
@@ -1145,7 +1152,14 @@ impl Session {
         info.shell_phase = "unknown".into();
         drop(info);
         if changed {
-            crate::notifications::record("app", "error", Some(&id), "Terminal error", &error);
+            crate::notifications::record(
+                "app",
+                "error",
+                Some(&id),
+                "Terminal error",
+                &error,
+                &source_title,
+            );
         }
         self.revision.fetch_add(1, Ordering::Release);
     }
@@ -1315,6 +1329,7 @@ impl SessionManager {
                 Some(&id),
                 "Terminal could not start",
                 error,
+                &info.title,
             );
         }
         self.entries.insert(id, entry);
