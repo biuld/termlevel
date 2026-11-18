@@ -17,11 +17,12 @@ type Context = {
   layoutSessions: (id: string | null) => string[]; placeSplit: (from: string | null, to: string | null) => void;
   select: (id: string, acknowledge?: boolean) => void; forgetSession: (id: string) => void;
   patchGroup: (id: string, patch: Partial<Omit<TabGroup, "id">>) => void;
+  forgetFiles: (id: string) => void;
   nextPane: (id: string) => Pane; setLayout: (key: string, state: TilingState) => void;
 };
 
 export function groupOperations(context: Context) {
-  const { groups, tabs, expanded, workspaceKey, layouts, gitViews, activeId, nextSequence, tab, group, addTab, closeTabs, layoutOf, layoutKey, layoutSessions, placeSplit, select, forgetSession, patchGroup, nextPane, setLayout } = context;
+  const { groups, tabs, expanded, workspaceKey, layouts, gitViews, activeId, nextSequence, tab, group, addTab, closeTabs, layoutOf, layoutKey, layoutSessions, placeSplit, select, forgetSession, patchGroup, nextPane, setLayout, forgetFiles } = context;
   /** A palette color not already on a group, or any color once all nine are used. */
   function nextGroupColor(): GroupColor {
     const used = new Set(groups().map((item) => item.color));
@@ -52,6 +53,7 @@ export function groupOperations(context: Context) {
     const kept = panes(groupLayout.root).find(p => p.id === groupLayout.focusedPaneId)?.sessionId ?? members[0]?.id;
     batch(() => {
       gitViews.update(all => { const copy = { ...all }; delete copy[id]; return copy; });
+      forgetFiles(id);
       tabs.update((all) => all.map((t) => t.groupId === id ? { ...t, groupId: null } : t));
       groups.update((all) => all.filter((g) => g.id !== id));
       // An empty ungrouped workspace inherits the group's arrangement. A workspace
@@ -74,6 +76,7 @@ export function groupOperations(context: Context) {
   function closeGroup(id: string) {
     batch(() => {
       gitViews.update(all => { const copy = { ...all }; delete copy[id]; return copy; });
+      forgetFiles(id);
       closeTabs(tabs().filter(t => t.groupId === id).map(t => t.id));
       groups.update((all) => all.filter((g) => g.id !== id));
       if (workspaceKey() === id) {

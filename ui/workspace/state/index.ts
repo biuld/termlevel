@@ -3,6 +3,7 @@ import { Runtime, Sessions } from "termlevel/native";
 import { dropPosition, equalize, geometry, insertPane, minimum, neighbor, panes, removePane, siblings, updateNode, type Direction, type DropPosition, type LayoutNode, type Pane, type Rect, type Size, type TilingState } from "../tiling";
 import { SNAPSHOT_VERSION, type GitView, type SnapshotPreferences, type WorkspaceSnapshot } from "../workspace-snapshot";
 import { createRepositoryPreferences } from "../repository-preferences";
+import { createFiles } from "./files";
 import { initialWorkspace } from "./initial";
 import { groupOperations } from "./groups";
 import type { SessionTransport, Tab, TabGroup, WorkspaceOptions } from "./types";
@@ -14,8 +15,11 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
   const savedGitViews = snapshot?.gitViews ?? Object.fromEntries((snapshot?.dashboards ?? []).map(id => [id, { open: ["changes" as const], selected: "changes" as const }]));
   const gitViews = signal<Record<string, { open: GitView[]; selected: GitView | null }>>(savedGitViews);
   const repositories = createRepositoryPreferences(snapshot?.gitRepositories ?? {}, () => groups().map(group => group.id));
+  const savedFiles = snapshot?.files ?? {};
+  const fileViews = createFiles({});
   const activeGitView = computed(() => gitViews()[workspaceKey()]?.selected ?? null);
-  const canvasBlocked = computed(() => activeGitView() !== null);
+  const filesShowing = computed(() => !!fileViews.files()[workspaceKey()]?.showing);
+  const canvasBlocked = computed(() => activeGitView() !== null || filesShowing());
   // A sidebar choice outside the current split fills the canvas alone. The split tree stays put.
   const foreground = signal<string | null>(null);
   const tiling = computed(() => {
@@ -145,11 +149,26 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
     if (!group(id)) return;
     batch(() => {
       selectGroup(id);
+      fileViews.hide(id);
       gitViews.update(all => {
         const old = all[id] ?? { open: [], selected: null };
         return { ...all, [id]: { open: old.open.includes(kind) ? old.open : [...old.open, kind], selected: kind } };
       });
     });
+  }
+
+  function openFiles(id = workspaceKey()) {
+    if (!group(id)) return;
+    batch(() => {
+      selectGroup(id);
+      const old = gitViews()[id];
+      if (old?.selected) gitViews.update(all => ({ ...all, [id]: { ...old, selected: null } }));
+      fileViews.show(id);
+    });
+  }
+
+  function closeFiles(id: string) {
+    fileViews.close(id);
   }
 
   function closeGitView(id: string, kind: GitView) {
@@ -165,6 +184,7 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
     batch(() => {
       const key = layoutKey(tab(id)?.groupId);
       if (key && gitViews()[key]?.selected) gitViews.update(all => ({ ...all, [key]: { ...all[key], selected: null } }));
+      if (key) fileViews.hide(key);
       if (workspaceKey() !== key) workspaceKey.set(key);
       const state = layoutOf(key);
       const open = panes(state.root);
@@ -193,11 +213,11 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
     if (acknowledge && observedRevision != null) Sessions.acknowledge(id, observedRevision);
   }
 
-  function addTab(groupId: string | null = null, focus = true) {
+  function addTab(groupId: string | null = null, focus = true, directory = "") {
     sequence++;
     const destination = groupId ? group(groupId) : undefined;
     // With no active terminal, a new one starts in the home folder.
-    const cwd = destination?.cwd || activeTab()?.liveCwd || activeTab()?.cwd || "~";
+    const cwd = directory || destination?.cwd || activeTab()?.liveCwd || activeTab()?.cwd || "~";
     const session = transport?.open(cwd);
     const id = session?.id ?? `tab-${sequence}`;
     const validGroup = destination ? groupId : null;
@@ -407,7 +427,7 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
   const { addGroup, ungroup, closeGroup, placeTab, inSplit, moveTab, combineTabs, togglePin, step, reorder } = groupOperations({
     groups, tabs, expanded, workspaceKey, layouts, gitViews, activeId, nextSequence: () => ++sequence,
     tab, group, addTab, closeTabs, layoutOf, layoutKey, layoutSessions, placeSplit,
-    select, forgetSession, patchGroup, nextPane, setLayout,
+    select, forgetSession, patchGroup, nextPane, setLayout, forgetFiles: fileViews.forget,
   });
 
   /** The serializable workspace. Transient session state, bells and processes stay out. */
@@ -428,6 +448,7 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
       dashboards: [],
       gitRepositories: Object.fromEntries(Object.entries(repositories.repositoryPreferences()).filter(([id]) => !!group(id))),
       gitViews: Object.fromEntries(Object.entries(gitViews()).filter(([id]) => !!group(id))),
+      files: Object.fromEntries(Object.entries(fileViews.files()).filter(([id]) => !!group(id))),
       expanded: expanded(),
       sidebarWidth: sidebarWidth(),
       fontSize: fontSize(),
@@ -443,6 +464,7 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
     // Restoring saved Git views happens after the initial selection, which
     // otherwise counts as choosing a terminal and closes it.
     gitViews.set(savedGitViews);
+    fileViews.files.set(savedFiles);
     if (!snapshot.workspaceKey || group(snapshot.workspaceKey)) workspaceKey.set(snapshot.workspaceKey);
     for (const saved of snapshot.groups) {
       if (saved.collapsed !== group(saved.id)?.collapsed) patchGroup(saved.id, { collapsed: saved.collapsed });
@@ -451,7 +473,8 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
 
   return {
     tabs, groups, activeId, activeTab, expanded, sidebarWidth, fontSize, scrollback, clipboardRead, workspaceKey, snapshot: snapshotFile,
-    ...repositories, gitViews, activeGitView, canvasBlocked, selectGroup, selectUngrouped, openGitView, closeGitView,
+    ...repositories, gitViews, activeGitView, files: fileViews.files, filesShowing, openFiles, closeFiles,
+    patchFiles: fileViews.patch, canvasBlocked, selectGroup, selectUngrouped, openGitView, closeGitView,
     tiling, paneList, inputBlocked, cellWidth, canvasSize, setCanvasSize, paneMinimum, fullGeometry, constrained, projected,
     paneForSession, frameForSession, focusPane, canSplit, splitTerminal, hidePane, toggleZoom, focusDirection,
     layoutSessions, placeSplit, inSplit,

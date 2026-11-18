@@ -52,6 +52,8 @@ export interface WorkspaceSnapshot {
   dashboards: string[];
   /** Open Git views and last selected view for each group. */
   gitViews?: Record<string, { open: GitView[]; selected: GitView | null }>;
+  /** File view for each group. Absent means the view was never opened. */
+  files?: Record<string, FilesView>;
   gitRepositories?: RepositoryPreferences;
   expanded: boolean;
   sidebarWidth: number | null;
@@ -67,6 +69,14 @@ export interface WorkspaceSnapshot {
 
 export type GitView = "changes" | "history";
 
+export interface FilesView {
+  open: boolean;
+  showing: boolean;
+  showHidden: boolean;
+  expanded: string[];
+  selected: string | null;
+}
+
 const appearances: readonly string[] = ["system", "light", "dark"];
 const workingIndicators: readonly string[] = ["bars", "vinyl", "wave", "beat"];
 
@@ -74,6 +84,13 @@ function object(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function filePath(value: unknown): string | null {
+  if (typeof value !== "string" || !value || value.includes("\0") || value.startsWith("/") || value.split("/").includes("..")) {
+    return null;
+  }
+  return value;
 }
 
 function nonEmpty(value: unknown): string | null {
@@ -207,6 +224,27 @@ export function parseSnapshot(raw: string): WorkspaceSnapshot | null {
   // An old overview showed Changes by default; preserve that open view on upgrade.
   if (!storedGitViews) for (const id of dashboards) gitViews[id] = { open: ["changes"], selected: "changes" };
 
+  const files: NonNullable<WorkspaceSnapshot["files"]> = {};
+  const storedFiles = object(document.files);
+  if (storedFiles) for (const [id, entry] of Object.entries(storedFiles)) {
+    const state = object(entry);
+    if (!groupIds.has(id) || !state) continue;
+    const expanded: string[] = [];
+    if (Array.isArray(state.expanded)) for (const path of state.expanded) {
+      const relative = filePath(path);
+      if (expanded.length === 64) break;
+      if (relative && !expanded.includes(relative)) expanded.push(relative);
+    }
+    const selected = filePath(state.selected);
+    files[id] = {
+      open: state.open === true,
+      showing: state.showing === true && state.open === true,
+      showHidden: state.showHidden === true,
+      expanded,
+      selected,
+    };
+  }
+
   return {
     version: SNAPSHOT_VERSION,
     groups,
@@ -216,6 +254,7 @@ export function parseSnapshot(raw: string): WorkspaceSnapshot | null {
     workspaceKey: typeof document.workspaceKey === "string" ? document.workspaceKey : "",
     dashboards,
     gitViews,
+    files,
     gitRepositories: parseRepositoryPreferences(document.gitRepositories, groupIds),
     expanded: document.expanded !== false,
     sidebarWidth: finite(document.sidebarWidth),

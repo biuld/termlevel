@@ -5,6 +5,7 @@ import { Icon, type IconName } from "../shared/icons";
 import { WorkingIndicator, type WorkingIndicatorKind } from "../shared/WorkingIndicator";
 import { Hint, IconButton } from "../shared/controls";
 import type { Workspace } from "./state";
+import { filesTabVisible, hiddenToolCount, ToolTabs, visibleGitTabs } from "./ToolTabs";
 import { groupColor, groupLine, groupTint } from "../shared/theme";
 import { GroupEditor } from "./GroupEditor";
 import { Type } from "../shared/type";
@@ -332,8 +333,8 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
       props.groupEditor.set(null);
       if (restoreFocus) trigger?.focus();
     };
-    const visibleGit = () => (store.gitViews()[id]?.open ?? []).filter(kind =>
-      !store.group(id)?.collapsed || (!props.expanded() && store.workspaceKey() === id && store.activeGitView() === kind));
+    const visibleGit = () => visibleGitTabs(store, id, props.expanded());
+    const visibleFiles = () => filesTabVisible(store, id, props.expanded());
     const shownSplit = () => {
       const all = splitSessions(id);
       if (all.length < 2) return [];
@@ -343,7 +344,7 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
     };
     const visibleMembers = () => members(id).filter((tab) => !splitSessions(id).includes(tab.id) && (!store.group(id)?.collapsed || (!props.expanded() && !store.canvasBlocked() && tab.id === store.activeId())));
     const hiddenCount = () => members(id).filter((tab) => !visibleMembers().some((item) => item.id === tab.id) && !shownSplit().includes(tab.id)).length
-      + (store.gitViews()[id]?.open.length ?? 0) - visibleGit().length;
+      + hiddenToolCount(store, id, props.expanded());
     return <View class="relative mb-2"
         classList={{ "mx-1 py-0.5": props.expanded() }}>
         <If when={!props.expanded()}>
@@ -393,25 +394,9 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
             <GroupEditor id={id} anchor={anchor()!} workspace={store} close={close} deleteGroup={() => actions.closeGroup(id)} />
           </If>
         </View>
-        <If when={shownSplit().length > 0 || visibleMembers().length > 0 || visibleGit().length > 0}>
+        <If when={shownSplit().length > 0 || visibleMembers().length > 0 || visibleGit().length > 0 || visibleFiles()}>
           <View style={{ marginLeft: props.expanded() ? 10 : 0, paddingLeft: props.expanded() ? token("gap-group-guide") : 4, paddingRight: props.expanded() ? 0 : 4, borderLeftWidth: props.expanded() ? 1 : 0, borderColor: groupLine(store.group(id)?.color) }}>
-            <Each of={visibleGit()}>{kind =>
-              <View class="group relative my-0.5 h-(--height-tab) flex-row items-center rounded-(--radius-tab) hover:bg-tab-hover"
-                classList={{ "mx-1": !props.expanded(), "bg-tab-selected hover:bg-tab-selected": store.workspaceKey() === id && store.activeGitView() === kind() }}>
-                <Button testID={`git-tab-${id}-${kind()}`} role="tab" selected={store.workspaceKey() === id && store.activeGitView() === kind()} accessibilityLabel={`${kind() === "changes" ? "Changes" : "History"} in ${store.groupTitle(id)}`}
-                  onPress={() => store.openGitView(kind(), id)}
-                  tooltip={<Hint>{`${kind() === "changes" ? "Changes" : "History"} · ${store.groupTitle(id)}`}</Hint>}
-                  class="h-full min-w-0 flex-1 flex-row items-center gap-2 rounded-(--radius-tab) focus-visible:ring-2 ring-sidebar-ring"
-                  style={{ justifyContent: props.expanded() ? "flex-start" : "center", paddingHorizontal: props.expanded() ? 7 : 0 }}>
-                  <Icon name={kind() === "changes" ? "gitBranch" : "gitCommit"} size={13} color={groupColor(store.group(id)?.color)} />
-                  <If when={props.expanded()}><Text class="min-w-0 flex-1 text-(length:--text-body) text-sidebar-foreground">{kind() === "changes" ? "Changes" : "History"}</Text></If>
-                </Button>
-                <If when={props.expanded()}><View class="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-                  style={{ opacity: store.workspaceKey() === id && store.activeGitView() === kind() ? 1 : undefined }}>
-                  <IconButton icon="close" label={`Close ${kind() === "changes" ? "Changes" : "History"}`} testID={`close-git-${id}-${kind()}`} onPress={() => store.closeGitView(id, kind())} />
-                </View></If>
-              </View>
-            }</Each>
+            <ToolTabs store={store} id={id} expanded={props.expanded()} />
             <If when={shownSplit().length > 0}><SplitCard groupId={id} /></If>
             <Each of={visibleMembers().map((t) => t.id)}>{(tabId) => <TabRow id={tabId()} />}</Each>
           </View>

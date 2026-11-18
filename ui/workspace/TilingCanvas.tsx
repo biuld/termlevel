@@ -9,6 +9,8 @@ import { Icon } from "../shared/icons";
 import { Type } from "../shared/type";
 import { groupColor } from "../shared/theme";
 import { GitWorkspace } from "../git/GitWorkspace";
+import { FilesWorkspace } from "../files/FilesWorkspace";
+import type { FilesTransport } from "../files/types";
 import type { GitTransport } from "../git/git-types";
 import type { Workspace } from "./state";
 import type { Divider, Direction, Rect } from "./tiling";
@@ -19,6 +21,7 @@ export function TilingCanvas(props: {
   rename: (id: string) => void;
   newGroup: () => void;
   git?: GitTransport;
+  files?: FilesTransport;
   previewSurface?: PreviewSurface;
   notify: (level: "info" | "error", title: string, body: string) => void;
   finding: Signal<boolean>;
@@ -219,7 +222,15 @@ export function TilingCanvas(props: {
           : "Cannot place terminal here"}</Type>
       </View>
     </If>
-    <If when={store.activeGitView() !== null}>
+    <If when={store.filesShowing()}>
+      <View testID="files-view" class="absolute inset-0 overflow-hidden rounded-(--radius-panel) bg-terminal-background">
+        <If when={props.files}>{(files) =>
+          <FilesWorkspace workspace={store} files={files()} git={props.git} notify={props.notify} />
+        }</If>
+        <If when={!props.files}><View class="flex-1 items-center justify-center"><Type role="body" tone="muted-foreground">Files are unavailable in preview.</Type></View></If>
+      </View>
+    </If>
+    <If when={store.activeGitView() !== null && !store.filesShowing()}>
       <View testID="git-view" class="absolute inset-0 overflow-hidden rounded-(--radius-panel) bg-terminal-background">
         <If when={props.git}>{(git) => <>
           <GitWorkspace workspace={store} preview={props.preview} git={git()} notify={props.notify} />

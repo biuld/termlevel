@@ -72,6 +72,21 @@ test("a stored document is accepted, deduplicated and normalized", () => {
   expect(snapshot!.monoFont).toBe(null);
 });
 
+test("a file view is kept when its paths stay under the group", () => {
+  const snapshot = parseSnapshot(JSON.stringify({
+    version: 1,
+    groups: [{ id: "group-1", title: "work", cwd: "/work", color: "blue", collapsed: false }],
+    files: {
+      "group-1": { open: true, showing: true, showHidden: true, expanded: ["src", "../etc", "/tmp"], selected: "src/main.ts" },
+      missing: { open: true, showing: true, showHidden: false, expanded: [], selected: null },
+    },
+  }));
+  expect(snapshot!.files?.["group-1"]).toEqual({
+    open: true, showing: true, showHidden: true, expanded: ["src"], selected: "src/main.ts",
+  });
+  expect(snapshot!.files?.missing).toBe(undefined);
+});
+
 test("an empty versioned document is valid, and broken or newer ones are ignored", () => {
   const empty = parseSnapshot('{"version":1}');
   expect(empty).not.toBe(null);

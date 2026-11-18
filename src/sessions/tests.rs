@@ -742,7 +742,11 @@ fn resolved_progress_and_lifecycle_do_not_invent_completion() {
         session.info().status.progress.is_none(),
         "blocked never invents a line"
     );
-    for state in [ProgressState::Pause, ProgressState::Error, ProgressState::Indeterminate] {
+    for state in [
+        ProgressState::Pause,
+        ProgressState::Error,
+        ProgressState::Indeterminate,
+    ] {
         session.apply_progress(ProgressReport {
             state,
             percent: None,

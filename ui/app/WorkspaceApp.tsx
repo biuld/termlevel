@@ -4,7 +4,9 @@ import { Application, currentWindow, Menu, titleBar } from "nsh/desktop";
 import { Runtime, Sessions, TerminalEngine } from "termlevel/native";
 import { TilingCanvas } from "../workspace/TilingCanvas";
 import { nativeGit } from "../git/native-git";
+import { nativeFileTransport } from "../files/native-files";
 import type { GitTransport } from "../git/git-types";
+import type { FilesTransport } from "../files/types";
 import { Action, AppDialog, DialogActions, fieldClass, IconButton } from "../shared/controls";
 import { Icon } from "../shared/icons";
 import { GroupPathDialog } from "../workspace/GroupPathDialog";
@@ -30,10 +32,12 @@ export function WorkspaceApp(props: {
   persist?: boolean;
   /** Git transport, injectable for isolated tests. */
   git?: GitTransport;
+  files?: FilesTransport;
   previewSurface?: PreviewSurface;
 } = {}) {
   const preview = Runtime.previewMode();
   const git = props.git ?? (preview ? undefined : nativeGit);
+  const files = props.files ?? (preview ? undefined : nativeFileTransport);
   const terminalIdentity = signal<TerminalIdentity>(props.snapshot?.terminalIdentity ?? "termlevel");
   const store = props.workspace ?? createWorkspace(preview ? undefined : {
     cwd: Runtime.cwd(), list: Sessions.list,
@@ -126,7 +130,9 @@ export function WorkspaceApp(props: {
     minSize: { width: 640, height: 420 },
   });
   effect(() => win.set({
-    title: store.canvasBlocked()
+    title: store.filesShowing()
+      ? `Files — ${titleGroup()} — Termlevel`
+      : store.canvasBlocked()
       ? `${store.activeGitView() === "changes" ? "Changes" : "History"} — ${titleGroup()} — Termlevel`
       : `${store.activeTab()?.title ?? "Termlevel"} — Termlevel`,
   }));
@@ -150,11 +156,19 @@ export function WorkspaceApp(props: {
     toggleSidebar,
     newTerminal: () => { store.addTab(store.workspaceKey() || null); },
   };
+  function openCurrentFiles() {
+    if (!store.workspaceKey()) {
+      void Menu.popup([{ label: "Select a tab group to open Files", disabled: true }]);
+      return;
+    }
+    store.openFiles();
+  }
 
   // Application shortcuts use Command on macOS, preserving shell Control keys.
   const shortcuts: Record<string, () => void> = {
     "mod+t": actions.newTerminal,
     "mod+w": () => {
+      if (store.filesShowing()) { store.closeFiles(store.workspaceKey()); return; }
       const view = store.activeGitView(); if (view) { store.closeGitView(store.workspaceKey(), view); return; }
       const id = store.activeId(); if (id) store.closeTab(id);
     },
@@ -189,6 +203,7 @@ export function WorkspaceApp(props: {
     { label: "File", submenu: [
       { label: "New terminal", shortcut: "mod+t", onSelect: actions.newTerminal },
       { label: "New group…", shortcut: "mod+shift+g", onSelect: actions.newGroup },
+      { label: "Files", onSelect: openCurrentFiles },
       { type: "separator" },
       { label: "Close terminal", shortcut: "mod+w", onSelect: shortcuts["mod+w"] },
     ] },
@@ -221,7 +236,7 @@ export function WorkspaceApp(props: {
           testID="toggle-sidebar" onPress={actions.toggleSidebar} />
       </View>
       <View class="absolute inset-0 items-center justify-center" style={{ pointerEvents: "none" }}>
-        <Type role="label">{store.canvasBlocked() ? `${store.activeGitView() === "changes" ? "Changes" : "History"} · ${titleGroup()}` : "Termlevel"}</Type>
+        <Type role="label">{store.filesShowing() ? `Files · ${titleGroup()}` : store.canvasBlocked() ? `${store.activeGitView() === "changes" ? "Changes" : "History"} · ${titleGroup()}` : "Termlevel"}</Type>
       </View>
       <View testID="global-actions" desktop={{ windowDrag: false }} class="ml-auto flex-row items-center gap-0.5">
         <IconButton icon="plus" label={store.workspaceKey() ? `New terminal in ${store.groupTitle(store.workspaceKey())}` : "New ungrouped terminal"} testID="titlebar-new-terminal" onPress={actions.newTerminal} />
@@ -235,7 +250,8 @@ export function WorkspaceApp(props: {
             { label: "History", onSelect: () => store.openGitView("history") },
           ]);
         }} />
-        <IconButton icon="folder" label="New group" testID="new-group" onPress={actions.newGroup} />
+        <IconButton icon="files" label="Files" testID="titlebar-files" onPress={openCurrentFiles} />
+        <IconButton icon="folderPlus" label="New group" testID="new-group" onPress={actions.newGroup} />
         <IconButton icon="search" label="Find a terminal" testID="find-terminal" onPress={actions.search} />
         <View ref={ref => { notificationAnchor = ref; }} class="relative">
           <IconButton icon="bell" label={notifications.unread() ? `Notifications (${notifications.unread()} unread)` : "Notifications"} testID="notifications" selected={notifying()}
@@ -263,7 +279,7 @@ export function WorkspaceApp(props: {
         <ResizablePanel minSize={320}>
           <View class="h-full min-w-0 flex-1" style={{ paddingLeft: token("gap-pane") / 2 }}>
             <TilingCanvas workspace={store} preview={preview} rename={actions.renameTab} newGroup={actions.newGroup}
-              git={git} previewSurface={props.previewSurface} notify={notifications.publish} finding={finding} findQuery={findQuery} />
+              git={git} files={files} previewSurface={props.previewSurface} notify={notifications.publish} finding={finding} findQuery={findQuery} />
           </View>
         </ResizablePanel>
       </ResizablePanelGroup>

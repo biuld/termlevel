@@ -2,7 +2,7 @@
 
 ## 文档入口
 
-README 负责安装、运行和产品能力；本指南负责目录与开发约定；architecture 负责当前所有权与数据通路；roadmap 负责尚待完成的工作；design 负责视觉规范。terminal-grid、terminal-surface、terminal-tiling 记录终端展示设计；osc-support 统一记录 OSC 能力、终端状态的业务语义与 UI / UX。
+README 负责安装、运行和产品能力；本指南负责目录与开发约定；architecture 负责当前所有权与数据通路；roadmap 负责尚待完成的工作；design 负责视觉规范。terminal-grid、terminal-surface、terminal-tiling 记录终端展示设计；osc-support 统一记录 OSC 能力、终端状态的业务语义与 UI / UX；file-browser 记录分组文件浏览与文本编辑的草案。
 
 validation 按日期保留验证证据，不作为当前模块路径索引。带 handoff 的文件是历史交接快照，不覆盖当前架构。移动文件时更新当前文档与代码引用；历史命令、日志路径和提交信息保留原样。
 
@@ -13,6 +13,7 @@ App.tsx                     NSH 默认挂载入口
 ui/app/                     启动恢复、窗口、菜单、快捷键和应用接线
 ui/workspace/               工作区状态、快照、存储、侧栏、分组和平铺
 ui/git/                     Git 变更 / diff、History、分支 / worktree 与提交车道
+ui/files/                   分组文件树与文本编辑
 ui/settings/                设置界面
 ui/notifications/           通知历史订阅与标题栏面板
 ui/terminal/                原生终端展示和查找
@@ -21,6 +22,7 @@ src/                        Rust 应用 crate
   git_discovery/          共享仓库目录、上下文发现与目录监听
   git/                      只读查询、进程执行、读取租约、refs 快照与后台增量车道
   git_ops/                  显式 Git 操作：fetch、fast-forward pull、push、checkout、建分支、worktree 管理
+  files/                    分组目录的单层列举、有界文本读写、展开目录监听与系统文件动作
   sessions/                 显式会话 API 与进程生命周期测试
   terminal/                 Ghostty 应用适配测试
   session_view/             显示控制、输入策略、场景与平台后端

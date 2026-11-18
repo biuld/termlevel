@@ -19,6 +19,7 @@ App.tsx                                      mount 工作区，仅作入口
   ui/workspace/tiling.ts                     布局树变换、约束、几何与方向导航
   ui/workspace/TilingCanvas.tsx              按 session ID 稳定挂载、pane 工具栏与分隔拖动
   ui/workspace/GroupEditor.tsx               侧栏锚定的小型分组编辑浮层：组名、颜色和组操作
+  ui/files/FilesPanel.tsx              分组目录树与文本编辑
   ui/git/GitWorkspace.tsx              仓库选择与任务组合
   ui/git/scheduler.ts                 Git 视图周期任务调度
   ui/git/operation-gate.ts            跨视图的仓库操作互斥
@@ -251,6 +252,10 @@ reader/writer/reaper 在 Rust 工作线程中运行。Unix PTY 使用非阻塞 I
 `TerminalMetrics` 在原生视图作用域测量 cell 宽度，通过低频事件供 TSX 计算 40 列 × 8 行的最小正文尺寸；它与 Rust renderer 共用字体测量函数。窗口无法容纳整棵树时临时只展示焦点 pane，保存树及用户比例，空间恢复后还原。用户主动放大与这个临时投影分别管理。
 
 `SessionTerminal.active` 控制输入授权和焦点，刷新定时器不依赖它。点击或实际 Input 聚焦时，通过 `FocusRequest` 同步工作区选择。对话框和编辑浮层临时阻止 terminal 自动取得焦点；pane 键盘缩放使用在 terminal 之后挂载的原生 `ResizeKeys`，结束后卸载，让方向键和 Enter 回到终端。AppKit 在 marked text 期间将按键交给输入法，不能假定工作区快捷键此时仍会执行。
+
+## 文件视图
+
+Files 是分组工具视图，和 Changes、History 一样盖住分屏，不创建或关闭终端进程。标题栏 Files 按钮、File 菜单和分组选项打开当前分组，侧栏标签在打开后出现。根目录是分组目录。`src/files/` 在阻塞线程上按一层 `read_dir`，拒绝离开根的路径和符号链接；同时最多两个文件任务。TSX 用 NSH `Tree` 显示目录，用 NSH `Editor` 编辑不超过 512 KiB 的 UTF-8 文本。未保存内容只留在内存。预览模式不调用 `Files`，也不为文件树读取 Git。文件行和编辑区标题显示与 Changes 相同的 Git 状态字母；目录在子孙有变更时显示一个点。不是仓库或 Git 读取失败时不标状态。macOS 对根目录和已经展开的目录做非递归 kqueue 监听，和 Git 发现的额度分开；事件按 200 ms 合并后只重列那一层。折叠、关闭视图或删除分组时去掉监听。监听失败时该层显示一行说明，刷新仍可用。其他平台只保留手动刷新。
 
 ## 当前能力边界
 

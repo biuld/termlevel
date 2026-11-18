@@ -43,6 +43,11 @@ export function GroupEditor(props: {
       onChange={({ value }) => store.patchGroup(id, { title: value })}
       onSubmit={() => props.close(true)}
       class={`mb-2 ${fieldClass}`} style={{ fontFamily: interfaceFont(), lineHeight: token("leading-body") }} />
+    <Button testID="group-editor-files"
+      onPress={() => { props.close(false); store.openFiles(id); }}
+      class="h-(--height-action) justify-center rounded-(--radius-control) px-2 hover:bg-control-hover active:bg-control-pressed focus-visible:ring-2 ring-ring">
+      <Type role="body" tone="popover-foreground">Files</Type>
+    </Button>
     <Button testID="group-editor-new-terminal"
       onPress={() => { props.close(false); store.addTab(id); }}
       class="h-(--height-action) justify-center rounded-(--radius-control) px-2 hover:bg-control-hover active:bg-control-pressed focus-visible:ring-2 ring-ring">

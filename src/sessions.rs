@@ -342,12 +342,15 @@ fn aggregate(records: &BTreeMap<String, StatusRecord>) -> Option<ActivityInfo> {
 /// indeterminate reports carry no measurement, so the working indicator stands alone.
 fn measured_progress(progress: &ProgressInfo) -> Option<ProgressInfo> {
     match progress.state.as_str() {
-        "set" | "pause" | "error" => progress.percent.filter(|percent| *percent <= 100).map(
-            |percent| ProgressInfo {
-                state: progress.state.clone(),
-                percent: Some(percent),
-            },
-        ),
+        "set" | "pause" | "error" => {
+            progress
+                .percent
+                .filter(|percent| *percent <= 100)
+                .map(|percent| ProgressInfo {
+                    state: progress.state.clone(),
+                    percent: Some(percent),
+                })
+        }
         _ => None,
     }
 }

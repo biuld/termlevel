@@ -2,6 +2,7 @@
 
 mod clipboard;
 mod dialog_keys;
+mod files;
 mod git;
 mod git_discovery;
 mod git_ops;
@@ -23,6 +24,7 @@ fn native(registry: &mut Registry) {
         .assets(assets!())
         .module::<runtime::Runtime>()
         .module::<notifications::Notifications>()
+        .module::<files::Files>()
         .module::<git::Git>()
         .module::<git::requests::GitQueries>()
         .module::<git_discovery::GitDiscovery>()
