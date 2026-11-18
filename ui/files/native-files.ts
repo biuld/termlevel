@@ -7,6 +7,7 @@ export const nativeFileTransport: FilesTransport = {
     read: (root, path) => Files.read(root, path),
     save: (root, path, text, modifiedMs, bytes) => Files.save(root, path, text, modifiedMs, bytes),
     absolute: (root, path) => Files.absolute(root, path),
+    previewUrl: (root, path) => Files.previewUrl(root, path),
     terminalDirectory: (root, path) => Files.terminalDirectory(root, path),
     reveal: (root, path) => Files.reveal(root, path),
     openWithDefaultApp: (root, path) => Files.openWithDefaultApp(root, path),

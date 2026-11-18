@@ -280,3 +280,17 @@ fn terminal_directory_of_a_file_is_its_parent() {
     let cwd = terminal_directory(dir.path(), "src/main.rs").unwrap();
     assert!(cwd.ends_with("/src"));
 }
+
+#[test]
+fn preview_resolves_regular_files_and_rejects_escaping_links() {
+    let root = TempDir::new();
+    let outside = TempDir::new();
+    fs::write(root.0.join("safe image.png"), b"image").unwrap();
+    fs::write(outside.0.join("outside.png"), b"image").unwrap();
+    symlink(outside.0.join("outside.png"), root.0.join("escape.png")).unwrap();
+    let file = super::content::regular_file(root.path(), "safe image.png").unwrap();
+    let url = url::Url::from_file_path(file).unwrap();
+    assert!(url.as_str().ends_with("safe%20image.png"));
+    assert!(super::content::regular_file(root.path(), "escape.png").is_err());
+    assert!(super::content::regular_file(root.path(), "../outside.png").is_err());
+}

@@ -11,6 +11,7 @@ import { watchGitHunks } from "./git-hunks";
 import { emptyGitOverlay, gitScope, startGitStatus, statusColor, type GitOverlay } from "./git-status";
 import { buildFileTree, isMarker, rememberExpanded, rowTitle } from "./tree";
 import type { DirectoryListing, FileEntry, FilesTransport, FileText } from "./types";
+import { FilePreview, previewKind } from "./FilePreview";
 import { startDirectoryWatch } from "./watch";
 
 type Leave =
@@ -46,6 +47,8 @@ export function FilesPanel(props: {
   const modifiedMs = signal(0);
   const savedBytes = signal(0);
   const fileNote = signal("");
+  const previewUrl = signal("");
+  const previewMode = signal(false);
   const readOnly = signal(true);
   const loadingFile = signal(false);
   const saving = signal(false);
@@ -149,6 +152,10 @@ export function FilesPanel(props: {
     const key = path ? `${root}\0${path}` : "";
     if (!path || !entry || (entry.kind !== "file" && entry.kind !== "symlink")) {
       openedKey = "";
+      fileToken++;
+      loadingFile.set(false);
+      previewUrl.set("");
+      previewMode.set(false);
       text.set("");
       saved.set("");
       fileNote.set(path && gitMarks().files.get(path)?.deleted ? "This file was deleted." : path && entry ? "Open a file to edit it." : "");
@@ -160,7 +167,20 @@ export function FilesPanel(props: {
     const tokenId = ++fileToken;
     loadingFile.set(true);
     fileNote.set("");
+    previewUrl.set("");
+    previewMode.set(false);
+    const kind = previewKind(path);
     try {
+      if ((kind === "image" || kind === "video" || kind === "audio") && props.transport.previewUrl) {
+        const url = await props.transport.previewUrl(root, path);
+        const svg = kind === "image" && path.toLowerCase().endsWith(".svg")
+          ? await props.transport.read(root, path) : null;
+        if (!alive || tokenId !== fileToken) return;
+        if (svg) { applyFile(svg); fileNote.set(""); }
+        else { text.set(""); saved.set(""); readOnly.set(true); }
+        previewUrl.set(url); previewMode.set(true);
+        return;
+      }
       const file = await props.transport.read(root, path);
       if (!alive || tokenId !== fileToken) return;
       applyFile(file);
@@ -370,14 +390,17 @@ export function FilesPanel(props: {
         </ResizablePanel>
         <ResizablePanel minSize={320}>
           <View class="h-full min-h-0 flex-col">
-            <View class="h-(--height-status) shrink-0 flex-row items-center gap-2 border-b border-border px-3">
+            <View class="h-(--height-toolbar) shrink-0 flex-row items-center gap-2 border-b border-border px-3">
               <Type role="body" family="mono" class="min-w-0 flex-1" lines={1}>{props.selected ?? "No file selected"}</Type>
               <If when={!!selectedGit()}>
                 <Text testID="files-git-status" style={{ fontFamily: monoFont(), fontSize: token("text-caption"), color: statusColor(selectedGit()!.status) }}>{selectedGit()!.status}</Text>
                 <Type role="caption" tone="muted-foreground">{gitScope(selectedGit()!)}</Type>
               </If>
-              <If when={!!props.selected && !readOnly()}>
-                <IconButton icon="check" label={dirty() ? "Save file" : "File saved"} testID="files-save" onPress={() => { void save(); }} />
+              <If when={!!props.selected && !readOnly() && (["markdown", "html"].includes(previewKind(props.selected ?? "")) || (props.selected ?? "").toLowerCase().endsWith(".svg"))}>
+                <Action testID="files-preview-toggle" onPress={() => previewMode.update(value => !value)}>{previewMode() ? "Edit" : "Preview"}</Action>
+              </If>
+              <If when={!!props.selected && !readOnly() && dirty()}>
+                <IconButton icon="save" label="Save file" testID="files-save" disabled={saving()} onPress={() => { void save(); }} />
               </If>
             </View>
             <If when={loadingFile()}>
@@ -386,9 +409,14 @@ export function FilesPanel(props: {
             <If when={!loadingFile() && !!fileNote()}>
               <View class="flex-1 items-center justify-center gap-2 px-6">
                 <Type role="body" tone="muted-foreground" class="text-center">{fileNote()}</Type>
+                <If when={!!props.selected}><Action testID="files-open-with" onPress={() => { const path = props.selected; if (path) void run("Could not open file", () => props.transport.openWithDefaultApp(props.root, path)); }}>Open with default app</Action></If>
               </View>
             </If>
-            <If when={!loadingFile() && !fileNote() && !!props.selected && !readOnly()}>
+            <If when={!loadingFile() && !fileNote() && !!props.selected && previewMode()}>
+              <FilePreview kind={previewKind(props.selected ?? "")} url={(props.selected ?? "").toLowerCase().endsWith(".svg") && !readOnly() ? `data:image/svg+xml,${encodeURIComponent(text())}` : previewUrl()} text={text()}
+                openWith={() => { const path = props.selected; if (path) void run("Could not open file", () => props.transport.openWithDefaultApp(props.root, path)); }} />
+            </If>
+            <If when={!loadingFile() && !fileNote() && !!props.selected && !readOnly() && !previewMode()}>
               <Editor testID="files-editor" class="min-h-0 flex-1" value={text()} language={props.selected}
                 readOnly={false} autoFocus={false} fontFamily={monoFont()} fontSize={token("text-body")}
                 lineHeight={token("leading-body") + 4} decorations={lineMarks()} gutterDecorationsWidth={4}

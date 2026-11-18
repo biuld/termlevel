@@ -89,7 +89,7 @@ pub(crate) fn save_file(
     read_file(root, relative)
 }
 
-fn regular_file(root: &str, relative: &str) -> Result<std::path::PathBuf, String> {
+pub(crate) fn regular_file(root: &str, relative: &str) -> Result<std::path::PathBuf, String> {
     let located = path::locate(root, relative)?;
     let meta = std::fs::symlink_metadata(&located.path)
         .map_err(|_| "The file is unavailable.".to_owned())?;

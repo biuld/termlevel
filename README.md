@@ -59,7 +59,7 @@ Every session is a real PTY. Rust owns the process and the terminal state, using
 ### Browse and edit files
 
 - A per-group **Files** view with a lazily loaded directory tree rooted at the group directory.
-- Open and edit UTF-8 text files up to 512 KiB with syntax highlighting, explicit save, and an unsaved-changes prompt before leaving.
+- Open and edit UTF-8 text files up to 512 KiB with syntax highlighting, explicit save, and an unsaved-changes prompt before leaving. Preview Markdown, HTML, images, audio and video, or open other files in the default application.
 - Git status letters on file rows and relative-to-HEAD change markers in the editor gutter.
 - Reveal in Finder, open with the default app, copy path, open a terminal at a location, and move to Trash after confirmation.
 - Non-recursive directory watching on macOS for expanded folders, with manual refresh as a fallback.

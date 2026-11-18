@@ -8,6 +8,8 @@ import { createWorkspace } from "../../../ui/workspace/state";
 const text = new Map<string, string>([
   ["readme.md", "hello"],
   ["notes.txt", "notes"],
+  ["page.html", "<h1>Page title</h1>"],
+  ["drawing.svg", "<svg></svg>"],
 ]);
 
 function fileText(path: string, value: string): FileText {
@@ -23,9 +25,18 @@ mount(() => {
       ? { entries: [
         { name: "notes.txt", kind: "file", hidden: false },
         { name: "readme.md", kind: "file", hidden: false },
+        { name: "photo.png", kind: "file", hidden: false },
+        { name: "page.html", kind: "file", hidden: false },
+        { name: "drawing.svg", kind: "file", hidden: false },
+        { name: "movie.mp4", kind: "file", hidden: false },
+        { name: "song.mp3", kind: "file", hidden: false },
+        { name: "report.pdf", kind: "file", hidden: false },
       ], truncated: false }
       : { entries: [], truncated: false },
-    read: async (_root, path) => fileText(path, text.get(path) ?? ""),
+    read: async (_root, path) => path.endsWith(".pdf")
+      ? { ...fileText(path, ""), binary: true }
+      : fileText(path, text.get(path) ?? ""),
+    previewUrl: async (_root, path) => `file:///proj/${path}`,
     save: async (_root, path, value) => {
       text.set(path, value);
       calls.update((all) => [...all, `save:${path}:${value}`]);

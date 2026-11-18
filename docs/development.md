@@ -12,7 +12,7 @@ Ownership is defined at the directory level. The code tree is the authoritative 
 | `ui/app/` | Startup restore, window, menus, shortcuts, dialogs and application wiring. |
 | `ui/workspace/` | Workspace state, snapshot and persistence, sidebar, groups, tiling and native window UI. |
 | `ui/git/` | Repository selection, Changes, History, branch and worktree views, and commit lanes. |
-| `ui/files/` | Group file tree, text editing, Git status overlays and directory-watch subscriptions. |
+| `ui/files/` | Group file tree, file previews and text editing, Git status overlays and directory-watch subscriptions. |
 | `ui/settings/` | Settings UI. |
 | `ui/notifications/` | Notification-history subscription, panel and rows. |
 | `ui/terminal/` | Native terminal display and find bar. |

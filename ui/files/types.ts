@@ -32,6 +32,7 @@ export interface FilesTransport {
   read: (root: string, path: string) => Promise<FileText>;
   save: (root: string, path: string, text: string, modifiedMs: number, bytes: number) => Promise<FileText>;
   absolute: (root: string, path: string) => Promise<string>;
+  previewUrl?: (root: string, path: string) => Promise<string>;
   terminalDirectory: (root: string, path: string) => Promise<string>;
   reveal: (root: string, path: string) => Promise<void>;
   openWithDefaultApp: (root: string, path: string) => Promise<void>;

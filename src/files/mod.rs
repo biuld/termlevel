@@ -139,6 +139,17 @@ impl Files {
         off_thread(move || path::display_path(&root, &path)).await
     }
 
+    /// File URL for a regular file resolved within the group directory.
+    pub async fn preview_url(root: String, path: String) -> Result<String, String> {
+        off_thread(move || {
+            let file = content::regular_file(&root, &path)?;
+            url::Url::from_file_path(file)
+                .map(|url| url.to_string())
+                .map_err(|_| "The file path cannot be opened.".to_owned())
+        })
+        .await
+    }
+
     /// Directory a new terminal uses for this entry.
     pub async fn terminal_directory(root: String, path: String) -> Result<String, String> {
         off_thread(move || path::terminal_directory(&root, &path)).await

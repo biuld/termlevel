@@ -4,9 +4,9 @@ The Files view browses the current group directory and edits its text files. It 
 
 ## Purpose and non-goals
 
-Files is rooted at the group's `cwd`. It lists one directory level at a time, opens UTF-8 text files up to 512 KiB, saves them explicitly, and shows the same Git status letters as Changes. It also exposes a small set of system file actions.
+Files is rooted at the group's `cwd`. It lists one directory level at a time, opens UTF-8 text files up to 512 KiB, saves them explicitly, previews selected media and documents, and shows the same Git status letters as Changes. It also exposes a small set of system file actions.
 
-It does not provide rename, create, multi-select, drag-to-terminal, recursive tree search, a language server, remote or SSH filesystems, Quick Look, media preview or permanent deletion. It does not follow the terminal's live working directory to change the root, and it does not watch directories recursively. PDF, video, archives, images and other binary files are reported as non-text rather than previewed. Directory watching is implemented only on macOS; other platforms keep manual refresh.
+It does not provide rename, create, multi-select, drag-to-terminal, recursive tree search, a language server, remote or SSH filesystems, Quick Look or permanent deletion. It does not follow the terminal's live working directory to change the root, and it does not watch directories recursively. PDF, Office documents, archives and other unsupported files offer an action to open them in the default application. Directory watching is implemented only on macOS; other platforms keep manual refresh.
 
 ## Placement
 
@@ -30,6 +30,7 @@ TSX FilesPanel
 
   expand / refresh ── list one level
   read / save ─────── Rust Files ── bounded UTF-8 text, whole-file write
+  previewUrl ──────── Rust Files ── validated in-root regular-file URL
 
   expanded folders ── watchOpen / watchSet ── notify kqueue, non-recursive
   coalesced events ── watchPoll ── list the changed level again
@@ -40,7 +41,7 @@ TSX FilesPanel
       ── workspace addTab → Sessions.open
 ```
 
-Enumeration and file access stay in Rust. TSX stores only the listed levels, the expanded set, the selected path and the current buffer. Files tasks do not enter the terminal frame scheduler. They use a separate admission limit of two concurrent tasks; Git's four read slots are unaffected.
+Rust owns directory enumeration and validates file paths. NSH image and media views read validated local URLs. TSX stores only the listed levels, the expanded set, the selected path and the current text buffer. Files tasks do not enter the terminal frame scheduler. They use a separate admission limit of two concurrent tasks; Git's four read slots are unaffected.
 
 Preview mode has no native Files transport. `TilingCanvas` shows "Files are unavailable in preview.", and no disk or Git access occurs.
 
@@ -80,6 +81,12 @@ Listing a symlink resolves its target. If the target leaves the root, that level
 
 `terminal_directory` returns the entry's own directory, the parent for a file, the link path for an in-root directory symlink, and otherwise the parent clamped to the root. A root of `~` or `~/...` expands to the home directory before canonicalization.
 
+## File previews
+
+Files selects preview behavior from the file extension. Images use NSH Image, including SVG. Video and audio use the native NSH Video player with system playback controls and start paused. The operating system determines which codecs it can decode. A failed media load offers the default-application action. Media URLs are produced by `Files.previewUrl`, which checks the root, resolves symlinks, and requires a regular file before constructing an encoded local URL.
+
+Markdown and HTML open in the editor and offer a Preview / Edit toggle. NSH TextView renders the current in-memory text, including unsaved edits. HTML is rendered as supported document markup without a browser. SVG opens as an image and also offers source editing when it satisfies the text-read constraints. Unrecognized types use the text reader first; binary, oversized and invalid UTF-8 files offer the default-application action. PDF and Office formats currently use that fallback.
+
 ## Tree model
 
 The root path appears in the toolbar and is not a Tree row. Top-level rows are the root's direct children. Every ID is a root-relative path joined with `/`; the root's own ID is the empty string and appears only in state.
@@ -100,9 +107,9 @@ The expanded set is capped at 64 paths (`MAX_EXPANDED`). `rememberExpanded` keep
 
 `Files.read` accepts only a regular file. The limit is 512 KiB (`MAX_BYTES`). A file whose metadata length exceeds the limit returns `truncated: true` with empty text and the file's byte length. Otherwise Rust reads at most 512 KiB + 1 byte. A NUL in that buffer marks the file binary; a longer buffer marks it truncated. Valid UTF-8 is returned directly. Invalid sequences are decoded with replacement characters and `lossy: true`.
 
-`FileText` carries `text`, `binary`, `truncated`, `lossy`, `bytes` and `modifiedMs`. The panel edits only when the file is text within the limit. Binary, oversized and lossy files are read-only and show a centered explanation: "This file is binary. Open it with the default app.", "This file is larger than 512 KiB." or "This file is not valid UTF-8."
+`FileText` carries `text`, `binary`, `truncated`, `lossy`, `bytes` and `modifiedMs`. The panel edits only when the file is text within the limit. Binary, oversized and lossy files outside the media preview types show an explanation and an action to open the default application: "This file is binary. Open it with the default app.", "This file is larger than 512 KiB." or "This file is not valid UTF-8."
 
-The panel keeps one buffer per group. `text() !== saved()` is the dirty state. When the buffer is dirty, selecting another file, hiding or closing Files, or quitting prompts to keep editing, discard or save. Deleting the group shows its own destructive confirmation and warns that unsaved edits will be discarded. Save is offered for an editable selection and writes only when the buffer is dirty.
+The panel keeps one buffer per group. `text() !== saved()` is the dirty state. When the buffer is dirty, selecting another file, hiding or closing Files, or quitting prompts to keep editing, discard or save. Deleting the group shows its own destructive confirmation and warns that unsaved edits will be discarded. The toolbar shows Save only while an editable buffer is dirty and disables it while saving.
 
 `Files.save` re-checks the path and the regular-file constraint. It rejects the save when the file's modification time in milliseconds or its length differs from the values returned when the file was opened: "The file changed on disk. Reload it before saving." It also refuses files over 512 KiB. The write is a whole-file `std::fs::write` of the UTF-8 buffer, followed by a fresh read that becomes the new saved state. There is no temporary-file rename.
 
@@ -164,7 +171,7 @@ The parser does not compare saved paths with the group's new root. A retained ex
 
 ## Security and privacy
 
-All filesystem access goes through the `src/files/` APIs with a root and a relative path. TSX cannot request an arbitrary absolute path, and Rust rebuilds and checks the path before every operation. Root confinement uses canonical paths and component-boundary checks. Symlinks cannot lead listing, reading, saving or watching outside the root.
+File selection and URL resolution go through the `src/files/` APIs with a root and a relative path. Rust rebuilds and checks the path before issuing a media URL or performing a file operation. Root confinement uses canonical paths and component-boundary checks. Symlinks cannot lead listing, reading, saving or watching outside the root.
 
 The workspace snapshot stores only view state, never file content. Unsaved text stays in group memory. Saving writes only the selected path after the root and modification checks. Move to Trash requires confirmation and acts on one path; there is no directory clearing or permanent deletion. File names and contents are not sent to the terminal or to notifications. Action failures write a short message to the in-app notification history, not file content. Preview mode never reads the disk or Git.
 
