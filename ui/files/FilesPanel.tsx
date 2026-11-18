@@ -9,7 +9,7 @@ import { Type } from "../shared/type";
 import type { GitTransport } from "../git/git-types";
 import { watchGitHunks } from "./git-hunks";
 import { emptyGitOverlay, gitScope, startGitStatus, statusColor, type GitOverlay } from "./git-status";
-import { buildFileTree, isMarker, rememberExpanded } from "./tree";
+import { buildFileTree, isMarker, rememberExpanded, rowTitle } from "./tree";
 import type { DirectoryListing, FileEntry, FilesTransport, FileText } from "./types";
 import { startDirectoryWatch } from "./watch";
 
@@ -312,9 +312,10 @@ export function FilesPanel(props: {
   const renderItem = (entry: TreeEntry) => {
     const item = tree().entries.get(entry.id);
     const marker = isMarker(entry.id);
+    const slug = entry.id.replace(/[^a-zA-Z0-9]+/g, "-");
     const mark = marker ? undefined : gitMarks().files.get(entry.id);
     const folderDirty = !marker && !mark && !!entry.folder && gitMarks().folders.has(entry.id);
-    return <View testID={marker ? undefined : `file-${entry.id.replace(/[^a-zA-Z0-9]+/g, "-")}`}
+    return <View testID={marker ? undefined : `file-${slug}`}
       class="h-(--height-tab) w-full flex-row items-center gap-1.5"
       style={{ paddingLeft: 6 + entry.depth * 14, paddingRight: 8 }}
       onContextMenu={(event) => { if (!marker) menu(entry.id, event.pagePosition); }}>
@@ -326,13 +327,13 @@ export function FilesPanel(props: {
         <View style={{ width: 10 }} />
         <If when={!marker}><Icon name="file" size={13} color={token("icon")} /></If>
       </If>
-      <Type role="body" class="min-w-0 flex-1" lines={1} tone={marker ? "muted-foreground" : "foreground"}>{entry.label}</Type>
+      <Type role="body" class="min-w-0 flex-1" lines={1} tone={marker ? "muted-foreground" : "foreground"}>{item?.name ?? rowTitle(entry.label)}</Type>
       <If when={!!mark}>
-        <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: mark!.staged ? token("primary") : "transparent" }} />
+        <View testID={`file-status-${slug}`} style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: mark!.staged ? token("primary") : "transparent" }} />
         <Text style={{ width: 12, textAlign: "center", fontFamily: monoFont(), fontSize: token("text-caption"), color: statusColor(mark!.status) }}>{mark!.status}</Text>
       </If>
       <If when={folderDirty}>
-        <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: token("notification-warning") }} />
+        <View testID={`file-folder-${slug}`} style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: token("notification-warning") }} />
       </If>
     </View>;
   };

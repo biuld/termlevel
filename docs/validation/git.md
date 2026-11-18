@@ -14,6 +14,7 @@
 | 2026-11-16 | History Push |
 | 2026-11-17 | Multi-repository directories, selection and runtime cache |
 | 2026-11-17 | Git large-repository isolation, commit lanes and long names |
+| 2026-11-18 | Open a changed file in Files |
 
 ## 2026-11-16 · Branch marker update for same-SHA commits after push
 
@@ -167,3 +168,11 @@ The newly added large-list fixture once showed no filter update on the headless 
 Manual acceptance boundaries: screenshot inspection is complete; long-term scrolling in a real daily-use repository, continuous fetch, manual typing feel, a million commits / more refs, and a strict 16 ms frame budget still need separate measurement.
 
 Entries were translated from the consolidated validation log; failures above remain part of the record and must not be erased.
+
+## 2026-11-18 · Open a changed file in Files
+
+Uncommitted work based on `235de52`. Return, a double press, or Open in Files on a Changes file selects that path in the group Files view, expands its parents, and leaves Changes. A path outside the group directory does not switch views. Selecting a row still shows the patch.
+
+- `./scripts/nsh test tests/files/GitStatus.test.tsx`: **5/5**. Covers mapping a repository path onto the group directory, a `~` group path, a nested repository, and `/tmp` versus `/private/tmp`.
+- `./scripts/nsh test tests/workspace/Git.test.tsx`: **3/3**. The new case opens `src/app.rs` and records the Files selection `src/app.rs` with `src` expanded. The harness keeps the Changes panel mounted, so this does not show the canvas swap itself.
+- `./scripts/nsh check`, native AppKit, and a manual open from Changes were not run.

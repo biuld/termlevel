@@ -147,6 +147,50 @@ function groupPathOf(prefix: string, gitPath: string): string | null {
   return null;
 }
 
+/** Group-relative path of a repository change. Null when it is outside the group directory. */
+export function groupFilePath(repoRoot: string, groupPath: string, gitPath: string, home = ""): string | null {
+  const relative = cleanRelative(gitPath);
+  if (!relative) return null;
+  const group = expandHome(groupPath, home);
+  const repo = repoRoot.replace(/\/+$/, "");
+  if (!group || !repo) return null;
+  for (const repoPath of pathVariants(repo)) {
+    for (const groupAbs of pathVariants(group)) {
+      if (groupAbs === repoPath) return relative;
+      if (groupAbs.startsWith(`${repoPath}/`)) {
+        const prefix = groupAbs.slice(repoPath.length + 1);
+        if (relative === prefix) return null;
+        if (relative.startsWith(`${prefix}/`)) return cleanRelative(relative.slice(prefix.length + 1));
+      } else if (repoPath.startsWith(`${groupAbs}/`)) {
+        return cleanRelative(`${repoPath.slice(groupAbs.length + 1)}/${relative}`);
+      }
+    }
+  }
+  return null;
+}
+
+/** Parent directories of a group-relative file, nearest last. */
+export function parentDirectories(relative: string): string[] {
+  const parts = relative.split("/");
+  const dirs: string[] = [];
+  for (let index = 0; index < parts.length - 1; index++) dirs.push(parts.slice(0, index + 1).join("/"));
+  return dirs;
+}
+
+function expandHome(path: string, home: string): string {
+  const trimmed = path.replace(/\/+$/, "");
+  if (trimmed === "~") return home.replace(/\/+$/, "");
+  if (trimmed.startsWith("~/")) return `${home.replace(/\/+$/, "")}${trimmed.slice(1)}`;
+  return trimmed;
+}
+
+function cleanRelative(path: string): string | null {
+  if (!path || path.startsWith("/") || path.includes("\\") || path.includes("\0")) return null;
+  const parts = path.split("/");
+  if (parts.some((part) => !part || part === "." || part === "..")) return null;
+  return path;
+}
+
 function directoryPrefix(repoRoot: string, groupPath: string): string | null {
   for (const repo of pathVariants(repoRoot)) {
     for (const group of pathVariants(groupPath)) {

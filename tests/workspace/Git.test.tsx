@@ -56,3 +56,13 @@ test("Changes switches between unified and side-by-side patches without losing f
   expect(app.texts().some(text => text.includes("unstaged-diff"))).toBe(true);
   app.dispose();
 });
+
+test("opening a changed file leaves Changes for Files", async () => {
+  const app = await open("./fixtures/GitStatesFixture.tsx", options);
+  await app.waitFor("id:change-file-src-app-rs");
+  await app.press("id:change-file-src-app-rs");
+  await app.waitFor("id:changes-open-file");
+  await app.press("id:changes-open-file");
+  await app.waitUntil(() => app.texts().includes("files:src/app.rs|src"));
+  app.dispose();
+});

@@ -14,6 +14,9 @@ export function GitPanelHarness(props: { workspace: Workspace; git: GitTransport
     <View class="h-10 shrink-0 flex-row">
       <Button class="h-10 px-3" testID="dashboard-view-changes" onPress={() => view.set("changes")}>Changes</Button>
       <Button class="h-10 px-3" testID="dashboard-view-history" onPress={() => view.set("history")}>History</Button>
+      <If when={props.workspace.filesShowing()}>
+        <Type testID="changes-files-target" role="caption">{`files:${props.workspace.files()[props.workspace.workspaceKey()]?.selected ?? ""}|${(props.workspace.files()[props.workspace.workspaceKey()]?.expanded ?? []).join(",")}`}</Type>
+      </If>
     </View>
     <If when={view() === "changes"}><GitPanel workspace={props.workspace} git={props.git} preview={false} /></If>
     <If when={!!notice()}><Type testID="fixture-notice" role="caption">{notice()}</Type></If>

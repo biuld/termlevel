@@ -21,6 +21,8 @@ TSX HistoryPanel  ── fetch / pull / push / checkout / createBranch / worktre
                                     git checkout / branch / worktree ...
 ```
 
+Opening a changed file in the group's Files view is described in [Files](files.md). Selecting a row in Changes still shows its patch here.
+
 ## Read commands and limits
 
 - Status uses `git status --porcelain=v2 --branch -z --untracked-files=all` and parses only the documented machine format; a rename uses the two NUL-separated paths in the `2` record, conflicts use `u`, and untracked files use `?`.

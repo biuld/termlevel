@@ -29,6 +29,7 @@ Historical handoff snapshots and completed plans are not kept in the tree. Use g
 | [roadmap.md](roadmap.md) | Roadmap | Outstanding platform, compatibility, packaging and acceptance work |
 | [screenshots.md](screenshots.md) | Gallery | Captured workspace, Git, Files, settings and terminal views |
 | [validation/README.md](validation/README.md) | Evidence | Validation policy, environment baseline and topic index |
+| [validation/files.md](validation/files.md) | Evidence | Dated Files evidence: tree, editing and Git status marks |
 
 ## Adding or changing a document
 

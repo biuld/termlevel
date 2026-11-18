@@ -1,6 +1,6 @@
 # Files
 
-The Files view browses the current group directory and edits its text files. It is a group tool view like Changes and History: it covers the split canvas while open, but terminals keep running underneath and no session is created or closed. This document describes the implemented behavior. Related ownership is in [terminal](terminal.md) and [Git](git.md); visual rules are in [UI design](../design/ui.md). The evidence policy is in [validation](../validation/README.md); the Files view has no dedicated dated validation entry yet.
+The Files view browses the current group directory and edits its text files. It is a group tool view like Changes and History: it covers the split canvas while open, but terminals keep running underneath and no session is created or closed. This document describes the implemented behavior. Related ownership is in [terminal](terminal.md) and [Git](git.md); visual rules are in [UI design](../design/ui.md). The evidence policy is in [validation](../validation/README.md); dated Files evidence is in [files](../validation/files.md).
 
 ## Purpose and non-goals
 
@@ -11,6 +11,8 @@ It does not provide rename, create, multi-select, drag-to-terminal, recursive tr
 ## Placement
 
 Files is opened from the title-bar Files button, the File menu, or a group's options. It requires a selected group. When the workspace has no group, the menu reports that a group must be selected. Once opened, a Files tab appears in the sidebar next to Changes and History.
+
+Opening a changed file from Changes also opens Files. Return or a double press on a file in the Changes tree, and the Open in Files control beside its patch, select that file, expand its parent directories, and replace Changes on the canvas. A hidden path turns on showing hidden files. The repository path is mapped onto the group directory, including a `~` group path and the `/tmp` / `/private/tmp` aliases. A change outside the group directory stays in Changes.
 
 `openFiles` selects the group, clears that group's selected Git view, and sets the group's Files state to open and showing. `openGitView` hides Files before selecting Changes or History. Open Git tabs remain available; the two tool views are mutually exclusive only as the canvas-covering view.
 
@@ -112,7 +114,7 @@ Files uses the same system `git status` data as Changes. When a Git transport is
 
 `gitOverlay` converts repository-relative changes to group-relative paths and drops changes outside the group directory. It handles canonical `/tmp` and `/private/tmp`, and `/var` and `/private/var`, variants. Each `PathGit` mark records `status`, `staged`, `unstaged`, `untracked`, `conflicted` and `deleted`.
 
-File rows show the Changes status letter (A, M, D, R, C, T, U or ?) with the same colors; a primary dot marks a staged change. A directory shows a warning dot when a descendant changed. The editor title repeats the selected file's letter and one of "Staged", "Unstaged", "Staged + Unstaged", "Untracked" or "Conflict". A deleted file that is no longer in `read_dir` gets a row under its parent so the status remains visible; selecting it reports "This file was deleted."
+File rows show the Changes status letter (A, M, D, R, C, T, U or ?) with the same colors; a primary dot marks a staged change. A directory shows a warning dot when a descendant changed. Rows already on screen, including the first level under the group root, pick up a mark when a later status arrives and drop it when the path becomes clean. The editor title repeats the selected file's letter and one of "Staged", "Unstaged", "Staged + Unstaged", "Untracked" or "Conflict". A deleted file that is no longer in `read_dir` gets a row under its parent so the status remains visible; selecting it reports "This file was deleted."
 
 Line marks appear only when the selected file has a Git mark, is editable, is not conflicted or deleted, and the buffer matches disk. `watchGitHunks` asks Git for `untracked` for an untracked file, otherwise for `head` (working tree against HEAD, including staged changes). `diffHunks` parses added-side line numbers. The gutter and overview ruler show added lines in green, modified lines in the warning color, and deletions in the destructive color, with a deletion mark above or below the affected line. Marks clear when the file changes, the buffer becomes dirty, the file is conflicted or deleted, or the diff read fails.
 
@@ -177,5 +179,5 @@ Watch degradation is a marker on the affected directory plus a working Refresh b
 - [Terminal architecture](terminal.md): session ownership, PTY lifetime and the native surface.
 - [Git architecture](git.md): status, diffs, Changes and explicit operations.
 - [UI design](../design/ui.md): typography, surfaces, colors and control behavior.
-- [Validation index](../validation/README.md): dated evidence across topics, including the note that Files has no dedicated entry yet.
+- [Validation index](../validation/README.md): dated evidence across topics. Files evidence is in [files](../validation/files.md).
 - [Product README](../../README.md): user-facing behavior and requirements.

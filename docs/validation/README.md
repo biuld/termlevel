@@ -22,11 +22,12 @@ Each entry uses `## <date> · <title>`, with `###` subsections for commands, nat
 | [terminal.md](terminal.md) | Terminal core, PTY, Ghostty wrapper, fixed-cell renderer, input/IME, search, scrollback, selection, fonts and glyphs, images, clipboard |
 | [workspace.md](workspace.md) | Sidebar, tabs, groups, window layout, theme surfaces, settings UI, notifications panel, tiling, first-run and persistence |
 | [git.md](git.md) | Repository discovery, Changes, History, worktrees, read isolation and explicit Git operations |
+| [files.md](files.md) | Group file tree, text editing and Git status marks |
 | [osc-status.md](osc-status.md) | OSC capability inventory, PWD/OSC 22/OSC 133, progress and program status, agent icons |
 | [packaging.md](packaging.md) | Application bundle and asset packaging |
 | [development.md](development.md) | Baseline checks, environment, directory conventions and development-host recovery |
 
-There is no dedicated `files.md` yet: the Files view has no standalone dated entry in the log. That is a documentation gap, not evidence that the view has been accepted. Record new Files evidence in a new `files.md` and add it to this table.
+Record new Files evidence in [files.md](files.md).
 
 ## Environment
 

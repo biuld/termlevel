@@ -1,7 +1,10 @@
+import { groupFilePath } from "../files/git-status";
 import { buildTree } from "./changes-tree";
+import { openChangeInFiles } from "./open-in-files";
 import type { RepositorySession } from "./repository-session";
 import { scopedGit } from "./scoped-git";
 import { batch, cleanup, computed, effect, lifecycle, signal, Text, token, untracked, View } from "nsh";
+import { Runtime } from "termlevel/native";
 import { Button, DiffView, ResizablePanel, ResizablePanelGroup, Tree, type DiffLayout, type TreeEntry } from "nsh/base";
 import { Hint, IconButton } from "../shared/controls";
 import { interfaceFont, monoFont } from "../shared/fonts";
@@ -66,6 +69,17 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; sessi
 
   const tree = computed(() => buildTree(status()?.changes ?? []));
   const change = () => tree().changes.get(selected() ?? "");
+  const openablePath = () => {
+    const item = change();
+    const cwd = store.group(groupId())?.cwd;
+    const root = status()?.root;
+    if (!item || !cwd || !root) return null;
+    return groupFilePath(root, cwd, item.path, Runtime.home());
+  };
+  function openSelected(id = selected()) {
+    const item = id ? tree().changes.get(id) : undefined;
+    if (item) openChangeInFiles(store, item.path, status()?.root);
+  }
   const selectedKey = computed(() => {
     const item = tree().changes.get(selected() ?? "");
     return item ? `${item.path}:${item.status}:${item.staged}:${item.unstaged}:${item.untracked}` : "";
@@ -356,7 +370,8 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; sessi
                 itemClass="mx-1 rounded-(--radius-tab) hover:bg-tab-hover selected:bg-tab-selected"
                 renderItem={renderItem}
                 onExpandedChange={({ expanded: next }) => expanded.set(next)}
-                onSelectedChange={({ selected: id }) => select(id)} />
+                onSelectedChange={({ selected: id }) => select(id)}
+                onAction={({ id }) => openSelected(id)} />
             </View>
           </ResizablePanel>
           <ResizablePanel minSize={360}>
@@ -365,6 +380,9 @@ export function GitPanel(props: { workspace: Workspace; git: GitTransport; sessi
                 <View class="h-(--height-status) shrink-0 flex-row items-center gap-2 border-b border-border px-3">
                   <Icon name="file" size={12} color={token("icon")} />
                   <Type role="body" family="mono" tone="foreground" class="min-w-0 flex-1" lines={1}>{change()!.path}</Type>
+                  <If when={!!openablePath()}>
+                    <IconButton icon="files" label="Open in Files" testID="changes-open-file" onPress={() => openSelected()} />
+                  </If>
                   <Text style={{
                     fontFamily: monoFont(), fontSize: token("text-caption"),
                     color: statusColor(change()!.status),

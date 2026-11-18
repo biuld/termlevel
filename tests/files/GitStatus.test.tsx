@@ -1,6 +1,6 @@
 import { expect, test } from "nsh/test";
-import { gitOverlay, gitScope } from "../../ui/files/git-status";
-import { buildFileTree } from "../../ui/files/tree";
+import { gitOverlay, gitScope, groupFilePath, parentDirectories } from "../../ui/files/git-status";
+import { buildFileTree, rowTitle } from "../../ui/files/tree";
 import type { GitChange } from "../../ui/git/git-types";
 import type { DirectoryListing } from "../../ui/files/types";
 
@@ -48,6 +48,18 @@ test("the open file uses the same scope words as Changes", () => {
   expect(gitScope(overlay.files.get("d.ts")!)).toBe("Conflict");
 });
 
+test("a change path maps onto the group directory", () => {
+  expect(groupFilePath("/repo", "/repo", "src/app.rs")).toBe("src/app.rs");
+  expect(groupFilePath("/Users/test/repo", "~/repo", "src/app.rs", "/Users/test")).toBe("src/app.rs");
+  expect(groupFilePath("/repo", "/repo/app", "app/src/main.ts")).toBe("src/main.ts");
+  expect(groupFilePath("/repo/app", "/repo", "src/main.ts")).toBe("app/src/main.ts");
+  expect(groupFilePath("/private/tmp/repo", "/tmp/repo", "note.txt")).toBe("note.txt");
+  expect(groupFilePath("/repo", "/repo", "other/skip.ts")).toBe("other/skip.ts");
+  expect(groupFilePath("/repo", "/elsewhere", "src/app.rs")).toBe(null);
+  expect(groupFilePath("/repo", "/repo/app", "other/skip.ts")).toBe(null);
+  expect(parentDirectories("src/files/tree.ts")).toEqual(["src", "src/files"]);
+});
+
 test("a canonical tmp path matches the private prefix", () => {
   const overlay = gitOverlay([change("note.txt", "A")], "/private/tmp/repo", "/tmp/repo");
   expect(overlay.files.get("note.txt")?.status).toBe("A");
@@ -62,6 +74,8 @@ test("a deleted file stays visible under its folder", () => {
     {},
     overlay,
   );
-  expect(tree.items.map((item) => item.label)).toEqual(["src", "readme.md"]);
-  expect(tree.items[0].children?.map((item) => item.label)).toEqual(["gone.ts"]);
+  expect(tree.items.map((item) => rowTitle(item.label))).toEqual(["src", "readme.md"]);
+  expect(tree.items[0].label.endsWith("\u200b+")).toBe(true);
+  expect(tree.items[1].label.includes("?")).toBe(true);
+  expect(tree.items[0].children?.map((item) => rowTitle(item.label))).toEqual(["gone.ts"]);
 });

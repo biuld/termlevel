@@ -8,6 +8,14 @@ const PENDING = "\0pending";
 const EMPTY = "\0empty";
 const TRUNCATED = "\0truncated";
 const ERROR = "\0error";
+/** Splits the visible name from a Git suffix. Tree redraws a row only when its entry changes, so the suffix is what makes an already listed row pick up a later status. */
+const GIT_MARK = "\u200b";
+
+/** The name a row shows. The Git suffix is not part of it. */
+export function rowTitle(label: string): string {
+  const cut = label.indexOf(GIT_MARK);
+  return cut === -1 ? label : label.slice(0, cut);
+}
 
 export function isMarker(id: string): boolean {
   return id.includes("\0");
@@ -48,6 +56,14 @@ export function buildFileTree(
     const note = watchNotes[dir];
     return note ? [marker(dir, "watch", note), ...items] : items;
   };
+  const titled = (name: string, id: string, folder: boolean) => {
+    const file = git?.files.get(id);
+    if (file) {
+      return `${name}${GIT_MARK}${file.status}${file.staged ? "s" : ""}${file.unstaged ? "u" : ""}${file.untracked ? "?" : ""}${file.conflicted ? "c" : ""}${file.deleted ? "d" : ""}`;
+    }
+    if (folder && git?.folders.has(id)) return `${name}${GIT_MARK}+`;
+    return name;
+  };
   const children = (dir: string): TreeItem[] => {
     const listing = listings[dir];
     if (!listing) return [marker(dir, PENDING, "Loading…")];
@@ -59,17 +75,18 @@ export function buildFileTree(
       if (entry.kind === "directory" || entry.kind === "symlink") {
         return {
           id,
-          label: entry.name,
+          label: titled(entry.name, id, true),
           children: expanded.includes(id) ? children(id) : [marker(id, PENDING, "Loading…")],
         };
       }
-      return { id, label: entry.name };
+      return { id, label: titled(entry.name, id, false) };
     });
     const present = new Set(visible.map((entry) => entry.name));
     for (const name of git?.deleted.get(dir) ?? []) {
       if (present.has(name) || name.includes("/") || name.includes("\\") || !name) continue;
       if (!showHidden && name.startsWith(".")) continue;
-      items.push({ id: childId(dir, name), label: name });
+      const id = childId(dir, name);
+      items.push({ id, label: titled(name, id, false) });
     }
     if (!items.length) return annotate(dir, [marker(dir, EMPTY, "Empty folder")]);
     if (listing.truncated) items.push(marker(dir, TRUNCATED, "Showing the first 5000 entries"));

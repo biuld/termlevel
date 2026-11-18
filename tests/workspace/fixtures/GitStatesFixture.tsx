@@ -23,6 +23,7 @@ const base: GitRepoStatus = {
 mount(() => {
   const mode = signal<Mode>("changes");
   const workspace = createWorkspace();
+  workspace.patchGroup("termlevel", { cwd: "/Users/test/project" });
   const git: GitTransport = {
     status: async () => {
       switch (mode()) {
