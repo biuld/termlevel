@@ -350,7 +350,9 @@ export function WorkspaceApp(props: {
 
     <AppDialog open={closingGroup() !== null} role="alertdialog" label="Delete group"
       title={closingGroup() ? `Delete ${store.groupTitle(closingGroup())}?` : undefined}
-      description={preview ? "All terminals in this group will close. Their preview output will be discarded." : "All terminals in this group will close and their running processes will end."}
+      description={store.filesUnsaved() && store.filesShowing() && closingGroup() === store.workspaceKey()
+        ? "Unsaved edits in Files will be discarded. Terminals in this group will close and their processes will end."
+        : preview ? "All terminals in this group will close. Their preview output will be discarded." : "All terminals in this group will close and their running processes will end."}
       frame="w-[340px]" dismiss={() => closingGroup.set(null)}>
       <DialogActions>
         <Action onPress={() => closingGroup.set(null)}>Cancel</Action>

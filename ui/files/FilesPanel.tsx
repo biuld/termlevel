@@ -1,6 +1,7 @@
-import { cleanup, Clipboard, computed, effect, signal, Text, token, untracked, View } from "nsh";
+import { cleanup, Clipboard, computed, effect, signal, Text, token, untracked, View, type Signal } from "nsh";
 import { Editor, ResizablePanel, ResizablePanelGroup, Tree, type TreeEntry } from "nsh/base";
-import { Menu } from "nsh/desktop";
+import { Application, Menu } from "nsh/desktop";
+import type { FilesLeave } from "../workspace/state/files";
 import { Action, AppDialog, DialogActions, IconButton } from "../shared/controls";
 import { monoFont } from "../shared/fonts";
 import { Icon } from "../shared/icons";
@@ -10,6 +11,12 @@ import { emptyGitOverlay, gitScope, startGitStatus, statusColor, type GitOverlay
 import { buildFileTree, isMarker, rememberExpanded } from "./tree";
 import type { DirectoryListing, FileEntry, FilesTransport, FileText } from "./types";
 import { startDirectoryWatch } from "./watch";
+
+type Leave =
+  | { kind: "select"; id: string }
+  | { kind: "quit" }
+  | { kind: "hide"; id: string }
+  | { kind: "close"; id: string };
 
 export function FilesPanel(props: {
   root: string;
@@ -23,6 +30,9 @@ export function FilesPanel(props: {
   onExpanded: (paths: string[]) => void;
   onSelected: (path: string | null) => void;
   onOpenTerminal: (cwd: string) => void;
+  filesUnsaved: Signal<boolean>;
+  filesLeave: Signal<FilesLeave | null>;
+  releaseFiles: () => void;
 }) {
   const listings = signal<Record<string, DirectoryListing>>({});
   const watchNotes = signal<Record<string, string>>({});
@@ -39,7 +49,8 @@ export function FilesPanel(props: {
   const saving = signal(false);
   const confirmDiscard = signal(false);
   const confirmTrash = signal(false);
-  const pendingSelect = signal<string | null>(null);
+  const trashPath = signal<string | null>(null);
+  const pending = signal<Leave | null>(null);
   const generations = new Map<string, number>();
   let seenRoot = "";
   let openedKey = "";
@@ -50,6 +61,31 @@ export function FilesPanel(props: {
   const tree = computed(() => buildFileTree(listings(), props.expanded, props.showHidden, watchNotes(), gitMarks()));
   const selectedGit = computed(() => props.selected ? gitMarks().files.get(props.selected) : undefined);
   const dirty = computed(() => text() !== saved());
+  effect(() => { props.filesUnsaved.set(dirty()); });
+  cleanup(() => props.filesUnsaved.set(false));
+
+  effect(() => {
+    const leave = props.filesLeave();
+    if (!leave || untracked(() => pending()?.kind === "quit")) return;
+    pending.set({ kind: leave.action, id: leave.id });
+    confirmDiscard.set(true);
+  });
+
+  effect(() => {
+    Application.setQuitRequestOptions({ mainWindowClose: true });
+    const stop = Application.on("quitRequest", () => {
+      if (untracked(() => text() === saved())) {
+        Application.quit();
+        return;
+      }
+      pending.set({ kind: "quit" });
+      confirmDiscard.set(true);
+    });
+    cleanup(() => {
+      stop();
+      Application.setQuitRequestOptions({ mainWindowClose: false });
+    });
+  });
 
   async function load(directory: string) {
     const tokenId = (generations.get(directory) ?? 0) + 1;
@@ -192,11 +228,37 @@ export function FilesPanel(props: {
   function choose(id: string) {
     if (!id || isMarker(id) || id === props.selected) return;
     if (dirty()) {
-      pendingSelect.set(id);
+      pending.set({ kind: "select", id });
       confirmDiscard.set(true);
       return;
     }
     props.onSelected(id);
+  }
+
+  function keepEditing() {
+    const leaving = pending()?.kind === "quit";
+    confirmDiscard.set(false);
+    pending.set(null);
+    props.filesLeave.set(null);
+    if (leaving) Application.cancelQuitRequest();
+  }
+
+  function finishLeave() {
+    const next = pending();
+    confirmDiscard.set(false);
+    pending.set(null);
+    props.filesUnsaved.set(false);
+    if (next?.kind === "select") {
+      props.filesLeave.set(null);
+      props.onSelected(next.id);
+      return;
+    }
+    if (next?.kind === "quit") {
+      props.filesLeave.set(null);
+      Application.quit();
+      return;
+    }
+    props.releaseFiles();
   }
 
   async function save() {
@@ -223,17 +285,15 @@ export function FilesPanel(props: {
     }
   }
 
-  const pathOf = () => props.selected;
-  function menu() {
-    const path = pathOf();
-    if (!path) return;
+  function menu(path: string, at?: { x: number; y: number }) {
     void Menu.popup([
       { label: "Reveal in Finder", onSelect: () => { void run("Could not reveal file", () => props.transport.reveal(props.root, path)); } },
       { label: "Open with default app", onSelect: () => { void run("Could not open file", () => props.transport.openWithDefaultApp(props.root, path)); } },
       { label: "Open terminal here", onSelect: () => { void run("Could not open terminal", async () => props.onOpenTerminal(await props.transport.terminalDirectory(props.root, path))); } },
       { label: "Copy path", onSelect: () => { void run("Could not copy path", async () => { await Clipboard.writeText(await props.transport.absolute(props.root, path)); }); } },
-      { label: "Move to Trash", onSelect: () => confirmTrash.set(true) },
-    ]);
+      { type: "separator" },
+      { label: "Move to Trash", destructive: true, onSelect: () => { trashPath.set(path); confirmTrash.set(true); } },
+    ], at);
   }
 
   const renderItem = (entry: TreeEntry) => {
@@ -242,9 +302,9 @@ export function FilesPanel(props: {
     const mark = marker ? undefined : gitMarks().files.get(entry.id);
     const folderDirty = !marker && !mark && !!entry.folder && gitMarks().folders.has(entry.id);
     return <View testID={marker ? undefined : `file-${entry.id.replace(/[^a-zA-Z0-9]+/g, "-")}`}
-      class="h-(--height-tab) flex-row items-center gap-1.5"
+      class="h-(--height-tab) w-full flex-row items-center gap-1.5"
       style={{ paddingLeft: 6 + entry.depth * 14, paddingRight: 8 }}
-      onContextMenu={() => { if (!marker) { choose(entry.id); menu(); } }}>
+      onContextMenu={(event) => { if (!marker) menu(entry.id, event.pagePosition); }}>
       <If when={entry.folder && !marker}>
         <Icon name={props.expanded.includes(entry.id) ? "down" : "chevron"} size={10} color={token("subtle-foreground")} />
         <Icon name={item?.kind === "symlink" ? "file" : "folder"} size={13} color={token("icon")} />
@@ -305,9 +365,6 @@ export function FilesPanel(props: {
               <If when={!!props.selected && !readOnly()}>
                 <IconButton icon="check" label={dirty() ? "Save file" : "File saved"} testID="files-save" onPress={() => { void save(); }} />
               </If>
-              <If when={!!props.selected}>
-                <IconButton icon="more" label="File actions" testID="files-actions" onPress={menu} />
-              </If>
             </View>
             <If when={loadingFile()}>
               <View class="flex-1 items-center justify-center"><Type role="body" tone="muted-foreground">Loading file…</Type></View>
@@ -330,33 +387,39 @@ export function FilesPanel(props: {
         </ResizablePanel>
       </ResizablePanelGroup>
     </If>
-    <AppDialog open={confirmDiscard()} label="Discard unsaved changes" role="alertdialog" frame="w-[380px]"
-      title="Discard unsaved changes?" description="This file has edits that are not saved."
-      dismiss={() => confirmDiscard.set(false)}>
+    <AppDialog open={confirmDiscard()} label="Discard unsaved changes" role="alertdialog" frame="w-[420px]"
+      title={pending()?.kind === "quit" ? "Quit with unsaved changes?" : "Discard unsaved changes?"}
+      description={pending()?.kind === "quit"
+        ? "This file has edits that are not saved. Quitting closes the window and discards them unless you save."
+        : "This file has edits that are not saved."}
+      dismiss={keepEditing}>
       <DialogActions>
-        <Action onPress={() => confirmDiscard.set(false)}>Keep editing</Action>
-        <Action testID="files-discard" onPress={() => {
-          const next = pendingSelect();
-          confirmDiscard.set(false);
-          saved.set(text());
-          if (next) props.onSelected(next);
-        }}>Discard</Action>
+        <Action onPress={keepEditing}>Keep editing</Action>
+        <Action testID="files-discard" onPress={() => { saved.set(text()); finishLeave(); }}>Discard</Action>
+        <Action primary testID="files-save-leave" onPress={() => { void save().then(() => { if (text() === saved()) finishLeave(); }); }}>Save</Action>
       </DialogActions>
     </AppDialog>
     <AppDialog open={confirmTrash()} label="Move to Trash" role="alertdialog" frame="w-[380px]"
-      title="Move this to the Trash?" description={props.selected ?? ""}
+      title="Move this to the Trash?" description={trashPath() ?? ""}
       dismiss={() => confirmTrash.set(false)}>
       <DialogActions>
         <Action onPress={() => confirmTrash.set(false)}>Cancel</Action>
         <Action testID="files-trash" destructive onPress={() => {
-          const path = props.selected;
+          const path = trashPath();
           confirmTrash.set(false);
           if (!path) return;
           void run("Could not move to Trash", async () => {
             await props.transport.trash(props.root, path);
-            openedKey = "";
-            props.onSelected(null);
-            refresh();
+            if (props.selected === path) {
+              openedKey = "";
+              saved.set(text());
+              props.filesUnsaved.set(false);
+              props.onSelected(null);
+            }
+            const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+            generations.delete(parent);
+            void load(parent);
+            refreshGit();
           });
         }}>Move to Trash</Action>
       </DialogActions>

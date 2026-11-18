@@ -474,7 +474,8 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
   return {
     tabs, groups, activeId, activeTab, expanded, sidebarWidth, fontSize, scrollback, clipboardRead, workspaceKey, snapshot: snapshotFile,
     ...repositories, gitViews, activeGitView, files: fileViews.files, filesShowing, openFiles, closeFiles,
-    patchFiles: fileViews.patch, canvasBlocked, selectGroup, selectUngrouped, openGitView, closeGitView,
+    patchFiles: fileViews.patch, filesUnsaved: fileViews.unsaved, filesLeave: fileViews.leave, releaseFiles: fileViews.release,
+    canvasBlocked, selectGroup, selectUngrouped, openGitView, closeGitView,
     tiling, paneList, inputBlocked, cellWidth, canvasSize, setCanvasSize, paneMinimum, fullGeometry, constrained, projected,
     paneForSession, frameForSession, focusPane, canSplit, splitTerminal, hidePane, toggleZoom, focusDirection,
     layoutSessions, placeSplit, inSplit,

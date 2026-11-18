@@ -22,5 +22,8 @@ export function FilesWorkspace(props: {
     onShowHidden={(value) => store.patchFiles(groupId(), { showHidden: value })}
     onExpanded={(paths) => store.patchFiles(groupId(), { expanded: paths })}
     onSelected={(path) => store.patchFiles(groupId(), { selected: path })}
-    onOpenTerminal={(cwd) => store.addTab(groupId(), true, cwd)} />;
+    onOpenTerminal={(cwd) => store.addTab(groupId(), true, cwd)}
+    filesUnsaved={store.filesUnsaved}
+    filesLeave={store.filesLeave}
+    releaseFiles={store.releaseFiles} />;
 }
