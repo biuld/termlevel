@@ -1037,3 +1037,13 @@ Ungrouped 工作区入口（基于 `7dd7c8c` 的未提交改动）：`./scripts/
 - `./scripts/nsh check`、`./scripts/nsh build`：通过；构建仍有既有 Grok SVG 的 `foreignObject` 提示。
 - `./scripts/test-native glyphs --filter 'native Unicode table'`：1/1；已查看 `artifacts/native-table-border.png`，同一行的抽样直线和接点均为 2 个实色设备像素加淡色边缘。原生截图对照还保留在 `artifacts/native-table-border-before.png` 和 `artifacts/native-table-border-aa.png`。
 - `./scripts/test-native protocols --filter 'native block glyphs'`：1/1。使用已校验的 `GHOSTTY_VT_ARCHIVE` 离线库；未运行完整回归，未做不同缩放、字号和主题的人工验收，也未重新运行真实 Claude Code。
+
+## 2026-11-18：内置终端图形字形
+
+基于 `af33ec5` 的未提交改动：框线、块字符和支持的其他终端图形字符使用 Alacritty 的像素字形算法，普通文本走 CoreText；来源和移植范围见内置字形模块的 NOTICE。
+
+- `cargo test -p termlevel-native session_view::platform::macos::renderer`：16/16，覆盖字符范围与多组格子尺寸、遮罩方向、半块、线条连接、渐变块、小数格宽线重和既有 renderer 行为。
+- `./scripts/nsh check`、`./scripts/nsh build`、`cargo clippy -p termlevel-native --lib -- -D warnings` 通过；`./scripts/nsh test tests/terminal/Engine.test.tsx` 2/2。使用 `GHOSTTY_VT_ARCHIVE=/tmp/termlevel-ghostty-vt-1.0.1.xcframework.zip CARGO_NET_OFFLINE=true`。构建有既有 Grok SVG `foreignObject` 提示。
+- 已确认构建输出 `.nsh/out/assets/@termlevel-native/licenses/alacritty/` 包含上游 Apache-2.0 许可证与来源说明。
+- Termlevel 应用声明 Apache-2.0 后，许可证正文统一由仓库根目录 `LICENSE` 提供；构建输出中的许可证与根文件逐字节一致，并保留 Alacritty 的来源和版权说明。两个独立 Ghostty 封装继续声明 MIT。
+- `./scripts/test-native glyphs`：3/3；`./scripts/test-native protocols --filter 'native block glyphs'`：1/1。已查看 `artifacts/native-table-border.png` 与 `artifacts/native-builtin-glyphs.png`，包括粗线、双线、圆角、斜线和块字符。真实 PTY 是受控 shell 输出，不等同真实 Claude Code 的长期使用验收；未做多字号 / 屏幕缩放的完整原生人工验收。

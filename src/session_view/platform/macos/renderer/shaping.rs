@@ -1,76 +1,6 @@
 use super::*;
 
 impl Renderer {
-    /// Keep the font's shapes, but map its graphics design plane to the full
-    /// terminal cell instead of using text baseline/line spacing. Reference
-    /// glyphs are shared by a Unicode family: never stretch each glyph's ink
-    /// bounds, which would turn a half block into a full block.
-    pub(super) fn graphics_plane(&mut self, cfg: &PaintConfig, text: &str) -> Option<CGRect> {
-        let ch = graphics_char(text)?;
-        if self.graphics_planes.is_none() {
-            let bounds = |shaped: Rc<Shaped>| {
-                shaped
-                    .graphics_path
-                    .as_ref()
-                    .map(|path| CGPath::path_bounding_box(Some(path)))
-            };
-            let blocks = bounds(self.shape(cfg, "█", false, false))?;
-            let horizontal = bounds(self.shape(cfg, "─", false, false))?;
-            let vertical = bounds(self.shape(cfg, "│", false, false))?;
-            let center = horizontal.origin.y + horizontal.size.height / 2.0;
-            let half_height =
-                (center - vertical.origin.y).min(vertical.origin.y + vertical.size.height - center);
-            let boxes = rect(
-                horizontal.origin.x,
-                center - half_height,
-                horizontal.size.width,
-                2.0 * half_height,
-            );
-            self.graphics_planes = Some(GraphicsPlanes { blocks, boxes });
-        }
-        let planes = self.graphics_planes?;
-        let plane = if ch >= '\u{2580}' {
-            planes.blocks
-        } else {
-            planes.boxes
-        };
-        (plane.size.width.is_finite()
-            && plane.size.height.is_finite()
-            && plane.size.width > 0.0
-            && plane.size.height > 0.0)
-            .then_some(plane)
-    }
-
-    /// Place a graphics outline in `cell`.
-    ///
-    /// Blocks stretch independently on each axis so a half block stays half a
-    /// cell. Box drawing uses one scale, the larger of the two axes, and the
-    /// cell clip drops the overflow. Stroke weight then stays the same
-    /// horizontally and vertically, while a line that already reaches the font
-    /// plane still reaches the cell edge.
-    pub(super) fn map_graphics(context: &CGContext, cell: CGRect, plane: CGRect, block: bool) {
-        let fit_x = cell.size.width / plane.size.width;
-        let fit_y = cell.size.height / plane.size.height;
-        let (scale_x, scale_y) = if block {
-            (fit_x, fit_y)
-        } else {
-            let scale = fit_x.max(fit_y);
-            (scale, scale)
-        };
-        let c = Some(context);
-        CGContext::translate_ctm(
-            c,
-            cell.origin.x + cell.size.width / 2.0,
-            cell.origin.y + cell.size.height / 2.0,
-        );
-        CGContext::scale_ctm(c, scale_x, -scale_y);
-        CGContext::translate_ctm(
-            c,
-            -(plane.origin.x + plane.size.width / 2.0),
-            -(plane.origin.y + plane.size.height / 2.0),
-        );
-    }
-
     pub(super) fn shape(
         &mut self,
         cfg: &PaintConfig,
@@ -78,12 +8,7 @@ impl Renderer {
         bold: bool,
         italic: bool,
     ) -> Rc<Shaped> {
-        let graphics = graphics_char(text).is_some();
-        let face = if graphics {
-            4
-        } else {
-            u8::from(bold) | (u8::from(italic) << 1)
-        };
+        let face = u8::from(bold) | (u8::from(italic) << 1);
         self.clock += 1;
         let key = TextKey {
             text: text.into(),
@@ -93,15 +18,10 @@ impl Renderer {
             cached.used = self.clock;
             return cached.shaped.clone();
         }
-        let font = self.fonts.entry(face).or_insert_with(|| {
-            if graphics {
-                // Graphics have a stable design plane independent of the
-                // chosen text font and its bold/italic glyph variations.
-                system_mono(cfg.size as f64)
-            } else {
-                make_font(cfg, bold, italic)
-            }
-        });
+        let font = self
+            .fonts
+            .entry(face)
+            .or_insert_with(|| make_font(cfg, bold, italic));
         let string = CFMutableAttributedString::new(None, 0).expect("attributed string");
         // SAFETY: all attributes have CoreText's documented value types and
         // range covers the UTF-16 attributed string. CoreText handles fallback.
@@ -136,7 +56,6 @@ impl Renderer {
         };
         // A single primary-font baseline keeps fallback glyphs on the same row.
         let baseline = unsafe { (font.ascent() - font.descent()) / 2.0 };
-        let graphics_path = graphics_char(text).and_then(|_| graphics_path(&line));
         // Measure both advance and ink once. Fallback fonts can supply a
         // full-width glyph even when Ghostty assigns a single terminal cell.
         let bounds = unsafe {
@@ -167,7 +86,6 @@ impl Renderer {
             horizontal,
             advance,
             fallback,
-            graphics_path,
         });
         // A pathological single grapheme can exceed the whole cache budget.
         // Draw it once without retaining it or evicting otherwise useful lines.
@@ -196,55 +114,6 @@ impl Renderer {
         );
         shaped
     }
-}
-
-fn graphics_char(text: &str) -> Option<char> {
-    let mut chars = text.chars();
-    let ch = chars.next()?;
-    (chars.next().is_none() && matches!(ch, '\u{2500}'..='\u{259f}')).then_some(ch)
-}
-
-/// Extract the actual shaped font outlines, including CoreText fallback and
-/// glyph positions. This reuses font-provided geometry instead of maintaining
-/// a second table of block, corner, dash and line character shapes.
-fn graphics_path(line: &CTLine) -> Option<CFRetained<CGPath>> {
-    let combined = CGMutablePath::new();
-    // SAFETY: CTLine supplies retained run storage. Each run's attributes own
-    // the CTFont used to shape it; buffers have exactly the queried glyph count.
-    unsafe {
-        let runs = line.glyph_runs();
-        for i in 0..runs.count() {
-            let run = &*runs.value_at_index(i).cast::<CTRun>();
-            let attributes = run.attributes();
-            let font = attributes.value((kCTFontAttributeName as *const CFString).cast());
-            if font.is_null() {
-                return None;
-            }
-            let font = &*font.cast::<CTFont>();
-            let count = usize::try_from(run.glyph_count()).ok()?;
-            if count == 0 {
-                continue;
-            }
-            let mut glyphs = vec![0u16; count];
-            let mut positions = vec![CGPoint::new(0.0, 0.0); count];
-            let range = CFRange::new(0, count as _);
-            run.glyphs(range, NonNull::new(glyphs.as_mut_ptr())?);
-            run.positions(range, NonNull::new(positions.as_mut_ptr())?);
-            for (glyph, position) in glyphs.into_iter().zip(positions) {
-                let path = font.path_for_glyph(glyph, std::ptr::null())?;
-                let transform = CGAffineTransform {
-                    a: 1.0,
-                    b: 0.0,
-                    c: 0.0,
-                    d: 1.0,
-                    tx: position.x,
-                    ty: position.y,
-                };
-                CGMutablePath::add_path(Some(&combined), &transform, Some(&path));
-            }
-        }
-    }
-    CGPath::new_copy(Some(&combined))
 }
 
 fn make_font(cfg: &PaintConfig, bold: bool, italic: bool) -> CFRetained<CTFont> {

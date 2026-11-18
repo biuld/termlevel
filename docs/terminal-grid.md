@@ -109,9 +109,9 @@ NSView 是透明、flipped 的绘制子视图，hitTest 返回 nil，NSH 容器�
 
 Ghostty 的空白格不一定通过 style 保存背景，擦除和填充可使用 packed cell 的 `BG_COLOR_RGB` / `BG_COLOR_PALETTE` content tag。安全封装统一将这些来源合入 `Cell.style.background`，活动 RenderState、hold 边界和历史 `screen_row` 共用同一规则；调色板索引保留，不提前固定成 RGB。宿主不得只读原始 style 而丢掉空白格背景。
 
-U+2500–U+259F 的单标量画线 / 块字符使用系统等宽字体提供的矢量轮廓，按统一参考平面映射到像素对齐的格子：块字符以 `█` 的轮廓为参考，两个轴分别铺满格子，半块和象限保持一半，关闭抗锯齿以确保块之间填满。画线以 `─` / `│` 的连接坐标为参考，只用一个比例（取较大的一轴），另一轴超出格子的部分裁掉，并启用抗锯齿：原生 AppKit 上关闭时，直线与接点的轮廓栅格化粗细不同，即使实测源轮廓的横线截面相同。格子裁剪仍按设备像素对齐。不按每个字符自身包围盒拉满。轮廓和参考平面缓存由 macOS renderer 持有，字体尺寸变化时失效。图形字形不随用户普通字体的粗斜体变体改变，颜色、dim、inverse 和背景仍沿用场景策略；普通文字继续走原来的 CoreText 字体 / 基线 / 抗锯齿路径。无可用轮廓时回退到文字绘制。
+单标量 `U+2500–U+259F` 画线 / 块字符，以及上游支持的 `U+1FB00–U+1FB3B`、`U+1FB82–U+1FB8B` 和 `U+E0B0–U+E0B3`，使用 [Alacritty 内置字形算法](../src/session_view/platform/macos/renderer/builtin_font/NOTICE.md)。它们按像素对齐后的实际设备像素格生成覆盖遮罩，使用原有前景色、dim、inverse、背景与选区；缓存按字符和像素尺寸区分，超过 1024 项清空，字体变化时清空。上游对过窄 Powerline 格子选择回退；生成或图像分配失败也回退 CoreText。普通文字继续使用 CoreText 的字体、基线和连字路径。
 
-这是应用 renderer 的字形适配，不是调用 Ghostty 应用的 sprite renderer。固定 libghostty-vt 1.0.1 的 C ABI 未导出后者；后续若接入另一套字形渲染后端，应在平台 renderer 内替换，保持终端数据与 scene 契约。
+这是移植的 Alacritty 字形算法，不是 Ghostty 应用的 sprite renderer。固定 libghostty-vt 1.0.1 的 C ABI 未导出后者。代码来源与 Apache-2.0 许可证随模块保留；跨平台终端状态与 scene 契约不变。
 
 默认字体链为随包提供的 JetBrains Mono 2.304、Sarasa Term SC 1.0.43，再到系统等宽字体。JetBrains Mono 的四种样式负责拉丁字符及编程连字，更纱常规/粗体负责中文和缺失符号；没有中文斜体时保持直立回退。原始字体、许可证和来源 hash 由 NSH 的资源注册统一随包携带，不要求系统安装。字体选择、测量 CSS 列表与 CoreText cascade 使用相同顺序；不把整个 family list 引为一个字体名。
 

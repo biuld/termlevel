@@ -1,5 +1,27 @@
 import { expect, open, test } from "nsh/test";
 
+test("native built-in line and block glyphs keep their geometry", async () => {
+  const app = await open("./tests/terminal/fixtures/StatusFixture.tsx", { platform: "macos", width: 1000, height: 700, colorScheme: "dark" });
+  try {
+    const lines = [
+      "┌────┬────┐  ┏━━━━┳━━━━┓  ╔════╦════╗",
+      "│    │    │  ┃    ┃    ┃  ║    ║    ║",
+      "├────┼────┤  ┣━━━━╋━━━━┫  ╠════╬════╣",
+      "└────┴────┘  ┗━━━━┻━━━━┛  ╚════╩════╝",
+      "╭────╮  ╱╲╱╲╳  ┄┄┄┄  ┆┆┆┆  ░▒▓█",
+      "╰────╯  ╲╱╲╱╳  ▀▄▌▐▖▗▘▝▚▞▛▜▙▟",
+      "GLYPH_GEOMETRY_READY",
+    ];
+    await app.type("id:session-panel", `printf '\\033[2J\\033[H'; printf '%s\\n' ${lines.map(line => `'${line}'`).join(" ")}`);
+    await app.keyboard.press("enter");
+    await app.waitUntil(() => app.texts().some(text => text.includes("GLYPH_GEOMETRY_READY")));
+    await app.screenshot("artifacts/native-builtin-glyphs.png");
+  } finally {
+    try { await app.window("main").pressClose(); } catch {}
+    app.dispose();
+  }
+});
+
 test("native Unicode table keeps connected even-weight borders", async () => {
   const app = await open("./tests/terminal/fixtures/StatusFixture.tsx", { platform: "macos", width: 1000, height: 700, colorScheme: "dark" });
   try {

@@ -8,7 +8,7 @@ use objc2_core_foundation::{
 };
 use objc2_core_graphics::{
     CGBitmapInfo, CGColorRenderingIntent, CGColorSpace, CGContext, CGDataProvider, CGImage,
-    CGImageAlphaInfo, CGImageByteOrderInfo, CGMutablePath, CGPath,
+    CGImageAlphaInfo, CGImageByteOrderInfo,
 };
 use objc2_core_text::{
     CTFont, CTFontDescriptor, CTFontSymbolicTraits, CTLine, CTRun, kCTFontAttributeName,
@@ -16,12 +16,12 @@ use objc2_core_text::{
     kCTForegroundColorFromContextAttributeName, kCTLigatureAttributeName,
 };
 use std::{collections::HashMap, ptr::NonNull, rc::Rc, sync::Arc, time::Instant};
+mod builtin_font;
 
 /// Only immutable layout is cached: selection, color and search are painted
 /// from the current scene. Bounded by both entry count and source bytes.
 struct Shaped {
     line: CFRetained<CTLine>,
-    graphics_path: Option<CFRetained<CGPath>>,
     baseline: f64,
     horizontal: (f64, f64),
     advance: f64,
@@ -36,17 +36,17 @@ struct CachedText {
     shaped: Rc<Shaped>,
     used: u64,
 }
-#[derive(Clone, Copy)]
-struct GraphicsPlanes {
-    blocks: CGRect,
-    boxes: CGRect,
+struct BuiltinMask {
+    image: CFRetained<CGImage>,
+    top: i32,
+    height: i32,
 }
 #[derive(Default)]
 pub(super) struct Renderer {
     font_key: Option<(String, u32)>,
     fonts: HashMap<u8, CFRetained<CTFont>>,
     lines: HashMap<TextKey, CachedText>,
-    graphics_planes: Option<GraphicsPlanes>,
+    builtin_masks: HashMap<(char, usize, usize, usize), BuiltinMask>,
     text_bytes: usize,
     clock: u64,
     images: Vec<(Arc<termlevel_ghostty_vt::Pixels>, CFRetained<CGImage>)>,
@@ -65,7 +65,7 @@ impl Renderer {
             self.font_key = Some(key);
             self.fonts.clear();
             self.lines.clear();
-            self.graphics_planes = None;
+            self.builtin_masks.clear();
             self.text_bytes = 0;
         }
         let c = Some(context);
@@ -148,21 +148,65 @@ impl Renderer {
                 if style.hidden || span.run.text.is_empty() || span.cells == 0 {
                     continue;
                 }
+                let mut chars = span.run.text.chars();
+                if let Some(ch) = chars.next()
+                    && chars.next().is_none()
+                    && builtin_font::supports(ch)
+                {
+                    let cell = pixel_rect(
+                        context,
+                        rect(
+                            span.col as f64 * cfg.cw as f64,
+                            row as f64 * cfg.lh as f64,
+                            span.cells as f64 * cfg.cw as f64,
+                            cfg.lh as f64,
+                        ),
+                    );
+                    if self.draw_builtin(
+                        context,
+                        cell,
+                        ch,
+                        span.cells as f64 * cfg.cw as f64,
+                        cfg.colors(style).0,
+                        if style.dim { 0.6 } else { 1.0 },
+                    ) {
+                        set_color(
+                            context,
+                            cfg.colors(style).0,
+                            if style.dim { 0.6 } else { 1.0 },
+                        );
+                        if style.underline || span.hyperlink.is_some() {
+                            CGContext::fill_rect(
+                                c,
+                                rect(
+                                    cell.origin.x,
+                                    cell.origin.y + (cell.size.height - 1.0).max(0.0),
+                                    cell.size.width,
+                                    1.0,
+                                ),
+                            );
+                        }
+                        if style.strikethrough {
+                            CGContext::fill_rect(
+                                c,
+                                rect(
+                                    cell.origin.x,
+                                    cell.origin.y + cell.size.height / 2.0 - 0.5,
+                                    cell.size.width,
+                                    1.0,
+                                ),
+                            );
+                        }
+                        continue;
+                    }
+                }
                 let shaped = self.shape(cfg, &span.run.text, style.bold, style.italic);
-                let plane = shaped
-                    .graphics_path
-                    .as_ref()
-                    .and_then(|_| self.graphics_plane(cfg, &span.run.text));
                 let (x, y, w) = (
                     span.col as f64 * cfg.cw as f64,
                     row as f64 * cfg.lh as f64,
                     span.cells as f64 * cfg.cw as f64,
                 );
-                let cell = if plane.is_some() {
-                    pixel_rect(context, rect(x, y, w, cfg.lh as f64))
-                } else {
-                    rect(x, y, w, cfg.lh as f64)
-                };
+                let cell = rect(x, y, w, cfg.lh as f64);
                 CGContext::save_g_state(c);
                 CGContext::clip_to_rect(c, cell);
                 set_color(
@@ -171,27 +215,9 @@ impl Renderer {
                     if style.dim { 0.6 } else { 1.0 },
                 );
                 CGContext::save_g_state(c);
-                if let Some(plane) = plane {
-                    let block = span
-                        .run
-                        .text
-                        .chars()
-                        .next()
-                        .is_some_and(|ch| ch >= '\u{2580}');
-                    // AppKit rasterizes a standalone straight outline differently
-                    // from junction outlines when antialiasing is disabled.
-                    // Blocks must remain pixel-solid at their shared edges.
-                    CGContext::set_should_antialias(c, !block);
-                    Renderer::map_graphics(context, cell, plane, block);
-                } else {
-                    let (scale, offset) = shaped.fit(w);
-                    CGContext::translate_ctm(
-                        c,
-                        x + offset,
-                        y + cfg.lh as f64 / 2.0 + shaped.baseline,
-                    );
-                    CGContext::scale_ctm(c, scale, -scale);
-                }
+                let (scale, offset) = shaped.fit(w);
+                CGContext::translate_ctm(c, x + offset, y + cfg.lh as f64 / 2.0 + shaped.baseline);
+                CGContext::scale_ctm(c, scale, -scale);
                 CGContext::set_text_matrix(
                     c,
                     CGAffineTransform {
@@ -204,19 +230,9 @@ impl Renderer {
                     },
                 );
                 CGContext::set_text_position(c, 0.0, 0.0);
-                if plane.is_some()
-                    && let Some(path) = &shaped.graphics_path
-                {
-                    // Draw outlines without the text rasterizer's hinting,
-                    // which can shrink ink away from an exact cell edge.
-                    CGContext::begin_path(c);
-                    CGContext::add_path(c, Some(path));
-                    CGContext::fill_path(c);
-                } else {
-                    // SAFETY: immutable CTLine and live AppKit drawing context.
-                    unsafe {
-                        shaped.line.draw(context);
-                    }
+                // SAFETY: immutable CTLine and live AppKit drawing context.
+                unsafe {
+                    shaped.line.draw(context);
                 }
                 CGContext::restore_g_state(c);
                 if style.underline || span.hyperlink.is_some() {
@@ -345,6 +361,7 @@ fn rgba_image(pixels: &termlevel_ghostty_vt::Pixels) -> Option<CFRetained<CGImag
     }
 }
 
+mod builtin_image;
 mod shaping;
 #[cfg(test)]
 mod tests;

@@ -106,3 +106,7 @@ TERMLEVEL_PREVIEW=1 ./scripts/nsh run --window-size 1200x780
 此模式显示确定性的工作区界面，但 Git 和终端会话不可用；**不启动 shell、不执行系统命令、不访问真实工作区存储**。测试夹具可注入模拟数据，预览测试不能作为真实 PTY 证据。
 
 修改视觉从 [theme.json](theme.json) 开始，token 分工及使用规则见 [UI 与主题](docs/design.md)。组件不直接保存配色，分组颜色也由当前主题解析。
+
+## 许可证
+
+Termlevel 应用使用 [Apache License 2.0](LICENSE)。独立的 `termlevel-ghostty-vt` 和 `termlevel-ghostty-vt-sys` 封装保留各自声明的 MIT 许可证。内置的第三方代码、字体和品牌资源的来源与许可见各自目录中的说明。
