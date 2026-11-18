@@ -254,3 +254,33 @@ Based on uncommitted work on `7dd7c8c`. Ungrouped is distinguished from ordinary
 - Native automation `./scripts/test-native gitlive` 2/2 passed, and the collapsed sidebar selection screenshot was checked; manual GUI operation acceptance and the complete headless suite were not performed.
 
 Entries were translated from the consolidated validation log; failures above remain part of the record and must not be erased.
+
+
+## 2026-11-18 · Sidebar tab drop action
+
+Uncommitted changes based on `ca20830`. Validation used `GHOSTTY_VT_ARCHIVE=/tmp/termlevel-ghostty-vt-1.0.1.xcframework.zip` and `CARGO_NET_OFFLINE=true`.
+
+### Commands
+
+- `./scripts/nsh check` and `./scripts/nsh build` passed. Logs are `artifacts/tab-drag-check.log` and `artifacts/tab-drag-build.log`.
+- `./scripts/nsh test tests/workspace/Tiling.test.tsx` finished 13/14. The existing `a split is its own sidebar unit and can move into a tab group` assertion at line 154 expects `Shown in the layout`, which is absent from the UI. The log is `artifacts/tab-drag-tiling.log`. The new cases passed for cross-group splitting, an existing split, and insufficient space.
+- Focused `tests/workspace/App.test.tsx` grouping and `tests/workspace/Persistence.test.tsx` tab-drop preference tests passed, one test each.
+
+### Native automation and unverified items
+
+- `./scripts/test-native tiling --filter 'native tab drop setting selects split panes'` passed 1/1. Reviewed `artifacts/tab-drop-settings-native.png`. The log is `artifacts/tab-drag-native.log`.
+- Native drag automation was attempted and failed because NSH reports that `dragAndHold` is unavailable on macOS. A prior attempt using the preview fixture failed because module stand-ins are unsupported on the macOS target. Neither attempt establishes native drag behavior. Manual GUI drag acceptance remains unverified.
+
+
+## 2026-11-18 · Swap a pane with another terminal
+
+Uncommitted changes based on `ca20830`, including the tab-drop changes in the preceding entry. Validation used `GHOSTTY_VT_ARCHIVE=/tmp/termlevel-ghostty-vt-1.0.1.xcframework.zip` and `CARGO_NET_OFFLINE=true`.
+
+### Commands
+
+- Three focused `tests/workspace/Tiling.test.tsx` cases passed for a same-group terminal, a terminal in another group, and a terminal in another group's split. These check preserved layout and output where available.
+
+### Native automation and unverified items
+
+- `./scripts/test-native tiling --filter 'native pane menu swaps with another terminal'` passed 1/1 with real PTY sessions. Log is `artifacts/swap-terminal-native.log` and capture is `artifacts/swap-terminal-native.png`.
+- Manual GUI acceptance and cross-group native interaction were not performed.

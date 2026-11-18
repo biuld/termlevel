@@ -102,7 +102,7 @@ Clicking a pane title or body updates logical focus and gives input to that term
 
 Directional navigation searches neighbors by actual geometry: it prefers candidates in the requested direction whose projection perpendicular to travel overlaps the current pane, then compares boundary distance and center distance, using stable pane ID as the final tie-break. With no neighbor, focus stays put and does not wrap to the other side.
 
-Directional swap uses the same neighbor rule and only swaps the session references; pane IDs and split ratios stay unchanged. Focus follows the original session to its new position.
+Directional swap uses the same neighbor rule and only swaps the session references; pane IDs and split ratios stay unchanged. Focus follows the original session to its new position. The pane menu also offers "Swap with terminal" for every terminal outside the current split. Choosing one exchanges the sessions in their existing positions and exchanges their group membership when the terminals belong to different groups. A terminal outside a layout remains available as a sidebar tab in the other group. Both session IDs and all existing split geometry are retained.
 
 The current macOS shortcuts are below. The menu keeps every action entry. AppKit gives keys to the input method during composition, so workspace shortcuts may not execute then.
 
@@ -121,7 +121,7 @@ Control combinations remain reserved for the terminal first; the window manager'
 
 ## Drag and drop
 
-A pane can be dragged only from its title bar; dragging the terminal body still selects text. Dragging inside the sidebar continues to reorder tabs and manage groups; layout drop hints appear only after the pointer enters the right-hand pane area.
+A pane can be dragged only from its title bar; dragging the terminal body still selects text. In the sidebar, dropping on the middle half of a tab follows the saved Terminal setting. Group creates or joins the target group. Split pane inserts the dragged terminal to the right of the target and moves it into the target group if needed. A target already in a split keeps the other panes. A target outside an existing split cannot start another split in the same group. An unavailable split shows a red outline and leaves the layout unchanged. The tab edges reorder within a section, and group headers add to a group. Dragging into the pane area uses the canvas drop hints independently of this setting.
 
 | Source and target | Result |
 |---|---|

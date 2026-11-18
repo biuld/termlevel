@@ -13,6 +13,8 @@ export const SNAPSHOT_VERSION = 1;
 
 export type TerminalIdentity = "termlevel" | "ghostty";
 
+export type TabDropAction = "group" | "split";
+
 export type Appearance = "system" | "light" | "dark";
 
 export interface PersistedTab {
@@ -39,6 +41,7 @@ export interface SnapshotPreferences {
   interfaceFont: string;
   monoFont: string;
   workingIndicator: WorkingIndicatorKind;
+  tabDropAction: TabDropAction;
 }
 
 export interface WorkspaceSnapshot {
@@ -65,6 +68,7 @@ export interface WorkspaceSnapshot {
   interfaceFont: string | null;
   monoFont: string | null;
   workingIndicator: WorkingIndicatorKind;
+  tabDropAction: TabDropAction;
 }
 
 export type GitView = "changes" | "history";
@@ -260,6 +264,7 @@ export function parseSnapshot(raw: string): WorkspaceSnapshot | null {
     sidebarWidth: finite(document.sidebarWidth),
     fontSize: finite(document.fontSize),
     scrollback: finite(document.scrollback),
+    tabDropAction: document.tabDropAction === "split" ? "split" : "group",
     terminalIdentity: document.terminalIdentity === "ghostty" ? "ghostty" : "termlevel",
     appearance: typeof document.appearance === "string" && appearances.includes(document.appearance)
       ? document.appearance as Appearance

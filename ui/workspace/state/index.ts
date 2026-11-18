@@ -3,6 +3,8 @@ import { Runtime, Sessions } from "termlevel/native";
 import { dropPosition, equalize, geometry, insertPane, minimum, neighbor, panes, removePane, siblings, updateNode, type Direction, type DropPosition, type LayoutNode, type Pane, type Rect, type Size, type TilingState } from "../tiling";
 import { SNAPSHOT_VERSION, type GitView, type SnapshotPreferences, type WorkspaceSnapshot } from "../workspace-snapshot";
 import { createRepositoryPreferences } from "../repository-preferences";
+import { swapTerminal } from "./swap-terminal";
+import { splitTabDrop } from "./tab-split";
 import { createFiles } from "./files";
 import { initialWorkspace } from "./initial";
 import { groupOperations } from "./groups";
@@ -402,6 +404,12 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
     } else dropPreview.set(geometry(root, { x: 0, y: 0, ...canvasSize() }, paneMinimum(), token("gap-pane")).frames.get(focus) ?? null);
     return true;
   }
+  const splitTabs = splitTabDrop({
+    tab, layoutOf, canvasSize, paneMinimum, gap: () => token("gap-pane"),
+    forgetSession, patchTab, patchGroup, setLayout, select,
+    newIds: () => ({ pane: `pane-${++layoutSequence}`, split: `split-${++layoutSequence}` }),
+    report: message => layoutMessage.set(message),
+  });
   function beginPaneDrag(sessionId: string) {
     if (constrained()) return;
     if (tiling().zoomed) persistLayout({ ...tiling(), zoomed: false });
@@ -478,7 +486,7 @@ export function createWorkspace(transport?: SessionTransport, options: Workspace
     canvasBlocked, selectGroup, selectUngrouped, openGitView, closeGitView,
     tiling, paneList, inputBlocked, cellWidth, canvasSize, setCanvasSize, paneMinimum, fullGeometry, constrained, projected,
     paneForSession, frameForSession, focusPane, canSplit, splitTerminal, hidePane, toggleZoom, focusDirection,
-    layoutSessions, placeSplit, inSplit,
+    layoutSessions, placeSplit, inSplit, splitTabs, swapTerminal: swapTerminal(tabs, layouts, workspaceKey, select),
     resizeSplit, resizeDirection, equalizeLayout, paneDrag, dropLayout, layoutMessage, resizing, canvasOrigin, dropPreview, beginPaneDrag, trackPaneDrag, finishPaneDrag, cancelPaneDrag,
     tab, group, groupTitle, patchTab, patchGroup, select, addTab, closeTab, closeCleanExit, addGroup,
     ungroup, closeGroup, moveTab, placeTab, combineTabs, togglePin, step, reorder,

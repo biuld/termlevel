@@ -302,3 +302,26 @@ test("restoring an empty Ungrouped workspace preserves its selected context", as
   await app.waitUntil(() => JSON.parse(app.storage().workspace).tabs.some((tab: { id: string; groupId: string | null }) => tab.id === "session-2" && tab.groupId === null));
   app.dispose();
 });
+
+
+test("tab drop action is saved and restored", async () => {
+  const app = await open("./fixtures/RestoreFixture.tsx", {
+    ...options,
+    storage: { workspace: JSON.stringify({ version: 1 }) },
+  });
+  try {
+    await app.press("id:settings");
+    await app.press("id:settings-terminal");
+    await app.press("id:tab-drop-split");
+    await app.waitUntil(() => JSON.parse(app.storage().workspace).tabDropAction === "split");
+  } finally { app.dispose(); }
+  const restored = await open("./fixtures/RestoreFixture.tsx", {
+    ...options,
+    storage: { workspace: JSON.stringify({ version: 1, tabDropAction: "split" }) },
+  });
+  try {
+    await restored.press("id:settings");
+    await restored.press("id:settings-terminal");
+    await restored.waitUntil(() => JSON.parse(restored.storage().workspace).tabDropAction === "split");
+  } finally { restored.dispose(); }
+});

@@ -80,3 +80,30 @@ test("native tiled terminals keep geometry, IME ownership and state across pane 
     app.dispose();
   }
 });
+
+test("native tab drop setting selects split panes", async () => {
+  const app = await open("./tests/terminal/fixtures/TilingFixture.tsx", { platform: "macos", width: 1400, height: 900 });
+  try {
+    await app.press("id:settings");
+    await app.press("id:settings-terminal");
+    await app.press("id:tab-drop-split");
+    await app.screenshot("artifacts/tab-drop-settings-native.png");
+    expect(app.shows("label:Split terminals")).toBe(true);
+  } finally { app.dispose(); }
+});
+
+test("native pane menu swaps with another terminal", async () => {
+  const app = await open("./tests/terminal/fixtures/TilingFixture.tsx", { platform: "macos", width: 1400, height: 900 });
+  try {
+    await app.press("id:titlebar-new-terminal");
+    await app.press("id:split-right");
+    await app.press("id:read-sessions");
+    const sessions: Array<{ id: string }> = JSON.parse(app.texts().find(t => t.startsWith('[{"id":')) ?? "[]");
+    expect(sessions.length).toBe(3);
+    await app.press("id:terminal-actions");
+    await app.chooseMenuItem("Swap with terminal > Terminal 1 · Ungrouped");
+    await app.waitFor(`id:terminal-${sessions[0].id}`);
+    expect(app.shows(`id:terminal-${sessions[1].id}`)).toBe(true);
+    await app.screenshot("artifacts/swap-terminal-native.png");
+  } finally { app.dispose(); }
+});

@@ -218,3 +218,104 @@ test("pane-title edge dragging moves an existing pane and center dragging swaps 
   expect(app.count("id:terminal-prototype")).toBe(1);
   expect(app.count("id:terminal-tab-1")).toBe(1);
 });
+
+test("sidebar tab drop can split terminals across groups and retain their sessions", async () => {
+  const app = await open("./fixtures/TilingStateFixture.tsx", options);
+  try {
+    await app.press("id:settings");
+    await app.press("id:settings-terminal");
+    await app.press("id:tab-drop-split");
+    await app.keyboard.press("escape");
+    await app.dragAndHold("id:tab-colors", { y: -100 });
+    await app.waitFor("label:Split with terminal");
+    await app.drop();
+    await app.waitFor("id:terminal-colors");
+    expect(app.shows("id:terminal-prototype")).toBe(true);
+    expect(panes(state(app).tiling.root).map(p => p.sessionId)).toEqual(["prototype", "colors"]);
+    expect(app.count("id:terminal-colors")).toBe(1);
+  } finally { app.dispose(); }
+});
+
+test("sidebar split drop rejects insufficient space without moving the terminal", async () => {
+  const app = await open("./fixtures/TilingStateFixture.tsx", { ...options, width: 640, height: 480 });
+  try {
+    await app.press("id:settings");
+    await app.press("id:settings-terminal");
+    await app.press("id:tab-drop-split");
+    await app.keyboard.press("escape");
+    await app.dragAndHold("id:tab-colors", { y: -100 });
+    await app.waitFor("label:Cannot split terminal");
+    await app.drop();
+    expect(panes(state(app).tiling.root).map(p => p.sessionId)).toEqual(["prototype"]);
+    expect(app.shows("id:layout-hint")).toBe(true);
+  } finally { app.dispose(); }
+});
+
+test("dropping onto a tab in an existing split retains its other panes", async () => {
+  const app = await open("./fixtures/TilingStateFixture.tsx", options);
+  try {
+    await app.press("id:split-right");
+    await app.press("id:settings");
+    await app.press("id:settings-terminal");
+    await app.press("id:tab-drop-split");
+    await app.keyboard.press("escape");
+    await app.dragAndHold("id:tab-colors", { y: -136 });
+    await app.waitFor("label:Split with terminal");
+    await app.drop();
+    await app.waitFor("id:terminal-colors");
+    expect(panes(state(app).tiling.root).map(p => p.sessionId)).toEqual(["prototype", "colors", "tab-1"]);
+  } finally { app.dispose(); }
+});
+
+test("swap with terminal exchanges the focused pane with a terminal from another group", async () => {
+  const app = await open("./fixtures/TilingStateFixture.tsx", options);
+  try {
+    await app.type("id:terminal-prototype", "echo SWAP_SOURCE"); await app.keyboard.press("enter");
+    await app.press("id:split-right");
+    await app.type("id:terminal-tab-1", "echo SWAP_PANE"); await app.keyboard.press("enter");
+    const before = state(app).tiling.root;
+    await app.press("id:terminal-actions");
+    await app.chooseMenuItem("Swap with terminal > Color test · Playground");
+    await app.waitFor("id:terminal-colors");
+    expect(panes(state(app).tiling.root).map(p => p.sessionId)).toEqual(["prototype", "colors"]);
+    expect(state(app).tiling.root.id).toBe(before.id);
+    await app.press("id:group-playground");
+    await app.press("id:tab-tab-1");
+    await app.waitFor("text:SWAP_PANE");
+    expect(app.shows("id:terminal-tab-1")).toBe(true);
+    await app.press("id:group-termlevel");
+    await app.press("id:tab-prototype");
+    await app.waitFor("text:SWAP_SOURCE");
+    expect(app.shows("id:terminal-colors")).toBe(true);
+  } finally { app.dispose(); }
+});
+
+test("swap with a terminal in another split preserves both split layouts", async () => {
+  const app = await open("./fixtures/TilingStateFixture.tsx", options);
+  try {
+    await app.press("id:tab-colors");
+    await app.press("id:split-right");
+    await app.press("id:tab-prototype");
+    await app.press("id:split-right");
+    await app.press("id:terminal-actions");
+    await app.chooseMenuItem("Swap with terminal > Color test · Playground");
+    await app.waitFor("id:terminal-colors");
+    expect(panes(state(app).tiling.root).map(p => p.sessionId)).toEqual(["prototype", "colors"]);
+    await app.press("id:group-playground");
+    await app.press("id:tab-tab-1");
+    expect(panes(state(app).tiling.root).map(p => p.sessionId)).toEqual(["tab-2", "tab-1"]);
+    expect(app.shows("id:terminal-tab-1")).toBe(true);
+  } finally { app.dispose(); }
+});
+
+test("swap with a terminal in the same group keeps the other pane", async () => {
+  const app = await open("./fixtures/TilingStateFixture.tsx", options);
+  try {
+    await app.press("id:split-right");
+    await app.press("id:terminal-actions");
+    await app.chooseMenuItem("Swap with terminal > Build & preview · termlevel");
+    await app.waitFor("id:terminal-preview");
+    expect(panes(state(app).tiling.root).map(p => p.sessionId)).toEqual(["prototype", "preview"]);
+    expect(app.shows("id:tab-tab-1")).toBe(true);
+  } finally { app.dispose(); }
+});

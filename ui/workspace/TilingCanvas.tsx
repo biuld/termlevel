@@ -57,6 +57,12 @@ export function TilingCanvas(props: {
       { label: "Swap with pane", disabled: store.paneList().length < 2, submenu: (["left", "right", "up", "down"] as const).map(direction => ({
         label: direction[0].toUpperCase() + direction.slice(1), shortcut: `mod+alt+shift+${direction}`, onSelect: () => store.focusDirection(direction, true),
       })) },
+      { label: "Swap with terminal", disabled: store.paneList().length < 2 || store.tabs().every(tab => store.paneForSession(tab.id)),
+        submenu: store.tabs().filter(tab => !store.paneForSession(tab.id)).map(tab => ({
+          label: `${tab.title} · ${store.groupTitle(tab.groupId)}`,
+          onSelect: () => store.swapTerminal(id, tab.id),
+        })),
+      },
       { label: store.tiling().zoomed ? "Restore layout" : "Maximize pane", disabled: store.paneList().length < 2, onSelect: store.toggleZoom },
       { label: "Equalize layout", disabled: store.paneList().length < 2, onSelect: store.equalizeLayout },
       { label: "Resize with arrow keys", disabled: store.paneList().length < 2 || store.constrained() || store.tiling().zoomed, onSelect: () => store.resizing.set(true) },

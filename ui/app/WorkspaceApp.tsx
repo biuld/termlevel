@@ -18,7 +18,7 @@ import { Type } from "../shared/type";
 import { applyFonts, interfaceFont, monoFont } from "../shared/fonts";
 import { writeWorkspaceSnapshot } from "../workspace/persistence";
 import { createWorkspace, type Workspace } from "../workspace/state";
-import type { Appearance, TerminalIdentity, WorkspaceSnapshot } from "../workspace/workspace-snapshot";
+import type { Appearance, TabDropAction, TerminalIdentity, WorkspaceSnapshot } from "../workspace/workspace-snapshot";
 import type { WorkingIndicatorKind } from "../shared/WorkingIndicator";
 import type { PreviewSurface } from "../terminal/TerminalSurface";
 
@@ -59,6 +59,7 @@ export function WorkspaceApp(props: {
   const finding = signal(false);
   const findQuery = signal("");
   const appearance = signal<Appearance>(props.snapshot?.appearance ?? "system");
+  const tabDropAction = signal<TabDropAction>(props.snapshot?.tabDropAction ?? "group");
   const workingIndicator = signal<WorkingIndicatorKind>(props.snapshot?.workingIndicator ?? "bars");
   effect(() => { setColorScheme(appearance()); });
   effect(() => { applyFonts(); });
@@ -68,7 +69,7 @@ export function WorkspaceApp(props: {
   let lastSaved = "";
   const serializedWorkspace = () => JSON.stringify(store.snapshot({
     terminalIdentity: terminalIdentity(), appearance: appearance(), interfaceFont: interfaceFont(), monoFont: monoFont(),
-    workingIndicator: workingIndicator(),
+    workingIndicator: workingIndicator(), tabDropAction: tabDropAction(),
   }));
   async function flushWorkspace() {
     if (!props.persist) return;
@@ -314,7 +315,7 @@ export function WorkspaceApp(props: {
         borderRadius: token("radius-panel"),
         boxShadow: sidebarFloating() ? [{ x: 6, y: 0, blur: 28, color: token("panel-shadow") }] : [],
       }}>
-      <Sidebar workspace={store} actions={actions} groupEditor={editingGroup} expanded={sidebarOpen} indicator={workingIndicator} />
+      <Sidebar workspace={store} actions={actions} groupEditor={editingGroup} expanded={sidebarOpen} indicator={workingIndicator} tabDropAction={tabDropAction} />
     </View>
 
     <AppDialog testID="name-dialog" open={editor() !== null} label={editor()?.title ?? "Edit name"} title={editor()?.title}
@@ -396,7 +397,7 @@ export function WorkspaceApp(props: {
     }</If>
     <SettingsDialog open={settings()} dismiss={() => settings.set(false)} appearance={appearance}
       terminalIdentity={terminalIdentity} fontSize={store.fontSize} version={version} preview={preview} scrollback={store.scrollback} clipboardRead={store.clipboardRead}
-      workingIndicator={workingIndicator}
+      workingIndicator={workingIndicator} tabDropAction={tabDropAction}
       scrollbackMin={Runtime.scrollbackMin()} scrollbackMax={Runtime.scrollbackMax()} scrollbackStep={Runtime.scrollbackStep()} />
   </TerminalEngine>;
 }

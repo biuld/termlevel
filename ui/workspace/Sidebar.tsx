@@ -9,6 +9,7 @@ import { filesTabVisible, hiddenToolCount, ToolTabs, visibleGitTabs } from "./To
 import { groupColor, groupLine, groupTint } from "../shared/theme";
 import { GroupEditor } from "./GroupEditor";
 import { Type } from "../shared/type";
+import type { TabDropAction } from "./workspace-snapshot";
 import { AgentIcon, agentForApp } from "./agent-icons";
 
 type DragSlot = { ref: ViewRef; kind: "tab" | "header" | "ungrouped"; id: string | null };
@@ -25,7 +26,7 @@ export interface SidebarActions {
   toggleSidebar(): void;
 }
 
-export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; groupEditor: Signal<string | null>; expanded: () => boolean; indicator: () => WorkingIndicatorKind }) {
+export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; groupEditor: Signal<string | null>; expanded: () => boolean; indicator: () => WorkingIndicatorKind; tabDropAction: Signal<TabDropAction> }) {
   const store = props.workspace;
   const actions = props.actions;
   const members = (groupId: string | null) => store.tabs().filter((t) => t.groupId === groupId).sort((a, b) => Number(b.pinned) - Number(a.pinned));
@@ -102,7 +103,11 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
     if (!target || target.id === sourceId) return null;
     const sameSection = source.groupId === target.groupId && source.pinned === target.pinned;
     const upper = pageY < top + height / 2;
-    if (onTab && (source.groupId !== target.groupId || !target.groupId)) {
+    const middle = onTab && pageY >= top + height * 0.25 && pageY <= top + height * 0.75;
+    if (middle && props.tabDropAction() === "split") {
+      return { groupId: target.groupId, pinned: source.pinned, beforeId: null, headerId: null, combineId: target.id };
+    }
+    if (middle && (source.groupId !== target.groupId || !target.groupId)) {
       if (target.groupId) {
         const peers = store.tabs().filter((t) => t.groupId === target.groupId && t.pinned === source.pinned && t.id !== sourceId);
         const index = peers.findIndex((t) => t.id === target.id);
@@ -136,7 +141,8 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
     dragging.set(null);
     drop.set(null);
     if (store.finishPaneDrag()) { requestAnimationFrame(() => dragMoved.set(false)); return; }
-    if (target?.combineId && !target.groupId) store.combineTabs(id, target.combineId, target.beforeId === target.combineId);
+    if (target?.combineId && props.tabDropAction() === "split") store.splitTabs(id, target.combineId, true);
+    else if (target?.combineId && !target.groupId) store.combineTabs(id, target.combineId, target.beforeId === target.combineId);
     else if (target) {
       store.placeTab(id, { groupId: target.groupId, pinned: target.pinned, beforeId: target.beforeId });
     }
@@ -283,7 +289,13 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
       onResponderTerminate={() => releaseDrag()}
       onPanEnd={(event) => { if (event.cancelled) releaseDrag(); else finish(id); }}>
       <If when={combining()}>
-        <View testID={`drop-tab-${id}`} accessibilityLabel="Group with terminal" class="absolute inset-0 rounded-(--radius-tab) border border-primary" style={{ pointerEvents: "none" }} />
+        <View testID={`drop-tab-${id}`} accessibilityLabel={props.tabDropAction() === "split" ? (store.splitTabs(dragging() ?? "", id) ? "Split with terminal" : "Cannot split terminal") : "Group with terminal"}
+          class="absolute inset-0 items-end justify-center rounded-(--radius-tab) border"
+          style={{ pointerEvents: "none", borderColor: token(props.tabDropAction() === "split" && !store.splitTabs(dragging() ?? "", id) ? "destructive" : "ring") }}>
+          <View class="rounded-(--radius-control) bg-popover px-1">
+            <Type role="caption">{props.tabDropAction() === "split" ? (store.splitTabs(dragging() ?? "", id) ? "Split" : "Unavailable") : "Group"}</Type>
+          </View>
+        </View>
       </If>
       <If when={lineBefore()}>
         <View testID="drop-line" accessibilityLabel="Insert terminal" class="absolute left-1 right-1 h-0.5 bg-primary" style={{ top: -1, pointerEvents: "none" }} />

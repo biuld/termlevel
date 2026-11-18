@@ -5,7 +5,7 @@ import { applyFonts, interfaceFont, interfaceFonts, monoFont, monoFonts } from "
 import { Type } from "../shared/type";
 import { WorkingIndicator, type WorkingIndicatorKind } from "../shared/WorkingIndicator";
 
-import type { TerminalIdentity } from "../workspace/workspace-snapshot";
+import type { TabDropAction, TerminalIdentity } from "../workspace/workspace-snapshot";
 
 const pages = [
   { id: "appearance", label: "Appearance" },
@@ -51,6 +51,7 @@ export function SettingsDialog(props: {
   preview: boolean;
   terminalIdentity: Signal<TerminalIdentity>;
   workingIndicator: Signal<WorkingIndicatorKind>;
+  tabDropAction: Signal<TabDropAction>;
   scrollback: Signal<number>;
   clipboardRead: Signal<boolean>;
   scrollbackMin: number;
@@ -147,6 +148,23 @@ export function SettingsDialog(props: {
             </View>
           </If>
           <If when={page() === "terminal"}>
+            <View class="gap-1">
+              <Type role="body">Drop a terminal onto another terminal</Type>
+              <Type role="caption">Choose what happens when a tab is dropped onto the middle of another tab.</Type>
+              <View class="flex-row rounded-(--radius-tab) bg-chrome p-0.5">
+                <Each of={["group", "split"] as const}>{mode =>
+                  <Button testID={`tab-drop-${mode()}`} accessibilityLabel={mode() === "group" ? "Group terminals" : "Split terminals"}
+                    selected={props.tabDropAction() === mode()} onPress={() => props.tabDropAction.set(mode())}
+                    class="h-(--height-tab) flex-1 items-center justify-center rounded-(--radius-control)"
+                    classList={{ "bg-sidebar": props.tabDropAction() === mode() }}>
+                    <Text class="font-medium" style={{
+                      fontSize: token("text-label"), lineHeight: token("leading-label"),
+                      color: token(props.tabDropAction() === mode() ? "sidebar-foreground" : "muted-foreground"),
+                    }}>{mode() === "group" ? "Group" : "Split pane"}</Text>
+                  </Button>
+                }</Each>
+              </View>
+            </View>
             <View class="gap-3">
               <View class="flex-row items-center gap-2">
                 <View class="min-w-0 flex-1 gap-0.5">

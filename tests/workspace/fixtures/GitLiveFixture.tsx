@@ -22,7 +22,7 @@ mount(() => {
     appearance: "dark",
     interfaceFont: null,
     monoFont: null,
-    workingIndicator: "bars",
+    workingIndicator: "bars", tabDropAction: "group",
   };
   const workspace = createWorkspace(undefined, { snapshot });
   workspace.openGitView("changes", "group-1");
