@@ -219,10 +219,8 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
     const lineIndeterminate = () => progress()?.indeterminate ?? false;
     const animateLine = () => !!progress()?.animate && !reduceMotion();
     const working = () => status()?.state === "working";
-    const agent = () => {
-      if (tab()?.activity?.state !== "idle" || status()?.state !== "idle") return null;
-      return agentForApp(tab()?.activity?.app);
-    };
+    const agentApp = () => status()?.state === "idle" ? status()?.agentApp : undefined;
+    const agent = () => agentForApp(agentApp());
     const statusIcon = (): IconName => {
       switch (status()?.state) {
         case "done": return "check";
@@ -299,9 +297,9 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
         class="h-full min-w-0 flex-1 flex-row items-center gap-2 rounded-(--radius-tab) focus-visible:ring-2 ring-sidebar-ring"
         style={{ justifyContent: props.expanded() ? "flex-start" : "center", paddingHorizontal: props.expanded() ? 7 : 0 }}>
         <View class="flex-col items-center">
-          <View testID={`tab-status-${id}`} accessibilityLabel={`status-icon:${working() ? "working" : agent() ? tab()?.activity?.app : statusIcon()}`}>
+          <View testID={`tab-status-${id}`} accessibilityLabel={`status-icon:${working() ? "working" : agent() ? agentApp() : statusIcon()}`}>
             <If when={working()}><WorkingIndicator kind={props.indicator()} color={statusColor()} /></If>
-            <If when={!working() && !!agent()}><AgentIcon app={tab()?.activity?.app ?? ""} /></If>
+            <If when={!working() && !!agent()}><AgentIcon app={agentApp() ?? ""} /></If>
             <If when={!working() && !agent()}><Icon name={statusIcon()} size={13} color={statusColor()} /></If>
           </View>
           <If when={!props.expanded()}>{progressLine(true)}</If>

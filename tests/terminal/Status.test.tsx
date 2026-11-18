@@ -13,31 +13,52 @@ async function emit(app: Awaited<ReturnType<typeof open>>, sequence: string) {
   await app.keyboard.press("enter");
 }
 
-test("idle agent reports select the matching icon and respect status lifecycle", async () => {
+test("agent identity survives task updates and switches on a recognized app report", async () => {
   const app = await open("./fixtures/StatusFixture.tsx", options);
   try {
-    await emit(app, "printf '\\033]7501;state=idle:app=codex\\007'");
-    await app.waitFor("label:Terminal 1, Idle, Codex");
-    await app.waitFor("label:status-icon:codex");
     await emit(app, "printf '\\033]7501;state=working:app=codex\\007'");
-    await app.waitFor("label:Terminal 1, Working, codex");
     await app.waitFor("label:status-icon:working");
-    await emit(app, "printf '\\033]7501;state=idle:app=claude-code\\007'");
+    await emit(app, "printf '\\033]7501;state=idle\\007'");
+    await app.waitFor("label:status-icon:codex");
+    await emit(app, "printf '\\033]7501;state=done\\007'");
+    await app.waitFor("label:status-icon:check");
+    await app.press("label:Terminal 1, Done");
+    await app.waitFor("label:status-icon:codex");
+
+    await emit(app, "printf '\\033]7501;state=idle:app=unknown\\007\\033]133;A\\007'");
+    await app.waitFor("label:activity:none:read");
+    await app.waitFor("label:status-icon:codex");
+
+    await emit(app, "printf '\\033]7501;state=idle:id=agent/main:app=claude-code\\007'");
     await app.waitFor("label:Terminal 1, Idle, Claude Code");
     await app.waitFor("label:status-icon:claude-code");
+    expect(app.shows("label:status-icon:codex")).toBe(false);
+    await emit(app, "printf '\\033]7501;state=clear:id=other\\007\\033]7501;state=idle:id=agent/main\\007'");
+    await app.waitFor("label:status-icon:claude-code");
+    await emit(app, "printf '\\033]7501;state=clear:id=agent\\007'");
+    await app.waitFor("label:status-icon:terminal");
+  } finally { await close(app); }
+});
+
+test("other recognized agents select their icon and terminal reset clears it", async () => {
+  const app = await open("./fixtures/StatusFixture.tsx", options);
+  try {
     for (const [id, name] of [["grok", "Grok"], ["grok-build", "Grok"], ["pi", "Pi"], ["opencode", "OpenCode"]]) {
       await emit(app, `printf '\\033]7501;state=idle:app=${id}\\007'`);
       await app.waitFor(`label:Terminal 1, Idle, ${name}`);
       await app.waitFor(`label:status-icon:${id}`);
     }
-    await emit(app, "printf '\\033]7501;state=idle:app=unknown\\007'");
-    await app.waitFor("label:Terminal 1, unknown");
+    await emit(app, "printf '\\033c'");
     await app.waitFor("label:status-icon:terminal");
-    await emit(app, "printf '\\033]7501;state=idle:app=codex\\007\\033]133;A\\007'");
-    await app.waitFor("label:Terminal 1");
-    await app.waitFor("label:status-icon:terminal");
-    await emit(app, "printf '\\033]7501;state=idle:app=codex\\007\\033]7501;state=clear\\007'");
-    await app.waitFor("label:Terminal 1");
+  } finally { await close(app); }
+});
+
+test("returning from a foreground job clears the agent icon without an OSC clear", async () => {
+  const app = await open("./fixtures/StatusFixture.tsx", options);
+  try {
+    await emit(app, "/bin/sh -c 'printf \"\\033]7501;state=idle:app=pi\\007\"; read ignored'");
+    await app.waitFor("label:status-icon:pi");
+    await emit(app, "exit job");
     await app.waitFor("label:status-icon:terminal");
   } finally { await close(app); }
 });

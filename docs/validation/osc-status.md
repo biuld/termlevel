@@ -8,6 +8,7 @@
 | 2026-11-15 | Notification row icons and content hierarchy |
 | 2026-11-15 | Configurable working indicator |
 | 2026-11-18 | OSC 7501 idle agent icons |
+| 2026-11-18 | OSC 7501 agent identity across status updates |
 
 ## 2026-11-15 · Sidebar terminal status and progress (OSC 7501 / OSC 9;4)
 
@@ -110,3 +111,23 @@ Uncommitted changes based on `a96c125` (the workspace also has separate terminal
 - Not completed: the full interactive lifecycle of the five real agents, light theme, pinned tabs, actual VoiceOver listening, and long-term daily-use manual acceptance. Real programs may not send idle, or an intermediate layer may not forward the report; without clear / prompt the report may go stale. Pi's use of OSC 133 may also clear valid state; see the design.
 
 Entries were translated from the consolidated validation log; failures above remain part of the record and must not be erased.
+
+
+## 2026-11-18 · OSC 7501 agent identity across status updates
+
+Uncommitted changes based on `8a60213`. See [agent icon behavior](../design/osc-status.md#scan-hierarchy). Builds used `GHOSTTY_VT_ARCHIVE=/tmp/termlevel-ghostty-vt-1.0.1.xcframework.zip` and `CARGO_NET_OFFLINE=true`.
+
+### Commands and real PTY tests
+
+- `./scripts/nsh check` and `./scripts/nsh build` passed. Logs are `artifacts/osc-agent-identity-check.log` and `artifacts/osc-agent-identity-build.log`.
+- `cargo test -p termlevel-native sessions:: --lib` passed 30/30. Log is `artifacts/osc-agent-identity-rust.log`.
+- `./scripts/nsh test tests/terminal/Status.test.tsx` passed 9/9. Controlled real PTY reports switched the same tab from Codex to Claude Code. The suite verified identity through a missing app, an unknown app, result acknowledgement and an OSC 133 prompt. It also checked scoped clear, terminal reset and a foreground job returning to the shell without clear. Log is `artifacts/osc-agent-identity-headless.log`.
+
+### Native automation
+
+- `./scripts/test-native status --filter 'native sidebar shows idle agent icons'` passed 1/1 after the sandbox denied the local dev server with `Operation not permitted (os error 1)`. Both runs are recorded in `artifacts/osc-agent-identity-native.log`.
+- Reviewed `artifacts/native-agent-codex.png` and `artifacts/native-agent-claude.png`. The same native tab showed the Codex mark and then the Claude Code mark. The existing native linker and Grok SVG warnings were present.
+
+### Unverified
+
+Interactive agent binaries, SSH and multiplexer forwarding, and manual GUI acceptance were outside these controlled tests.

@@ -173,16 +173,16 @@ AppKit main thread                    Engine thread                          Rea
 - **Engine thread**: NSH component functions, `effect`, `set_interval` callbacks, key bindings and pointer handlers all run here, not on the AppKit main thread. NSH 0.6.0 uses `run_on_main_thread` to hand work to the UI thread. `SurfaceController`, `Window`, `Signal` and `Search` belong only to this thread.
 - **AppKit main thread**: the local monitor in `platform/macos/keyboard.rs` directly encodes physical keys and middle / side buttons, then hands them to the writer; `drawRect` in `platform/macos/view.rs` only clones `Arc<Scene>` from the scene slot. Neither waits for the engine thread.
 - **Reader thread**: holds `Session.emulator` while parsing bytes, releases it and increments `revision`. It does not touch controller state.
-- **Reaper / writer**: touch only `control` and `info`.
+- **Reaper / writer**: handle process and input lifecycle. The reaper also checks the foreground ownership of reported agent identities.
 
 Lock order, enforced as a constraint:
 
 ```text
-emulator → control → info
+emulator → control → status → info
 ```
 
 - No thread may hold `emulator` while synchronously waiting for the main thread. The main thread holds it only briefly while encoding current input and cloning the scene `Arc`.
-- `resize_grid` performs PTY resize and grid resize inside `emulator` (`sessions.rs:393`); that atomic boundary is preserved.
+- The [PTY module](../../src/sessions/pty.rs) holds `emulator` across both PTY resize and grid resize.
 - The scene slot lock is only used to replace or clone `Arc<Scene>`. Painting holds neither the slot lock nor `emulator`.
 
 ### Controller state

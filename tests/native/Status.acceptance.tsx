@@ -6,10 +6,13 @@ test("native sidebar shows idle agent icons in expanded and collapsed layouts", 
     await app.type("id:session-panel", "printf '\\033]7501;state=idle:app=codex\\007'");
     await app.keyboard.press("enter");
     await app.waitFor("label:Terminal 1, Idle, Codex");
+    await app.waitFor("label:status-icon:codex");
     await app.screenshot("artifacts/native-agent-codex.png");
     await app.type("id:session-panel", "printf '\\033]7501;state=idle:app=claude-code\\007'");
     await app.keyboard.press("enter");
     await app.waitFor("label:Terminal 1, Idle, Claude Code");
+    await app.waitFor("label:status-icon:claude-code");
+    expect(app.shows("label:status-icon:codex")).toBe(false);
     await app.screenshot("artifacts/native-agent-claude.png");
     for (const [id, name] of [["grok", "Grok"], ["pi", "Pi"], ["opencode", "OpenCode"]]) {
       await app.type("id:session-panel", `printf '\\033]7501;state=idle:app=${id}\\007'`);

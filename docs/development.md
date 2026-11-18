@@ -30,7 +30,7 @@ Ownership is defined at the directory level. The code tree is the authoritative 
 | `scripts/` | Pinned tooling and validation entry points. |
 | `assets/` | Committed product assets. |
 
-The stable entry points are `App.tsx`, `ui/app/WorkspaceApp.tsx`, `src/lib.rs`, `src/sessions.rs` and `src/session_view/`. Their contracts and data flow belong in [architecture](architecture/README.md), not here.
+The stable entry points are `App.tsx`, `ui/app/WorkspaceApp.tsx`, `src/lib.rs`, `src/sessions/mod.rs` and `src/session_view/`. Their contracts and data flow belong in [architecture](architecture/README.md), not here.
 
 TSX application wiring lives in `app`; workspace state and operations live in `workspace`; the terminal view lives in `terminal`; stateless presentation lives in `shared`. Components use PascalCase; state and utility modules use lower-case and hyphens. Keep the existing two-space TSX indentation and avoid whole-file formatting rewrites during moves.
 
@@ -47,7 +47,7 @@ TSX:
 Rust:
 
 - `src/lib.rs` only registers exports and native components.
-- `SessionManager` in `src/sessions.rs` owns the PTY, child process and worker threads. Only explicit session operations create or close processes.
+- `SessionManager` in `src/sessions/manager.rs` owns the PTY, child process and worker threads. Only explicit session operations create or close processes.
 - `src/terminal.rs` adapts Ghostty state to the application. `src/session_view/` owns display and interaction. Platform objects live only under `session_view/platform/`.
 - `crates/ghostty-vt` and `crates/ghostty-vt-sys` do not depend on NSH, the PTY layer or the application. Pass owned data across threads; handle synchronization and callback rules are in [crates/ghostty-vt/THREADING.md](../crates/ghostty-vt/THREADING.md).
 - Add a module where its responsibility belongs; a shared mechanism has one owner. Do not add a crate per component.
