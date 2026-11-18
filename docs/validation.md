@@ -1028,3 +1028,12 @@ Ungrouped 工作区入口（基于 `7dd7c8c` 的未提交改动）：`./scripts/
 - `./scripts/test-native status --filter 'native sidebar shows idle agent icons'`：1/1；沙箱内本地服务启动被拒，沙箱外通过。已查看 `artifacts/native-agent-{codex,claude,grok,pi,opencode}.png`，覆盖深色主题；测试还覆盖收起侧栏。
 - Grok Build 1.0.88 使用隔离的临时配置和未登录状态：`[ui.notifications] program_status = "auto"` 下，原生 Termlevel 真实 PTY 成功完成查询并显示 `blocked/auth` 和 `Sign in to Grok`；独立 PTY 探针捕获 `app=grok`。最初未捕获报告的探针把配置写到了错误位置，不能作为不支持协议的证据。真实 Grok 的 idle、working、done、退出和登录后的完整生命周期仍未验证。
 - 未完成五个真实 agent 的完整交互生命周期、浅色主题、固定标签、VoiceOver 实听和长期日用人工验收。真实程序可能不发送 idle，或中间层不转发报告；没有 clear / prompt 时报告可能过期。Pi 的 OSC 133 使用也可能清掉有效状态，详见设计。
+
+## 2026-11-18：终端细线表格的接点粗细
+
+基于 `9dea7e1` 的未提交 renderer 改动。用用户提供的 `┌─┬┐` / `├─┼┤` 表格在真实 PTY 和原生窗口复现：关闭抗锯齿时直线部分在截图中为 4 个实色设备像素，接点为 2 个实色像素加淡色边缘。同字体源轮廓横线截面一致；仅切换画线轮廓抗锯齿为开启后，两者都呈现 2 个实色像素加淡色边缘。修复保持字体轮廓，画线启用抗锯齿，块字符仍关闭；撤销此前针对 11 个字符绘制线段的临时补丁。
+
+- `cargo test -p termlevel-native session_view::platform::macos::renderer`：13/13，包含框线连接、线宽、块字符、背景和字体用例。
+- `./scripts/nsh check`、`./scripts/nsh build`：通过；构建仍有既有 Grok SVG 的 `foreignObject` 提示。
+- `./scripts/test-native glyphs --filter 'native Unicode table'`：1/1；已查看 `artifacts/native-table-border.png`，同一行的抽样直线和接点均为 2 个实色设备像素加淡色边缘。原生截图对照还保留在 `artifacts/native-table-border-before.png` 和 `artifacts/native-table-border-aa.png`。
+- `./scripts/test-native protocols --filter 'native block glyphs'`：1/1。使用已校验的 `GHOSTTY_VT_ARCHIVE` 离线库；未运行完整回归，未做不同缩放、字号和主题的人工验收，也未重新运行真实 Claude Code。

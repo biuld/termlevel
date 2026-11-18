@@ -172,14 +172,17 @@ impl Renderer {
                 );
                 CGContext::save_g_state(c);
                 if let Some(plane) = plane {
-                    CGContext::set_should_antialias(c, false);
-                    CGContext::translate_ctm(c, cell.origin.x, cell.origin.y + cell.size.height);
-                    CGContext::scale_ctm(
-                        c,
-                        cell.size.width / plane.size.width,
-                        -cell.size.height / plane.size.height,
-                    );
-                    CGContext::translate_ctm(c, -plane.origin.x, -plane.origin.y);
+                    let block = span
+                        .run
+                        .text
+                        .chars()
+                        .next()
+                        .is_some_and(|ch| ch >= '\u{2580}');
+                    // AppKit rasterizes a standalone straight outline differently
+                    // from junction outlines when antialiasing is disabled.
+                    // Blocks must remain pixel-solid at their shared edges.
+                    CGContext::set_should_antialias(c, !block);
+                    Renderer::map_graphics(context, cell, plane, block);
                 } else {
                     let (scale, offset) = shaped.fit(w);
                     CGContext::translate_ctm(

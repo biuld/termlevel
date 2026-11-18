@@ -1,5 +1,30 @@
 import { expect, open, test } from "nsh/test";
 
+test("native Unicode table keeps connected even-weight borders", async () => {
+  const app = await open("./tests/terminal/fixtures/StatusFixture.tsx", { platform: "macos", width: 1000, height: 700, colorScheme: "dark" });
+  try {
+    const table = [
+      "┌────────────┬────────────────────────────┬────────────────┐",
+      "│    元素    │            示例            │      说明      │",
+      "├────────────┼────────────────────────────┼────────────────┤",
+      "│ 普通文本   │ Termlevel                  │       默认字重 │",
+      "├────────────┼────────────────────────────┼────────────────┤",
+      "│ 加粗       │ 重要内容                   │         强调用 │",
+      "├────────────┼────────────────────────────┼────────────────┤",
+      "│ 长文本换行 │ 这一列内容较长时会自动换行 │ 取决于终端宽度 │",
+      "└────────────┴────────────────────────────┴────────────────┘",
+      "TABLE_READY",
+    ];
+    await app.type("id:session-panel", `printf '\\033[2J\\033[H'; printf '%s\\n' ${table.map(line => `'${line}'`).join(" ")}`);
+    await app.keyboard.press("enter");
+    await app.waitUntil(() => app.texts().some(text => text.includes("TABLE_READY")));
+    await app.screenshot("artifacts/native-table-border.png");
+  } finally {
+    try { await app.window("main").pressClose(); } catch {}
+    app.dispose();
+  }
+});
+
 // Real /bin/sh PTY, production terminal renderer, bundled JetBrains Mono + Sarasa Term SC, 13pt.
 test("bundled fonts render circled digits, CJK and coding ligatures", async () => {
   const app = await open("./tests/terminal/fixtures/StatusFixture.tsx", { platform: "macos", width: 1000, height: 700, colorScheme: "dark" });

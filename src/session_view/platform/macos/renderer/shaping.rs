@@ -41,6 +41,36 @@ impl Renderer {
             .then_some(plane)
     }
 
+    /// Place a graphics outline in `cell`.
+    ///
+    /// Blocks stretch independently on each axis so a half block stays half a
+    /// cell. Box drawing uses one scale, the larger of the two axes, and the
+    /// cell clip drops the overflow. Stroke weight then stays the same
+    /// horizontally and vertically, while a line that already reaches the font
+    /// plane still reaches the cell edge.
+    pub(super) fn map_graphics(context: &CGContext, cell: CGRect, plane: CGRect, block: bool) {
+        let fit_x = cell.size.width / plane.size.width;
+        let fit_y = cell.size.height / plane.size.height;
+        let (scale_x, scale_y) = if block {
+            (fit_x, fit_y)
+        } else {
+            let scale = fit_x.max(fit_y);
+            (scale, scale)
+        };
+        let c = Some(context);
+        CGContext::translate_ctm(
+            c,
+            cell.origin.x + cell.size.width / 2.0,
+            cell.origin.y + cell.size.height / 2.0,
+        );
+        CGContext::scale_ctm(c, scale_x, -scale_y);
+        CGContext::translate_ctm(
+            c,
+            -(plane.origin.x + plane.size.width / 2.0),
+            -(plane.origin.y + plane.size.height / 2.0),
+        );
+    }
+
     pub(super) fn shape(
         &mut self,
         cfg: &PaintConfig,

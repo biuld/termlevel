@@ -173,24 +173,154 @@ fn graphic_box_edges_connect_across_cells_and_rows() {
         // vertical edges must contain ink, including all cell joins.
         for x in 5..35 {
             assert!(
-                (2..8).any(|y| pixel(&context, x, y)[3] == 255),
+                (2..8).any(|y| pixel(&context, x, y)[3] >= 64),
                 "top {text} x={x}"
             );
             assert!(
-                (12..18).any(|y| pixel(&context, x, y)[3] == 255),
+                (12..18).any(|y| pixel(&context, x, y)[3] >= 64),
                 "bottom {text} x={x}"
             );
         }
         for y in 5..15 {
             assert!(
-                (2..8).any(|x| pixel(&context, x, y)[3] == 255),
+                (2..8).any(|x| pixel(&context, x, y)[3] >= 64),
                 "left {text} y={y}"
             );
             assert!(
-                (32..38).any(|x| pixel(&context, x, y)[3] == 255),
+                (32..38).any(|x| pixel(&context, x, y)[3] >= 64),
                 "right {text} y={y}"
             );
         }
+    }
+}
+
+#[test]
+fn table_border_horizontal_weight_is_consistent_across_junctions() {
+    let mut emulator = GhosttyEmulator::new(TerminalSize::new(4, 1), 0);
+    emulator.feed("┌─┬┐".as_bytes());
+    let snap = emulator
+        .begin_window(&mut Window::default(), false, None)
+        .unwrap()
+        .finish();
+    let mut cfg = config();
+    cfg.cw = 7.7;
+    cfg.lh = 21.0;
+    cfg.size = 18.0;
+    let scene = Scene {
+        snap,
+        config: cfg,
+        hits: Vec::new(),
+        current: 0,
+    };
+    let space = CGColorSpace::new_device_rgb().unwrap();
+    let context = unsafe {
+        CGBitmapContextCreate(
+            std::ptr::null_mut(),
+            80,
+            40,
+            8,
+            320,
+            Some(&space),
+            CGImageAlphaInfo::PremultipliedLast.0 | CGImageByteOrderInfo::Order32Big.0,
+        )
+    }
+    .unwrap();
+    CGContext::translate_ctm(Some(&context), 0.0, 40.0);
+    CGContext::scale_ctm(Some(&context), 2.0, -2.0);
+    Renderer::default().draw(&context, &scene);
+    let ink = |x: usize| {
+        let pixels = unsafe {
+            std::slice::from_raw_parts(
+                CGBitmapContextGetData(Some(&context)).cast::<u8>(),
+                80 * 40 * 4,
+            )
+        };
+        (0..40)
+            .filter(|&y| pixels[(y * 80 + x) * 4 + 3] == 255)
+            .collect::<Vec<_>>()
+    };
+    let straight = ink(23);
+    assert!(!straight.is_empty());
+    for x in [9, 12, 32, 44, 48] {
+        assert_eq!(ink(x), straight, "horizontal stroke at x={x}");
+    }
+}
+
+#[test]
+fn graphic_box_strokes_keep_one_weight_in_a_tall_cell() {
+    let mut emulator = GhosttyEmulator::new(TerminalSize::new(2, 1), 0);
+    emulator.feed("┌─".as_bytes());
+    let snap = emulator
+        .begin_window(&mut Window::default(), false, None)
+        .unwrap()
+        .finish();
+    let mut cfg = config();
+    cfg.cw = 8.0;
+    cfg.lh = 28.0;
+    let scene = Scene {
+        snap,
+        config: cfg,
+        hits: Vec::new(),
+        current: 0,
+    };
+    let width = 16usize;
+    let height = 28usize;
+    let space = CGColorSpace::new_device_rgb().unwrap();
+    let context = unsafe {
+        CGBitmapContextCreate(
+            std::ptr::null_mut(),
+            width,
+            height,
+            8,
+            width * 4,
+            Some(&space),
+            CGImageAlphaInfo::PremultipliedLast.0 | CGImageByteOrderInfo::Order32Big.0,
+        )
+    }
+    .unwrap();
+    CGContext::translate_ctm(Some(&context), 0.0, height as f64);
+    CGContext::scale_ctm(Some(&context), 1.0, -1.0);
+    Renderer::default().draw(&context, &scene);
+    let ink = |x: usize, y: usize| {
+        // SAFETY: the bitmap above owns width*height*4 initialized bytes.
+        unsafe {
+            std::slice::from_raw_parts(
+                CGBitmapContextGetData(Some(&context)).cast::<u8>(),
+                width * height * 4,
+            )[(y * width + x) * 4 + 3]
+                >= 64
+        }
+    };
+    // ┌ is down-and-right from the cell center, so the vertical arm is below the joint.
+    let horizontal: Vec<usize> = (0..height).filter(|&y| ink(width - 1, y)).collect();
+    let below = horizontal.iter().max().copied().unwrap_or(0) + 2;
+    let vertical: Vec<usize> = (0..8).filter(|&x| ink(x, below)).collect();
+    assert!(
+        !horizontal.is_empty() && !vertical.is_empty(),
+        "missing arm: rows {horizontal:?}, cols {vertical:?} at y={below}"
+    );
+    assert!(
+        horizontal.len().abs_diff(vertical.len()) <= 1,
+        "stroke weight rows {} vs cols {}",
+        horizontal.len(),
+        vertical.len()
+    );
+    let top = *horizontal.iter().min().unwrap();
+    let bottom = *horizontal.iter().max().unwrap();
+    for y in top..=bottom {
+        let xs: Vec<_> = (0..width).filter(|&x| ink(x, y)).collect();
+        let start = xs[0];
+        let end = *xs.last().unwrap();
+        assert_eq!(end, width - 1, "row {y} stops early: {xs:?}");
+        assert_eq!(
+            xs.len(),
+            end - start + 1,
+            "gap in the joint at y={y}: {xs:?}"
+        );
+        assert!(
+            vertical.iter().any(|x| xs.contains(x)),
+            "horizontal arm misses the vertical stem at y={y}"
+        );
     }
 }
 
