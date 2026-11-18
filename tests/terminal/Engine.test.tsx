@@ -5,7 +5,8 @@ const options = { platform: "macos" as const, width: 800, height: 600 };
 test("the native provider actually installs Ghostty and preserves the primary screen", async () => {
   const app = await open("./fixtures/EngineFixture.tsx", options);
   await app.waitFor("text:QQQQQ");
-  expect(app.spanStyle("id:engine-terminal >> text:中文é").color).toBe("#0c2238ff");
+  expect(app.spanStyle("id:engine-terminal >> text:中文").color).toBe("#0c2238ff");
+  expect(app.spanStyle("id:engine-terminal >> text:é").color).toBe("#0c2238ff");
   await app.press("id:engine-alternate");
   await app.waitFor("text:alternate");
   expect(app.shows("text:QQQQQ")).toBe(false);
@@ -13,7 +14,8 @@ test("the native provider actually installs Ghostty and preserves the primary sc
   await app.waitFor("text:QQQQQ");
   await app.setViewport(500, 400);
   await app.waitFor("text:QQQQQ");
-  expect(app.spanStyle("id:engine-terminal >> text:中文é").color).toBe("#0c2238ff");
+  expect(app.spanStyle("id:engine-terminal >> text:中文").color).toBe("#0c2238ff");
+  expect(app.spanStyle("id:engine-terminal >> text:é").color).toBe("#0c2238ff");
 });
 
 test("Ghostty modes and protocol replies reach NSH input events", async () => {

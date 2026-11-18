@@ -1,5 +1,7 @@
-//! AppKit events provide physical key identity, repeats and releases which the
-//! NSH shortcut API does not carry. Only our exact field editor is intercepted.
+//! AppKit events provide physical key identity, repeats and releases on the
+//! main thread. NSH 0.6 `onKeyDown` reports those facts after the fact on the
+//! engine thread and cannot decide consumption. Only our exact field editor
+//! is intercepted.
 use crate::sessions::{MouseReport, Session};
 use nsh_core::prelude::*;
 use objc2::{MainThreadMarker, rc::Retained};

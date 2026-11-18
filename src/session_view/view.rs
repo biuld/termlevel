@@ -656,6 +656,7 @@ impl Display {
                         when: nsh_core::keymap::When::Always,
                         repeat: true,
                         pass_through: !synthetic,
+                        for_focus: false,
                     },
                     move |_| {
                         if !synthetic_keys() {

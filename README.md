@@ -7,14 +7,14 @@
 关闭终端会结束它的前台进程与 shell；关闭主窗口或退出应用会结束全部会话。工作区结构与设置通过 NSH Storage 持久化；应用重启会为保存的标签重新启动 shell，不恢复旧进程或输出。首次启动显示空白引导页，可直接打开 home 终端或新建分组。尚不声称 Neovim/tmux 完整兼容。
 ## 运行
 
-需要 Rust 1.97+ 和平台构建工具；macOS 首先支持 macOS 14+，安装 Xcode Command Line Tools。项目固定使用 NSH **0.5.0**。
+需要 Rust 1.97+ 和平台构建工具；macOS 首先支持 macOS 14+，安装 Xcode Command Line Tools。项目固定使用 NSH **0.6.0**。
 
 ```sh
 ./scripts/bootstrap                         # 安装到本项目 .tools/，并验证 SHA-256
 ./scripts/nsh run --window-size 1200x780     # 默认 macOS AppKit，TSX 热更新
 ```
 
-如果 `.tools/nsh` 已存在且完整，可以直接运行第二条命令。也可自行安装全局 nsh 0.5.0，脚本会在没有项目内版本时使用它。第一次运行 mixed 项目需要下载并编译 Rust 依赖；开发时不需要手动安装 Node 或 npm UI 框架。
+如果 `.tools/nsh` 已存在且完整，可以直接运行第二条命令。也可自行安装全局 nsh 0.6.0，脚本会在没有项目内版本时使用它。第一次运行 mixed 项目需要下载并编译 Rust 依赖；开发时不需要手动安装 Node 或 npm UI 框架。
 
 ## 工作区功能
 

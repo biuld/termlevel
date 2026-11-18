@@ -4,7 +4,7 @@
 
 ## NSH mixed 项目
 
-`nsh.json` 声明 Rust crate 和主题；`App.tsx` 是默认 TSX 入口。CLI、`nsh-core`、`nsh-base` 均固定 0.5.0。UI 使用 macOS 原生 AppKit 后端，不引入 WebView。
+`nsh.json` 声明 Rust crate 和主题；`App.tsx` 是默认 TSX 入口。CLI、`nsh-core`、`nsh-base` 均固定 0.6.0。UI 使用 macOS 原生 AppKit 后端，不引入 WebView。
 
 ```text
 App.tsx                                      mount 工作区，仅作入口

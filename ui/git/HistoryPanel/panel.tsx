@@ -234,7 +234,7 @@ export function HistoryPanel(props: HistoryProps) {
               handleClass="bg-transparent group-hover:bg-sidebar-border group-active:bg-ring"
               handleAccessibilityLabel="Resize commits and commit details">
               <ResizablePanel minSize={180}>{commitPane()}</ResizablePanel>
-              {/* NSH 0.5.0 does not clamp the growing panel's max during a drag. */}
+              {/* A drag still grows the next panel past maxSize. Leave it uncapped. */}
               <ResizablePanel size={300} minSize={170}>{detailNarrow()}</ResizablePanel>
             </ResizablePanelGroup>
           </If>
