@@ -1,5 +1,27 @@
 import { expect, open, test } from "nsh/test";
 
+test("native sidebar shows idle agent icons in expanded and collapsed layouts", async () => {
+  const app = await open("./tests/terminal/fixtures/StatusFixture.tsx", { platform: "macos", width: 900, height: 600 });
+  try {
+    await app.type("id:session-panel", "printf '\\033]7501;state=idle:app=codex\\007'");
+    await app.keyboard.press("enter");
+    await app.waitFor("label:Terminal 1, Idle, Codex");
+    await app.screenshot("artifacts/native-agent-codex.png");
+    await app.type("id:session-panel", "printf '\\033]7501;state=idle:app=claude-code\\007'");
+    await app.keyboard.press("enter");
+    await app.waitFor("label:Terminal 1, Idle, Claude Code");
+    await app.screenshot("artifacts/native-agent-claude.png");
+    for (const [id, name] of [["grok", "Grok"], ["pi", "Pi"], ["opencode", "OpenCode"]]) {
+      await app.type("id:session-panel", `printf '\\033]7501;state=idle:app=${id}\\007'`);
+      await app.keyboard.press("enter");
+      await app.waitFor(`label:Terminal 1, Idle, ${name}`);
+      await app.screenshot(`artifacts/native-agent-${id}.png`);
+    }
+    await app.press("id:toggle-sidebar");
+    await app.screenshot("artifacts/native-agent-collapsed.png");
+  } finally { app.dispose(); }
+});
+
 // The status/progress UI is drawn by the native sidebar. Headless tests cover
 // parsing and tab labels; these captures verify the native icon and 2 pt line.
 test("native sidebar status icon, progress line and collapsed rail", async () => {

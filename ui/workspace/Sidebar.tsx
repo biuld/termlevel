@@ -8,6 +8,7 @@ import type { Workspace } from "./state";
 import { groupColor, groupLine, groupTint } from "../shared/theme";
 import { GroupEditor } from "./GroupEditor";
 import { Type } from "../shared/type";
+import { AgentIcon, agentForApp } from "./agent-icons";
 
 type DragSlot = { ref: ViewRef; kind: "tab" | "header" | "ungrouped"; id: string | null };
 type SlotRect = { x: number; y: number; width: number; height: number };
@@ -217,6 +218,10 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
     const lineIndeterminate = () => progress()?.indeterminate ?? false;
     const animateLine = () => !!progress()?.animate && !reduceMotion();
     const working = () => status()?.state === "working" && !progress();
+    const agent = () => {
+      if (tab()?.activity?.state !== "idle" || status()?.state !== "idle") return null;
+      return agentForApp(tab()?.activity?.app);
+    };
     const statusIcon = (): IconName => {
       switch (status()?.state) {
         case "working": return "busy";
@@ -235,8 +240,8 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
         default: return accent() ?? token(active() ? "icon-active" : "icon");
       }
     };
-    const summary = () => [tab()?.title ?? "Terminal", status()?.label, progress()?.label].filter(Boolean).join(", ");
-    const detail = () => [status()?.app, status()?.detail,
+    const summary = () => [tab()?.title ?? "Terminal", agent() ? "Idle" : status()?.label, progress()?.label].filter(Boolean).join(", ");
+    const detail = () => [agent()?.name ?? status()?.app, status()?.detail,
       status()?.pendingCount ? `${status()!.pendingCount} more need attention` : ""].filter(Boolean).join(" · ");
     const tabLabel = () => [summary(), detail(), tab()?.bell ? "terminal bell" : ""].filter(Boolean).join(", ");
     const lineColor = () => progress()?.state === "error" ? token("destructive")
@@ -294,9 +299,10 @@ export function Sidebar(props: { workspace: Workspace; actions: SidebarActions; 
         class="h-full min-w-0 flex-1 flex-row items-center gap-2 rounded-(--radius-tab) focus-visible:ring-2 ring-sidebar-ring"
         style={{ justifyContent: props.expanded() ? "flex-start" : "center", paddingHorizontal: props.expanded() ? 7 : 0 }}>
         <View class="flex-col items-center">
-          <View testID={`tab-status-${id}`}>
+          <View testID={`tab-status-${id}`} accessibilityLabel={`status-icon:${agent() ? tab()?.activity?.app : statusIcon()}`}>
             <If when={working()}><WorkingIndicator kind={props.indicator()} color={statusColor()} /></If>
-            <If when={!working()}><Icon name={statusIcon()} size={13} color={statusColor()} /></If>
+            <If when={!working() && !!agent()}><AgentIcon app={tab()?.activity?.app ?? ""} /></If>
+            <If when={!working() && !agent()}><Icon name={statusIcon()} size={13} color={statusColor()} /></If>
           </View>
           <If when={!props.expanded()}>{progressLine(true)}</If>
         </View>

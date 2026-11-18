@@ -13,6 +13,35 @@ async function emit(app: Awaited<ReturnType<typeof open>>, sequence: string) {
   await app.keyboard.press("enter");
 }
 
+test("idle agent reports select the matching icon and respect status lifecycle", async () => {
+  const app = await open("./fixtures/StatusFixture.tsx", options);
+  try {
+    await emit(app, "printf '\\033]7501;state=idle:app=codex\\007'");
+    await app.waitFor("label:Terminal 1, Idle, Codex");
+    await app.waitFor("label:status-icon:codex");
+    await emit(app, "printf '\\033]7501;state=working:app=codex\\007'");
+    await app.waitFor("label:Terminal 1, Working, codex");
+    await app.waitFor("label:status-icon:busy");
+    await emit(app, "printf '\\033]7501;state=idle:app=claude-code\\007'");
+    await app.waitFor("label:Terminal 1, Idle, Claude Code");
+    await app.waitFor("label:status-icon:claude-code");
+    for (const [id, name] of [["grok", "Grok"], ["grok-build", "Grok"], ["pi", "Pi"], ["opencode", "OpenCode"]]) {
+      await emit(app, `printf '\\033]7501;state=idle:app=${id}\\007'`);
+      await app.waitFor(`label:Terminal 1, Idle, ${name}`);
+      await app.waitFor(`label:status-icon:${id}`);
+    }
+    await emit(app, "printf '\\033]7501;state=idle:app=unknown\\007'");
+    await app.waitFor("label:Terminal 1, unknown");
+    await app.waitFor("label:status-icon:terminal");
+    await emit(app, "printf '\\033]7501;state=idle:app=codex\\007\\033]133;A\\007'");
+    await app.waitFor("label:Terminal 1");
+    await app.waitFor("label:status-icon:terminal");
+    await emit(app, "printf '\\033]7501;state=idle:app=codex\\007\\033]7501;state=clear\\007'");
+    await app.waitFor("label:Terminal 1");
+    await app.waitFor("label:status-icon:terminal");
+  } finally { await close(app); }
+});
+
 test("OSC 9;4 draws the title-column progress line and remove clears it", async () => {
   const app = await open("./fixtures/StatusFixture.tsx", options);
   try {

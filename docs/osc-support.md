@@ -174,6 +174,8 @@ libghostty 的独立 OSC parser 只暴露两类数据：标题字符串和未知
 | 未读程序 error | xCircle，destructive | 有失败结果待查看；确认后不遮挡后续 working |
 | 宿主故障 / 保留的非零退出 | xCircle，destructive | 会话本身异常 / 已退出；tooltip 明确来源与退出码 |
 
+显式 idle 报告的 app 为 `codex`、`claude-code`、`grok` / `grok-build`、`pi` 或 `opencode` 时，使用对应产品图标；来源见 [图标资源说明](../assets/agents/README.md)。tooltip 与无障碍标签显示名称和 Idle；未知 app、无报告及已确认但没有 idle 报告的结果使用默认图标。活动和宿主状态仍有更高优先级，身份不持久化，也不从旧结果猜测进程存活。程序不发送 idle 或中间层不转发 OSC 时不会出现图标；没有 prompt / clear / reset 时，过期报告无法靠协议本身消除。Grok 1.0.88 的真实认证报告使用 `app=grok`，`grok-build` 是未验证的兼容映射。Pi 可能在绘制时输出 OSC 133 prompt 标记，从而触发现有清理，见 [上游问题](https://github.com/earendil-works/pi/issues/11017)。
+
 状态语义色优先于分组色，形状提供颜色之外的区分。不新增第二个未读角标：现有 BEL 圆点保持独立，标题栏铃铛负责通知未读。固定标签遇到活动时仍由状态图标接管，固定关系由位置和操作表达。不要把 error 显示为 `Terminal failed`，程序任务失败应写 `Task failed`；只有宿主故障才称终端故障。
 
 展开态示意（图标占既有 13 pt 槽，进度线只在标题列内）：

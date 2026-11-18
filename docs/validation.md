@@ -1017,3 +1017,14 @@ Ungrouped 工作区入口（基于 `7dd7c8c` 的未提交改动）：`./scripts/
 
 - `./scripts/nsh check`、`./scripts/nsh build` 通过；本地裸仓库 Push 定向测试通过，覆盖当前上游、拒绝非快进、未设置上游及 detached HEAD，且不受通配 push 配置影响。History 定向测试 6/6，Git 通知定向测试 1/1。
 - 原生自动化 `./scripts/test-native history` 3/3，通过测试夹具检查按钮和通知；未推送真实远端，未做人工 GUI 验收，也未运行完整 headless 套件。
+
+## 2026-11-18：OSC 7501 idle agent 图标
+
+基于 `a96c125` 的未提交改动（工作区另有独立的 terminal renderer 改动）。侧栏对显式 idle 的 Codex、Claude Code、Grok、Pi 和 OpenCode 显示相应产品图标；其他活动状态维持原优先级。图标不证明进程存活，清理依赖协议事件和现有生命周期。
+
+- `./scripts/nsh check`、`./scripts/nsh build`：通过。使用 `GHOSTTY_VT_ARCHIVE=/tmp/termlevel-ghostty-vt-1.0.1.xcframework.zip CARGO_NET_OFFLINE=true`。
+- `./scripts/nsh test tests/terminal/Status.test.tsx`：7/7，受控 `/bin/sh` 真实 PTY 覆盖 agent 映射、working、未知 app、prompt 和 clear。
+- `./scripts/nsh test`：272/273；`tests/workspace/Tiling.test.tsx:154` 期待 `Shown in the layout`，当前 UI 源码没有该文案，单项重跑同样失败。该断言与 agent 图标无关，但本次没有对干净基线重跑，不能据此断言历史基线通过或失败。
+- `./scripts/test-native status --filter 'native sidebar shows idle agent icons'`：1/1；沙箱内本地服务启动被拒，沙箱外通过。已查看 `artifacts/native-agent-{codex,claude,grok,pi,opencode}.png`，覆盖深色主题；测试还覆盖收起侧栏。
+- Grok Build 1.0.88 使用隔离的临时配置和未登录状态：`[ui.notifications] program_status = "auto"` 下，原生 Termlevel 真实 PTY 成功完成查询并显示 `blocked/auth` 和 `Sign in to Grok`；独立 PTY 探针捕获 `app=grok`。最初未捕获报告的探针把配置写到了错误位置，不能作为不支持协议的证据。真实 Grok 的 idle、working、done、退出和登录后的完整生命周期仍未验证。
+- 未完成五个真实 agent 的完整交互生命周期、浅色主题、固定标签、VoiceOver 实听和长期日用人工验收。真实程序可能不发送 idle，或中间层不转发报告；没有 clear / prompt 时报告可能过期。Pi 的 OSC 133 使用也可能清掉有效状态，详见设计。
